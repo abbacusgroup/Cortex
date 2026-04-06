@@ -21,6 +21,7 @@ EXPECTED_PUBLIC_TOOLS = frozenset(
         "cortex_graph",
         "cortex_list",
         "cortex_pipeline",
+        "cortex_classify",
     }
 )
 
@@ -56,11 +57,11 @@ class TestToolCounts:
 
     def test_all_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=True)
-        assert len(_tool_names(mcp)) == 16
+        assert len(_tool_names(mcp)) == 17
 
     def test_public_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=False)
-        assert len(_tool_names(mcp)) == 10
+        assert len(_tool_names(mcp)) == 11
 
     def test_admin_exclusion_removes_exactly_six(self, config: CortexConfig):
         all_mcp = create_mcp_server(config, include_admin=True)

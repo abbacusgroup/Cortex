@@ -6,6 +6,7 @@ and auto-generated OpenAPI docs.
 
 from __future__ import annotations
 
+import json
 import time
 from collections import defaultdict
 from typing import Any
@@ -191,9 +192,26 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         tags: str = "",
         template: str = "",
         run_pipeline: bool = True,
+        summary: str = "",
+        entities: str = "",
+        properties: str = "",
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
-        """Capture a knowledge object."""
+        """Capture a knowledge object with optional pre-classification."""
+        parsed_entities = None
+        if entities:
+            try:
+                parsed_entities = json.loads(entities)
+            except json.JSONDecodeError:
+                parsed_entities = None
+
+        parsed_properties = None
+        if properties:
+            try:
+                parsed_properties = json.loads(properties)
+            except json.JSONDecodeError:
+                parsed_properties = None
+
         return pipeline.capture(
             title=title,
             content=content,
@@ -203,6 +221,10 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
             template=template or None,
             captured_by="api",
             run_pipeline=run_pipeline,
+            summary=summary,
+            entities=parsed_entities,
+            extra_properties=parsed_properties,
+            confidence=0.9 if summary else 0.0,
         )
 
     @app.post("/link", dependencies=[Depends(rate_limit)])
@@ -231,6 +253,33 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         if relevant:
             learner.record_access(obj_id)
         return {"status": "recorded", "obj_id": obj_id}
+
+    @app.post("/classify/{obj_id}", dependencies=[Depends(rate_limit)])
+    async def classify(
+        obj_id: str,
+        summary: str = "",
+        obj_type: str = "",
+        tags: str = "",
+        project: str = "",
+        _key: str = Depends(verify_api_key),
+    ) -> dict[str, Any]:
+        """Classify or reclassify an existing knowledge object."""
+        doc = store.read(obj_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail=f"Not found: {obj_id}")
+
+        updates: dict[str, Any] = {"confidence": 0.9}
+        if summary:
+            updates["summary"] = summary
+        if obj_type:
+            updates["type"] = obj_type
+        if tags:
+            updates["tags"] = tags
+        if project:
+            updates["project"] = project
+
+        store.content.update(obj_id, **updates)
+        return {"status": "classified", "obj_id": obj_id, "updates": updates}
 
     @app.get("/graph/{obj_id}", dependencies=[Depends(rate_limit)])
     async def graph_obj(

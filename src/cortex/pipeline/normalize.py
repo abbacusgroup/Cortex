@@ -55,13 +55,28 @@ class NormalizeStage:
 
         title = doc.get("title", "")
         content = doc.get("content", "")
+        existing_summary = doc.get("summary", "")
 
-        # Step 1: LLM classification
-        classification = self.llm.classify(title=title, content=content)
-        logger.debug(
-            "Classified %s as %s (%.2f)",
-            obj_id, classification["type"], classification["confidence"],
-        )
+        # Step 1: Classification — skip LLM if pre-classified at capture time
+        if existing_summary:
+            # Pre-classified at capture time — skip LLM, use stored data
+            classification = {
+                "type": doc.get("type", "idea"),
+                "summary": existing_summary,
+                "tags": doc.get("tags", ""),
+                "project": doc.get("project", ""),
+                "entities": [],
+                "confidence": float(doc.get("confidence", 0.0)),
+                "properties": {},
+            }
+            logger.debug("Skipping LLM classify for %s — pre-classified", obj_id)
+        else:
+            # No pre-classification — use LLM or fallback
+            classification = self.llm.classify(title=title, content=content)
+            logger.debug(
+                "Classified %s as %s (%.2f)",
+                obj_id, classification["type"], classification["confidence"],
+            )
 
         # Step 2: Update the object with classification results
         # Only override type if the classification has meaningful confidence;

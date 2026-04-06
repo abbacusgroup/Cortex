@@ -82,12 +82,24 @@ class LLMClient:
 
     def __init__(self, config: CortexConfig):
         self.config = config
-        self._available = bool(config.llm_model and config.llm_api_key)
+        self._litellm_available = self._check_litellm()
+        self._available = bool(config.llm_model and config.llm_api_key and self._litellm_available)
         if self._available:
             self._model = config.llm_model
         else:
             self._model = ""
-            logger.info("No LLM configured — classification will be skipped")
+            if config.llm_model and config.llm_api_key and not self._litellm_available:
+                logger.info("litellm not installed — classification will be skipped")
+            else:
+                logger.info("No LLM configured — classification will be skipped")
+
+    @staticmethod
+    def _check_litellm() -> bool:
+        try:
+            import litellm  # noqa: F401
+            return True
+        except ImportError:
+            return False
 
     @property
     def available(self) -> bool:

@@ -377,3 +377,59 @@ class TestReason:
         body = resp.json()
         for key in ("contradictions", "patterns", "gaps", "staleness"):
             assert key in body
+
+
+# -- Capture with pre-classification -------------------------------------
+
+
+class TestCaptureWithPreClassification:
+    def test_capture_with_summary(self, client: TestClient):
+        resp = client.post(
+            "/capture",
+            params={
+                "title": "Pre-classified",
+                "content": "body",
+                "obj_type": "fix",
+                "summary": "A pre-classified fix",
+                "run_pipeline": "false",
+            },
+            headers=AUTH,
+        )
+        assert resp.status_code == 200
+        obj_id = resp.json()["id"]
+
+        read_resp = client.get(f"/read/{obj_id}", headers=AUTH)
+        assert read_resp.json()["summary"] == "A pre-classified fix"
+
+
+# -- Classify endpoint ----------------------------------------------------
+
+
+class TestClassifyEndpoint:
+    def test_classify_existing(self, client: TestClient):
+        cap = client.post(
+            "/capture",
+            params={
+                "title": "To classify",
+                "content": "x",
+                "run_pipeline": "false",
+            },
+            headers=AUTH,
+        )
+        obj_id = cap.json()["id"]
+
+        resp = client.post(
+            f"/classify/{obj_id}",
+            params={"summary": "Classified!", "obj_type": "lesson"},
+            headers=AUTH,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "classified"
+
+    def test_classify_nonexistent(self, client: TestClient):
+        resp = client.post(
+            "/classify/fake-id",
+            params={"summary": "x"},
+            headers=AUTH,
+        )
+        assert resp.status_code == 404

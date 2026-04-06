@@ -27,7 +27,7 @@ Full document with content, metadata, and relationships.
 - obj_id (str, required): Object ID
 
 ### cortex_capture
-Create a knowledge object with optional auto-classification pipeline.
+Create a knowledge object with optional pre-classification.
 - title (str, required): Title
 - content (str): Full text content
 - obj_type (str): Type (decision, lesson, fix, session, research, source, synthesis, idea)
@@ -35,6 +35,23 @@ Create a knowledge object with optional auto-classification pipeline.
 - tags (str): Comma-separated tags
 - template (str): Template name (session, fix, decision, lesson, research, idea)
 - run_pipeline (bool): Run intelligence pipeline (default true)
+- summary (str): 1-2 sentence summary (skips LLM classification when provided)
+- entities (str): JSON array of entities, e.g. [{"name": "Python", "type": "technology"}]
+- properties (str): JSON of type-specific properties
+
+### cortex_classify
+Classify or reclassify an existing knowledge object. Use cortex_read first to examine it.
+- obj_id (str, required): Object ID to classify
+- summary (str): 1-2 sentence summary
+- obj_type (str): Corrected type
+- entities (str): JSON array of entities
+- properties (str): JSON of type-specific properties
+- tags (str): Updated comma-separated tags
+- project (str): Updated project name
+
+### cortex_pipeline
+Re-run the intelligence pipeline on an existing object.
+- obj_id (str, required): Object ID to re-process
 
 ### cortex_link
 Create a typed relationship between two knowledge objects.
@@ -80,6 +97,9 @@ Review a destructive action before executing.
 - action (str, required): Action description
 - target (str, required): What will be affected
 
+### cortex_reason (admin)
+Run advanced reasoning: detect contradictions, patterns, knowledge gaps, and staleness.
+
 ## Knowledge Types
 decision, lesson, fix, session, research, source, synthesis, idea
 
@@ -89,6 +109,8 @@ causedBy, contradicts, supports, supersedes, dependsOn, ledTo, implements, menti
 ## Best Practices
 1. Use `cortex_context` for lightweight context injection (token-efficient)
 2. Use `cortex_dossier` for deep research on an entity or topic
-3. Use `cortex_capture` at the end of sessions to persist learnings
-4. Use `cortex_link` to connect related objects (builds the graph)
-5. Use `cortex_feedback` to improve future search results
+3. Use `cortex_capture` with summary + entities + obj_type to skip LLM classification
+4. Use `cortex_classify` to enrich or reclassify objects after reading them
+5. Use `cortex_link` to connect related objects (builds the graph)
+6. Use `cortex_feedback` to improve future search results
+7. Use `cortex_pipeline` to re-run intelligence on objects that need reprocessing

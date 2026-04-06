@@ -97,6 +97,8 @@ class TestLlmsTxt:
             "cortex_dossier",
             "cortex_read",
             "cortex_capture",
+            "cortex_classify",
+            "cortex_pipeline",
             "cortex_link",
             "cortex_feedback",
             "cortex_graph",
@@ -106,10 +108,11 @@ class TestLlmsTxt:
             "cortex_delete",
             "cortex_export",
             "cortex_safety_check",
+            "cortex_reason",
         ]
         for tool in tools:
             assert tool in content, f"Missing tool: {tool}"
-        assert len(tools) == 14
+        assert len(tools) == 17
 
     def test_knowledge_types(self):
         content = (PROJECT_ROOT / "llms.txt").read_text()

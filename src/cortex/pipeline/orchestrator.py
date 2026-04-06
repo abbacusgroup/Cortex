@@ -45,6 +45,10 @@ class PipelineOrchestrator:
         template: str | None = None,
         template_fields: dict[str, str] | None = None,
         captured_by: str = "",
+        summary: str = "",
+        entities: list[dict[str, str]] | None = None,
+        extra_properties: dict[str, str] | None = None,
+        confidence: float = 0.0,
         run_pipeline: bool = True,
     ) -> dict[str, Any]:
         """Capture a knowledge object and optionally run the full pipeline.
@@ -58,13 +62,17 @@ class PipelineOrchestrator:
             template: Template name (session, fix, decision, etc.)
             template_fields: Fields for the template.
             captured_by: Source of the capture.
+            summary: Pre-classified summary (skips LLM classify if set).
+            entities: Pre-extracted entities for the LINK stage.
+            extra_properties: Caller-supplied properties (template wins on conflicts).
+            confidence: Classification confidence (used when summary is set).
             run_pipeline: If True, run full pipeline. If False, just ingest.
 
         Returns:
             Dict with id, status, and pipeline results.
         """
         # Apply template if specified
-        properties: dict[str, str] = {}
+        template_properties: dict[str, str] = {}
         if template:
             tmpl = get_template(template)
             if tmpl:
@@ -72,17 +80,26 @@ class PipelineOrchestrator:
                 rendered = tmpl.render(template_fields or {})
                 if not content:
                     content = rendered["content"]
-                properties = rendered["properties"]
+                template_properties = rendered["properties"]
+
+        # Merge caller properties with template properties (template wins)
+        merged_properties: dict[str, str] = {}
+        if extra_properties:
+            merged_properties.update(extra_properties)
+        if template_properties:
+            merged_properties.update(template_properties)
 
         # Step 1: Ingest — create in both stores
         obj_id = self.store.create(
             obj_type=obj_type,
             title=title,
             content=content,
-            properties=properties if properties else None,
+            properties=merged_properties if merged_properties else None,
             project=project,
             tags=tags,
             captured_by=captured_by,
+            summary=summary,
+            confidence=confidence if summary else 1.0,
         )
 
         result: dict[str, Any] = {
@@ -95,15 +112,21 @@ class PipelineOrchestrator:
             return result
 
         # Step 2: Full pipeline
-        pipeline_result = self.run_pipeline(obj_id)
+        pipeline_result = self.run_pipeline(obj_id, pre_entities=entities)
         result.update(pipeline_result)
         return result
 
-    def run_pipeline(self, obj_id: str) -> dict[str, Any]:
+    def run_pipeline(
+        self, obj_id: str, pre_entities: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
         """Run the full pipeline on an existing object.
 
         Stages: NORMALIZE → LINK → ENRICH → REASON
         Each stage is resilient — failure in one doesn't block the others.
+
+        Args:
+            obj_id: The object ID to process.
+            pre_entities: Pre-extracted entities; used instead of normalize output if set.
         """
         result: dict[str, Any] = {"pipeline_stages": {}}
 
@@ -111,11 +134,11 @@ class PipelineOrchestrator:
         try:
             norm_result = self.normalizer.run(obj_id)
             result["pipeline_stages"]["normalize"] = norm_result
-            entities = norm_result.get("entities", [])
+            entities = pre_entities if pre_entities is not None else norm_result.get("entities", [])
         except Exception as e:
             logger.warning("Normalize failed for %s: %s", obj_id, e)
             result["pipeline_stages"]["normalize"] = {"status": "failed", "error": str(e)}
-            entities = []
+            entities = pre_entities if pre_entities is not None else []
 
         # LINK
         try:

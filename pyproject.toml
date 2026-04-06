@@ -17,8 +17,6 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     # CLI
     "typer>=0.15",
-    # LLM
-    "litellm>=1.60",
     # Embeddings
     "sentence-transformers>=3.4",
     # Templates
@@ -29,9 +27,12 @@ dependencies = [
     "bcrypt>=4.2",
     # MCP
     "mcp>=1.6",
-    # HTTP client (for litellm / general)
+    # HTTP client
     "httpx>=0.28",
 ]
+
+[project.optional-dependencies]
+llm = ["litellm>=1.60"]
 
 [project.scripts]
 cortex = "cortex.cli.main:app"

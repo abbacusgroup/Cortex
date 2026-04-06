@@ -394,13 +394,17 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
-    { name = "litellm" },
     { name = "mcp" },
     { name = "pyoxigraph" },
     { name = "python-dotenv" },
     { name = "sentence-transformers" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+llm = [
+    { name = "litellm" },
 ]
 
 [package.dev-dependencies]
@@ -418,7 +422,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "jinja2", specifier = ">=3.1" },
-    { name = "litellm", specifier = ">=1.60" },
+    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.60" },
     { name = "mcp", specifier = ">=1.6" },
     { name = "pyoxigraph", specifier = ">=0.4" },
     { name = "python-dotenv", specifier = ">=1.1" },
@@ -426,6 +430,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.15" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
 ]
+provides-extras = ["llm"]
 
 [package.metadata.requires-dev]
 dev = [

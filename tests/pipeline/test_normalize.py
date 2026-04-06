@@ -112,3 +112,34 @@ class TestNormalizeNotFound:
     ):
         result = normalizer.run("nonexistent-id-12345")
         assert result["status"] == "not_found"
+
+
+# -- Pre-classified objects ---------------------------------------------------
+
+
+class TestNormalizePreClassified:
+    def test_pre_classified_skips_llm(self, store, normalizer):
+        obj_id = store.create(
+            obj_type="fix", title="Pre-classified", content="some content",
+            summary="A pre-classified fix", confidence=0.9,
+        )
+        result = normalizer.run(obj_id)
+        assert result["status"] == "normalized"
+        assert result["type"] == "fix"
+        assert result["confidence"] == 0.9
+
+    def test_pre_classified_preserves_summary(self, store, normalizer):
+        obj_id = store.create(
+            obj_type="lesson", title="Test", content="content",
+            summary="My custom summary",
+        )
+        normalizer.run(obj_id)
+        doc = store.content.get(obj_id)
+        assert doc["summary"] == "My custom summary"
+
+    def test_without_summary_uses_fallback(self, store, normalizer):
+        obj_id = store.create(obj_type="fix", title="No summary", content="content")
+        result = normalizer.run(obj_id)
+        assert result["status"] == "normalized"
+        # Without LLM, fallback sets confidence to 0.0
+        assert result["confidence"] == 0.0

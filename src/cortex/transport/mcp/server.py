@@ -1,4 +1,4 @@
-"""Cortex MCP server — 16 tools for AI agent integration.
+"""Cortex MCP server — 17 tools for AI agent integration.
 
 Provides both stdio and StreamableHTTP transports.
 Admin tools (status, synthesize, delete, export, safety_check, reason) are
@@ -7,6 +7,7 @@ only exposed on stdio, not HTTP.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -15,6 +16,7 @@ from cortex.core.config import CortexConfig, load_config
 from cortex.core.logging import get_logger, setup_logging
 from cortex.db.store import Store
 from cortex.ontology.resolver import find_ontology
+from cortex.pipeline.link import LinkStage
 from cortex.pipeline.orchestrator import PipelineOrchestrator
 from cortex.retrieval.engine import RetrievalEngine
 from cortex.retrieval.graph import GraphQueries
@@ -153,18 +155,52 @@ def create_mcp_server(
         tags: str = "",
         template: str = "",
         run_pipeline: bool = True,
+        summary: str = "",
+        entities: str = "",
+        properties: str = "",
     ) -> dict[str, Any]:
-        """Capture a knowledge object with optional auto-classification.
+        """Capture a knowledge object. When calling via MCP, YOU (Claude) are the classifier.
+
+        Analyze the content and provide classification data directly:
+        - summary: 1-2 sentence summary of the content
+        - entities: JSON array of entities mentioned,
+          e.g. [{"name": "Python", "type": "technology"}]
+          Entity types: technology, project, pattern, concept
+        - obj_type: Best-fit type from: decision, lesson, fix,
+          session, research, source, synthesis, idea
+
+        Optionally provide type-specific properties as JSON:
+          decision: {"rationale": "...", "chosen": "..."}
+          fix: {"symptom": "...", "rootCause": "...", "resolution": "..."}
+          session: {"goal": "...", "worked": "...", "failed": "...", "nextSteps": "..."}
+          lesson: {"cause": "...", "impact": "...", "prevention": "..."}
 
         Args:
             title: Title for the knowledge object.
             content: Full text content.
-            obj_type: Type (decision, lesson, fix, session, research, source, synthesis, idea).
+            obj_type: Type classification.
             project: Project name.
             tags: Comma-separated tags.
-            template: Template name (session, fix, decision, lesson, research, idea).
-            run_pipeline: Run full intelligence pipeline (default True).
+            template: Template name.
+            run_pipeline: Run intelligence pipeline (default True).
+            summary: Your 1-2 sentence summary.
+            entities: JSON array of entities: [{"name": "...", "type": "..."}].
+            properties: JSON of type-specific properties.
         """
+        parsed_entities = None
+        if entities:
+            try:
+                parsed_entities = json.loads(entities)
+            except json.JSONDecodeError:
+                parsed_entities = None
+
+        parsed_properties = None
+        if properties:
+            try:
+                parsed_properties = json.loads(properties)
+            except json.JSONDecodeError:
+                parsed_properties = None
+
         return pipeline.capture(
             title=title,
             content=content,
@@ -174,6 +210,10 @@ def create_mcp_server(
             template=template or None,
             captured_by="mcp",
             run_pipeline=run_pipeline,
+            summary=summary,
+            entities=parsed_entities,
+            extra_properties=parsed_properties,
+            confidence=0.9 if summary else 0.0,
         )
 
     @mcp.tool()
@@ -268,6 +308,87 @@ def create_mcp_server(
         if doc is None:
             return {"error": f"Not found: {obj_id}"}
         return pipeline.run_pipeline(obj_id)
+
+    @mcp.tool()
+    def cortex_classify(
+        obj_id: str,
+        summary: str = "",
+        obj_type: str = "",
+        entities: str = "",
+        properties: str = "",
+        tags: str = "",
+        project: str = "",
+    ) -> dict[str, Any]:
+        """Classify or reclassify an existing knowledge object.
+
+        Use cortex_read first to examine the object, then call this to enrich it.
+
+        Provide:
+        - summary: 1-2 sentence summary
+        - obj_type: Corrected type (decision, lesson, fix,
+          session, research, source, synthesis, idea)
+        - entities: JSON array of [{"name": "...", "type": "technology|project|pattern|concept"}]
+
+        Args:
+            obj_id: ID of the object to classify.
+            summary: Your summary of the content.
+            obj_type: Corrected type classification.
+            entities: JSON array of entities.
+            properties: JSON of type-specific properties.
+            tags: Updated comma-separated tags.
+            project: Updated project name.
+        """
+        doc = store.read(obj_id)
+        if doc is None:
+            return {"status": "error", "message": f"Not found: {obj_id}"}
+
+        updates: dict[str, Any] = {"confidence": 0.9}
+        if summary:
+            updates["summary"] = summary
+        if obj_type:
+            updates["type"] = obj_type
+        if tags:
+            updates["tags"] = tags
+        if project:
+            updates["project"] = project
+
+        try:
+            store.content.update(obj_id, **updates)
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+        # Update graph with properties
+        graph_updates: dict[str, str] = {}
+        if summary:
+            graph_updates["summary"] = summary
+        if properties:
+            try:
+                parsed = json.loads(properties)
+                graph_updates.update({k: v for k, v in parsed.items() if isinstance(v, str)})
+            except json.JSONDecodeError:
+                pass
+        if graph_updates:
+            try:
+                store.graph.update_object(obj_id, **graph_updates)
+            except Exception:
+                pass
+
+        # Resolve entities
+        resolved = []
+        if entities:
+            try:
+                parsed_entities = json.loads(entities)
+                linker = LinkStage(store, llm)
+                resolved = linker._resolve_entities(obj_id, parsed_entities)
+            except Exception as e:
+                logger.warning("Entity resolution failed: %s", e)
+
+        return {
+            "status": "classified",
+            "obj_id": obj_id,
+            "updates": updates,
+            "entities_resolved": len(resolved),
+        }
 
     # ─── Admin Tools ───────────────────────────────────────────────
 

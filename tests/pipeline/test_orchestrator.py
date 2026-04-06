@@ -179,3 +179,38 @@ class TestRunPipeline:
 
         # Status should be either "complete" or "partial"
         assert result["status"] in ("complete", "partial")
+
+
+class TestCaptureWithPreClassification:
+    def test_summary_stored_at_ingest(self, orchestrator, store):
+        result = orchestrator.capture(
+            title="Pre-classified", content="body",
+            summary="A summary", run_pipeline=False,
+        )
+        doc = store.content.get(result["id"])
+        assert doc["summary"] == "A summary"
+
+    def test_confidence_stored(self, orchestrator, store):
+        result = orchestrator.capture(
+            title="Test", content="body",
+            summary="A summary", confidence=0.9, run_pipeline=False,
+        )
+        doc = store.content.get(result["id"])
+        assert doc["confidence"] == 0.9
+
+    def test_entities_used_in_pipeline(self, orchestrator, store):
+        result = orchestrator.capture(
+            title="Entity test", content="Using Python and FastAPI",
+            summary="Python FastAPI usage",
+            entities=[
+                {"name": "Python", "type": "technology"},
+                {"name": "FastAPI", "type": "technology"},
+            ],
+            run_pipeline=True,
+        )
+        assert result.get("status") in ("complete", "partial")
+        # Verify entities were resolved
+        ents = store.graph.list_entities()
+        names = {e["name"] for e in ents}
+        assert "Python" in names
+        assert "FastAPI" in names
