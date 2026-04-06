@@ -27,9 +27,11 @@
                 <option value="idea">Idea</option>
             </select>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="loadGraph()">Apply</button>
+        <button class="btn btn-primary btn-sm" onclick="loadGraph(false)">Apply</button>
     </div>
 </div>
+
+<button id="load-more" class="btn btn-sm" style="display:none; margin-bottom: 1rem;" onclick="loadGraph(true)">Load more nodes</button>
 
 <div id="cy"></div>
 

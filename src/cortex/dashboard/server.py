@@ -281,6 +281,8 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         request: Request,
         project: str = "",
         doc_type: str = "",
+        limit: int = 500,
+        offset: int = 0,
     ):
         """Return graph data in Cytoscape.js format."""
         session = _require_auth(request)
@@ -290,7 +292,8 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         objects = store.list_objects(
             obj_type=doc_type or None,
             project=project or None,
-            limit=200,
+            limit=min(limit, 1000),
+            offset=offset,
         )
 
         nodes = []
@@ -349,7 +352,13 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
                         },
                     })
 
-        return {"nodes": nodes, "edges": edges}
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "total": store.content.total_count(),
+            "limit": min(limit, 1000),
+            "offset": offset,
+        }
 
     @app.get("/api/dossier/{topic}")
     async def api_dossier(request: Request, topic: str):

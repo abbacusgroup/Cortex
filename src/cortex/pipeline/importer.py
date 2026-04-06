@@ -19,6 +19,25 @@ from cortex.db.store import Store
 
 logger = get_logger("pipeline.importer")
 
+_TECHNOLOGIES = frozenset({
+    "python", "javascript", "typescript", "rust", "go", "java",
+    "react", "fastapi", "django", "flask", "express", "node",
+    "docker", "kubernetes", "postgresql", "mysql", "sqlite", "redis",
+    "mongodb", "neo4j", "elasticsearch", "kafka",
+    "git", "github", "linux", "graphql", "pytorch", "tensorflow",
+    "anthropic", "openai", "langchain", "oxigraph", "sparql",
+    "nginx", "aws", "gcp", "azure", "terraform",
+})
+
+
+def _extract_entities_from_tags(store: Store, obj_id: str, tags: str) -> None:
+    """Create entity nodes from tags and link to the document."""
+    tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
+    for tag in tag_list:
+        entity_type = "technology" if tag in _TECHNOLOGIES else "concept"
+        entity_id = store.create_entity(name=tag, entity_type=entity_type)
+        store.add_mention(obj_id=obj_id, entity_id=entity_id)
+
 
 class CortexV1Importer:
     """Import from Cortex v1 SQLite database."""
@@ -71,15 +90,18 @@ class CortexV1Importer:
 
                 obj_type = self._map_v1_type(row_dict.get("type", ""))
 
-                self.store.create(
+                tags = row_dict.get("tags", "") or ""
+                obj_id = self.store.create(
                     obj_type=obj_type,
                     title=title,
                     content=content,
                     raw_markdown=content,
                     project=row_dict.get("project", "") or "",
-                    tags=row_dict.get("tags", "") or "",
+                    tags=tags,
                     captured_by="import-v1",
                 )
+                if tags:
+                    _extract_entities_from_tags(self.store, obj_id, tags)
                 imported += 1
             except Exception as e:
                 logger.warning("Failed to import v1 doc '%s': %s", row_dict.get("title", "?"), e)
@@ -122,6 +144,14 @@ class CortexV1Importer:
 
         existing = self.store.content.get_config(f"import_hash:{content_hash}", "")
         if existing:
+            return True
+
+        # Title-based fallback (direct SQL, not FTS)
+        row = self.store.content._db.execute(
+            "SELECT id FROM documents WHERE title = ? AND captured_by LIKE 'import-%' LIMIT 1",
+            (title,),
+        ).fetchone()
+        if row:
             return True
 
         # Store hash for future dedup
@@ -168,14 +198,14 @@ class ObsidianImporter:
                 title = md_file.stem
                 relative = str(md_file.relative_to(vault_path))
 
-                # Dedup check
-                if self._is_duplicate(title, content):
-                    skipped += 1
-                    continue
-
-                # Parse frontmatter
+                # Parse frontmatter and strip before dedup
                 meta = self._parse_frontmatter(content)
                 body = self._strip_frontmatter(content)
+
+                # Dedup check — hash on stripped body only
+                if self._is_duplicate(title, body):
+                    skipped += 1
+                    continue
 
                 obj_type = self._infer_type(meta, relative)
                 project = meta.get("project", "") or self._infer_project(relative)
@@ -183,7 +213,7 @@ class ObsidianImporter:
                 if isinstance(tags, list):
                     tags = ",".join(tags)
 
-                self.store.create(
+                obj_id = self.store.create(
                     obj_type=obj_type,
                     title=title,
                     content=body,
@@ -192,6 +222,8 @@ class ObsidianImporter:
                     tags=tags,
                     captured_by="import-obsidian",
                 )
+                if tags:
+                    _extract_entities_from_tags(self.store, obj_id, tags)
                 imported += 1
             except Exception as e:
                 logger.warning("Failed to import '%s': %s", md_file.name, e)
@@ -216,26 +248,74 @@ class ObsidianImporter:
         existing = self.store.content.get_config(f"import_hash:{content_hash}", "")
         if existing:
             return True
+
+        # Title-based fallback (direct SQL, not FTS)
+        row = self.store.content._db.execute(
+            "SELECT id FROM documents WHERE title = ? AND captured_by LIKE 'import-%' LIMIT 1",
+            (title,),
+        ).fetchone()
+        if row:
+            return True
+
         self.store.content.set_config(f"import_hash:{content_hash}", "1")
         return False
 
     @staticmethod
     def _parse_frontmatter(content: str) -> dict[str, Any]:
-        """Parse YAML frontmatter from markdown."""
+        """Parse YAML frontmatter from markdown.
+
+        Handles both inline lists ([a, b]) and multi-line lists:
+            tags:
+              - palantir
+              - neo4j
+        """
         match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
         if not match:
             return {}
 
         meta: dict[str, Any] = {}
+        current_key: str | None = None
+        current_list: list[str] | None = None
+
         for line in match.group(1).split("\n"):
-            if ":" in line:
+            # Check for list item (indented "- value")
+            list_match = re.match(r"^\s+- (.+)$", line)
+            if list_match and current_key is not None:
+                if current_list is None:
+                    current_list = []
+                current_list.append(list_match.group(1).strip().strip("'\""))
+                continue
+
+            # Save any accumulated list
+            if current_key is not None and current_list is not None:
+                meta[current_key] = current_list
+                current_list = None
+                current_key = None
+
+            # Check for key: value pair
+            if ":" in line and not line.startswith(" "):
                 key, _, value = line.partition(":")
                 key = key.strip()
                 value = value.strip()
-                # Handle YAML lists (simple)
-                if value.startswith("[") and value.endswith("]"):
-                    value = [v.strip().strip("'\"") for v in value[1:-1].split(",")]
-                meta[key] = value
+
+                if not value:
+                    # Value on next lines (multi-line list)
+                    current_key = key
+                    current_list = None
+                elif value.startswith("[") and value.endswith("]"):
+                    # Inline list: [a, b, c]
+                    meta[key] = [
+                        v.strip().strip("'\"")
+                        for v in value[1:-1].split(",")
+                    ]
+                else:
+                    meta[key] = value.strip("'\"")
+                    current_key = None
+
+        # Save final accumulated list
+        if current_key is not None and current_list is not None:
+            meta[current_key] = current_list
+
         return meta
 
     @staticmethod

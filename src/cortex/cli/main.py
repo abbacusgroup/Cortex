@@ -580,10 +580,51 @@ def dashboard(
 
 @app.command(name="pipeline")
 def run_pipeline_cmd(
-    obj_id: str = typer.Argument(..., help="Object ID to run pipeline on"),
+    obj_id: str = typer.Argument(None, help="Object ID to run pipeline on"),
+    batch: bool = typer.Option(False, "--batch", help="Process all un-pipelined docs"),
 ) -> None:
-    """Re-run the intelligence pipeline on an existing object."""
+    """Re-run the intelligence pipeline on one or all objects."""
     store = _get_store()
+
+    if batch:
+        # Query for docs at 'ingest' stage
+        docs = store.content._db.execute(
+            "SELECT id, title FROM documents"
+            " WHERE pipeline_stage = 'ingest'"
+            " ORDER BY created_at ASC"
+        ).fetchall()
+
+        total = len(docs)
+        if total == 0:
+            typer.echo("No documents pending pipeline processing.")
+            return
+
+        typer.echo(f"Processing {total} documents through pipeline...\n")
+
+        pipe = _get_pipeline()
+        succeeded = 0
+        failed = 0
+
+        for i, doc in enumerate(docs, 1):
+            doc_id = doc["id"]
+            title = doc["title"][:50]
+            try:
+                typer.echo(f"  [{i}/{total}] {title}...", nl=False)
+                result = pipe.run_pipeline(doc_id)
+                status = result.get("status", "?")
+                typer.echo(f" {status}")
+                succeeded += 1
+            except Exception as e:
+                typer.echo(f" FAILED: {e}")
+                failed += 1
+
+        typer.echo(f"\nBatch complete: {succeeded} succeeded, {failed} failed out of {total}")
+        return
+
+    if obj_id is None:
+        typer.echo("Error: provide OBJ_ID or use --batch", err=True)
+        raise typer.Exit(1)
+
     doc = store.read(obj_id)
     if doc is None:
         typer.echo(f"Not found: {obj_id}", err=True)

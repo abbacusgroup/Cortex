@@ -28,6 +28,8 @@ const REL_STYLES = {
     mentions:    { lineColor: '#9ca3af', lineStyle: 'dotted' },
 };
 
+var currentOffset = 0;
+
 function initGraph(elements) {
     cy = cytoscape({
         container: document.getElementById('cy'),
@@ -120,22 +122,34 @@ function initGraph(elements) {
     });
 }
 
-function loadGraph() {
+function loadGraph(append) {
     var project = document.getElementById('gf-project').value;
     var type = document.getElementById('gf-type').value;
-    var url = '/api/graph-data?project=' + encodeURIComponent(project) + '&doc_type=' + encodeURIComponent(type);
+    var limit = 500;
+    var offset = append ? currentOffset : 0;
+    var url = '/api/graph-data?project=' + encodeURIComponent(project) +
+              '&doc_type=' + encodeURIComponent(type) +
+              '&limit=' + limit + '&offset=' + offset;
 
     fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(data) {
             var elements = data.nodes.concat(data.edges);
-            if (cy) { cy.destroy(); }
-            initGraph(elements);
+            if (!append || !cy) {
+                if (cy) { cy.destroy(); }
+                initGraph(elements);
+            } else {
+                cy.add(elements);
+                cy.layout({name: 'cose', animate: false, fit: true}).run();
+            }
+            currentOffset = offset + data.nodes.length;
+            var btn = document.getElementById('load-more');
+            if (btn) {
+                btn.style.display = (currentOffset < data.total) ? 'inline-block' : 'none';
+            }
         })
-        .catch(function(err) {
-            console.error('Failed to load graph:', err);
-        });
+        .catch(function(err) { console.error('Failed to load graph:', err); });
 }
 
 // Auto-load on page ready
-document.addEventListener('DOMContentLoaded', loadGraph);
+document.addEventListener('DOMContentLoaded', function() { loadGraph(false); });
