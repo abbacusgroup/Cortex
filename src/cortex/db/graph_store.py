@@ -43,9 +43,17 @@ class GraphStore:
         Args:
             path: Directory for persistent storage. If None, uses in-memory store.
         """
+        self._read_only = False
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
-            self._store = ox.Store(str(path))
+            try:
+                self._store = ox.Store(str(path))
+            except OSError:
+                logger.warning(
+                    "Graph DB locked by another process — using in-memory fallback"
+                )
+                self._store = ox.Store()
+                self._read_only = True
         else:
             self._store = ox.Store()
         self._ontology_loaded = False
