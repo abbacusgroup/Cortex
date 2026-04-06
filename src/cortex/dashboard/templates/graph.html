@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% set active = "graph" %}
+{% block title %}Cortex — Knowledge Graph{% endblock %}
+
+{% block head %}
+<script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 1rem;">Knowledge Graph</h2>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <div style="display: flex; gap: 0.5rem; align-items: end;">
+        <div>
+            <label for="gf-project">Project</label>
+            <input type="text" id="gf-project" placeholder="Filter by project...">
+        </div>
+        <div>
+            <label for="gf-type">Type</label>
+            <select id="gf-type">
+                <option value="">All</option>
+                <option value="decision">Decision</option>
+                <option value="lesson">Lesson</option>
+                <option value="fix">Fix</option>
+                <option value="session">Session</option>
+                <option value="research">Research</option>
+                <option value="idea">Idea</option>
+            </select>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="loadGraph()">Apply</button>
+    </div>
+</div>
+
+<div id="cy"></div>
+
+<div id="node-detail" class="card" style="display:none; margin-top: 1rem;">
+    <div class="card-header">Selected Node</div>
+    <div id="node-info"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/graph.js"></script>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% set active = "documents" %}
+{% block title %}Cortex — Documents{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 1rem;">Documents</h2>
+
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="GET" action="/documents" style="display: flex; gap: 0.5rem; align-items: end;">
+        <div style="flex: 1;">
+            <label for="q">Search</label>
+            <input type="text" id="q" name="q" value="{{ query }}" placeholder="Search knowledge...">
+        </div>
+        <div>
+            <label for="doc_type">Type</label>
+            <select id="doc_type" name="doc_type">
+                <option value="">All</option>
+                {% for t in ['decision','lesson','fix','session','research','source','synthesis','idea'] %}
+                <option value="{{ t }}" {{ 'selected' if doc_type == t }}>{{ t|capitalize }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="project">Project</label>
+            <input type="text" id="project" name="project" value="{{ project }}" placeholder="Project...">
+        </div>
+        <button type="submit" class="btn btn-primary">Search</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header">{{ documents|length }} result(s)</div>
+    <table>
+        <thead><tr><th>Type</th><th>Title</th><th>Project</th><th>Tags</th></tr></thead>
+        <tbody>
+        {% for doc in documents %}
+        <tr>
+            <td><span class="badge badge-{{ doc.type }}">{{ doc.type }}</span></td>
+            <td><a href="/documents/{{ doc.id }}">{{ doc.title }}</a></td>
+            <td>{{ doc.project }}</td>
+            <td>{{ doc.tags }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" style="text-align:center; color: var(--text-muted);">No documents found.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

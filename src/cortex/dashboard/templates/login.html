@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cortex — Login</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="login-container">
+    <div class="card">
+        <h2 style="margin-bottom: 1rem;">Cortex</h2>
+        {% if error %}
+        <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+        <form method="POST" action="/login">
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required autofocus>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width:100%">Sign In</button>
+        </form>
+    </div>
+</div>
+</body>
+</html>

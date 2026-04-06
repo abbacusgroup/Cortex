@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% set active = "entities" %}
+{% block title %}Cortex — Entities{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 1rem;">Entities</h2>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <form method="GET" action="/entities" style="display: flex; gap: 0.5rem; align-items: end;">
+        <div>
+            <label for="entity_type">Type</label>
+            <select id="entity_type" name="entity_type">
+                <option value="">All</option>
+                {% for t in ['technology','project','pattern','concept'] %}
+                <option value="{{ t }}" {{ 'selected' if entity_type == t }}>{{ t|capitalize }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header">{{ entities|length }} entity(ies)</div>
+    <table>
+        <thead><tr><th>Name</th><th>Type</th><th>ID</th></tr></thead>
+        <tbody>
+        {% for e in entities %}
+        <tr>
+            <td><strong>{{ e.name }}</strong></td>
+            <td><span class="badge">{{ e.type }}</span></td>
+            <td style="color: var(--text-muted); font-size: 0.75rem;">{{ e.id[:12] }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" style="text-align:center; color: var(--text-muted);">No entities found.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

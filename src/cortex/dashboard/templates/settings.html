@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% set active = "settings" %}
+{% block title %}Cortex — Settings{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 1rem;">Settings</h2>
+
+<div class="card">
+    <div class="card-header">Configuration</div>
+    <table>
+        <tbody>
+        <tr><td style="font-weight: 600;">Data Directory</td><td>{{ config.data_dir }}</td></tr>
+        <tr><td style="font-weight: 600;">Host</td><td>{{ config.host }}</td></tr>
+        <tr><td style="font-weight: 600;">Port</td><td>{{ config.port }}</td></tr>
+        <tr><td style="font-weight: 600;">LLM Provider</td><td>{{ config.llm_provider or '(not configured)' }}</td></tr>
+        <tr><td style="font-weight: 600;">LLM Model</td><td>{{ config.llm_model or '(not configured)' }}</td></tr>
+        <tr><td style="font-weight: 600;">Embedding Model</td><td>{{ config.embedding_model }}</td></tr>
+        <tr><td style="font-weight: 600;">Log Level</td><td>{{ config.log_level }}</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <div class="card-header">Retrieval Weights</div>
+    <table>
+        <thead><tr><th>Signal</th><th>Weight</th></tr></thead>
+        <tbody>
+        {% for key, val in weights.items() %}
+        <tr><td>{{ key|capitalize }}</td><td>{{ val }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

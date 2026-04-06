@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% set active = "documents" %}
+{% block title %}Cortex — {{ doc.title }}{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 1rem;">
+    <a href="/documents">&larr; Back to documents</a>
+</div>
+
+<h2 style="margin-bottom: 0.5rem;">{{ doc.title }}</h2>
+<span class="badge badge-{{ doc.type }}">{{ doc.type }}</span>
+
+<div class="card" style="margin-top: 1rem;">
+    <div class="meta-grid">
+        <div class="meta-item">
+            <label>ID</label>
+            <span>{{ doc.id }}</span>
+        </div>
+        <div class="meta-item">
+            <label>Project</label>
+            <span>{{ doc.project or '—' }}</span>
+        </div>
+        <div class="meta-item">
+            <label>Tags</label>
+            <span>{{ doc.tags or '—' }}</span>
+        </div>
+        <div class="meta-item">
+            <label>Tier</label>
+            <span>{{ doc.tier or '—' }}</span>
+        </div>
+        <div class="meta-item">
+            <label>Confidence</label>
+            <span>{{ doc.confidence }}</span>
+        </div>
+        <div class="meta-item">
+            <label>Created</label>
+            <span>{{ doc.created_at[:19] if doc.created_at else '—' }}</span>
+        </div>
+    </div>
+</div>
+
+{% if doc.content %}
+<div class="card">
+    <div class="card-header">Content</div>
+    <div class="content-body">{{ doc.content }}</div>
+</div>
+{% endif %}
+
+{% if doc.relationships %}
+<div class="card">
+    <div class="card-header">Relationships</div>
+    <ul class="rel-list">
+    {% for rel in doc.relationships %}
+        <li>
+            {{ '→' if rel.direction == 'outgoing' else '←' }}
+            <strong>{{ rel.rel_type }}</strong>
+            <a href="/documents/{{ rel.other_id }}">{{ rel.other_id[:12] }}...</a>
+        </li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+{% endblock %}

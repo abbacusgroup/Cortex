@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Cortex{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h1>Cortex</h1>
+            <small>Knowledge System</small>
+        </div>
+        <nav>
+            <a href="/" class="{% if active == 'home' %}active{% endif %}">Home</a>
+            <a href="/documents" class="{% if active == 'documents' %}active{% endif %}">Documents</a>
+            <a href="/graph" class="{% if active == 'graph' %}active{% endif %}">Graph</a>
+            <a href="/entities" class="{% if active == 'entities' %}active{% endif %}">Entities</a>
+            <a href="/create" class="{% if active == 'create' %}active{% endif %}">Create</a>
+            <a href="/trail" class="{% if active == 'trail' %}active{% endif %}">Query Trail</a>
+            <a href="/settings" class="{% if active == 'settings' %}active{% endif %}">Settings</a>
+        </nav>
+    </aside>
+    <main class="main">
+        {% block content %}{% endblock %}
+    </main>
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>

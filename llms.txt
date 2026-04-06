@@ -1,0 +1,94 @@
+# Cortex — Cognitive Knowledge System
+
+> Cortex is a persistent knowledge system for AI agents with formal ontology,
+> reasoning, and intelligence serving. It uses OWL-RL, Oxigraph, SQLite FTS5,
+> and hybrid retrieval to manage and serve knowledge objects.
+
+## Tools
+
+### cortex_search
+Hybrid keyword + semantic + graph search. Returns ranked results.
+- query (str, required): Search text
+- doc_type (str): Filter by type
+- project (str): Filter by project
+- limit (int): Max results (default 20)
+
+### cortex_context
+Token-efficient briefing (summaries only). Use this for context injection.
+- topic (str, required): Topic to query
+- limit (int): Max results (default 10)
+
+### cortex_dossier
+Entity-centric intelligence brief with contradictions, timeline, related entities.
+- topic (str, required): Entity name or topic
+
+### cortex_read
+Full document with content, metadata, and relationships.
+- obj_id (str, required): Object ID
+
+### cortex_capture
+Create a knowledge object with optional auto-classification pipeline.
+- title (str, required): Title
+- content (str): Full text content
+- obj_type (str): Type (decision, lesson, fix, session, research, source, synthesis, idea)
+- project (str): Project name
+- tags (str): Comma-separated tags
+- template (str): Template name (session, fix, decision, lesson, research, idea)
+- run_pipeline (bool): Run intelligence pipeline (default true)
+
+### cortex_link
+Create a typed relationship between two knowledge objects.
+- from_id (str, required): Source object ID
+- rel_type (str, required): causedBy, contradicts, supports, supersedes, dependsOn, implements
+- to_id (str, required): Target object ID
+
+### cortex_feedback
+Provide explicit relevance feedback for retrieval learning.
+- obj_id (str, required): Object ID
+- relevant (bool): True if relevant (default true)
+
+### cortex_graph
+Get the knowledge graph around an object or entity.
+- obj_id (str): Object ID
+- entity (str): Entity name (alternative to obj_id)
+
+### cortex_list
+List knowledge objects with optional filters.
+- doc_type (str): Filter by type
+- project (str): Filter by project
+- limit (int): Max results (default 50)
+
+### cortex_status (admin)
+Get health metrics, object counts, and active alerts.
+
+### cortex_synthesize (admin)
+Generate cross-document synthesis over a time period.
+- period_days (int): Days to cover (default 7)
+- project (str): Scope to project
+
+### cortex_delete (admin)
+Delete a knowledge object.
+- obj_id (str, required): Object ID
+
+### cortex_export (admin)
+Export a knowledge object as markdown.
+- obj_id (str, required): Object ID
+- format (str): Export format (default markdown)
+
+### cortex_safety_check (admin)
+Review a destructive action before executing.
+- action (str, required): Action description
+- target (str, required): What will be affected
+
+## Knowledge Types
+decision, lesson, fix, session, research, source, synthesis, idea
+
+## Relationship Types
+causedBy, contradicts, supports, supersedes, dependsOn, ledTo, implements, mentions
+
+## Best Practices
+1. Use `cortex_context` for lightweight context injection (token-efficient)
+2. Use `cortex_dossier` for deep research on an entity or topic
+3. Use `cortex_capture` at the end of sessions to persist learnings
+4. Use `cortex_link` to connect related objects (builds the graph)
+5. Use `cortex_feedback` to improve future search results

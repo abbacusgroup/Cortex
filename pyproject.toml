@@ -1,0 +1,61 @@
+[project]
+name = "cortex"
+version = "0.1.0"
+description = "Cognitive knowledge system with formal ontology, reasoning, and intelligence serving"
+readme = "README.md"
+authors = [
+    { name = "Fabrizzio Silveira", email = "74255714+grayisnotacolor@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    # Graph / Ontology
+    "pyoxigraph>=0.4",
+    # SQLite (async)
+    "aiosqlite>=0.20",
+    # Web framework
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    # CLI
+    "typer>=0.15",
+    # LLM
+    "litellm>=1.60",
+    # Embeddings
+    "sentence-transformers>=3.4",
+    # Templates
+    "jinja2>=3.1",
+    # Config
+    "python-dotenv>=1.1",
+    # Auth
+    "bcrypt>=4.2",
+    # MCP
+    "mcp>=1.6",
+    # HTTP client (for litellm / general)
+    "httpx>=0.28",
+]
+
+[project.scripts]
+cortex = "cortex.cli.main:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "httpx>=0.28",
+    "ruff>=0.11",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]

@@ -1,0 +1,428 @@
+@prefix cortex: <https://cortex.abbacus.ai/ontology#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix dc:     <http://purl.org/dc/elements/1.1/> .
+
+# =============================================================================
+# Cortex Ontology — Cognitive Knowledge System
+# =============================================================================
+
+cortex: a owl:Ontology ;
+    dc:title "Cortex Knowledge Ontology" ;
+    dc:description "Formal ontology for a cognitive knowledge system with reasoning, relationships, and intelligence." ;
+    owl:versionInfo "0.1.0" .
+
+# =============================================================================
+# CLASSES — Knowledge Object Hierarchy
+# =============================================================================
+
+cortex:KnowledgeObject a owl:Class ;
+    rdfs:label "Knowledge Object" ;
+    rdfs:comment "Base class for all knowledge captured in Cortex." .
+
+cortex:Decision a owl:Class ;
+    rdfs:subClassOf cortex:KnowledgeObject ;
+    rdfs:label "Decision" ;
+    rdfs:comment "An architectural or design decision with rationale." .
+
+cortex:Lesson a owl:Class ;
+    rdfs:subClassOf cortex:KnowledgeObject ;
+    rdfs:label "Lesson" ;
+    rdfs:comment "A lesson learned from experience." .
+
+cortex:Fix a owl:Class ;
+    rdfs:subClassOf cortex:KnowledgeObject ;
+    rdfs:label "Fix" ;
+    rdfs:comment "A bug fix or issue resolution." .
+
+cortex:Session a owl:Class ;
+    rdfs:subClassOf cortex:KnowledgeObject ;
+    rdfs:label "Session" ;
+    rdfs:comment "A working session record." .
+
+cortex:Research a owl:Class ;
+    rdfs:subClassOf cortex:KnowledgeObject ;
+    rdfs:label "Research" ;
+    rdfs:comment "Research findings on a topic." .
+
+cortex:Source a owl:Class ;
+    rdfs:subClassOf cortex:KnowledgeObject ;
+    rdfs:label "Source" ;
+    rdfs:comment "An external source or reference." .
+
+cortex:Synthesis a owl:Class ;
+    rdfs:subClassOf cortex:KnowledgeObject ;
+    rdfs:label "Synthesis" ;
+    rdfs:comment "A cross-document synthesis over a time period." .
+
+cortex:Idea a owl:Class ;
+    rdfs:subClassOf cortex:KnowledgeObject ;
+    rdfs:label "Idea" ;
+    rdfs:comment "A proposed idea or initiative." .
+
+# =============================================================================
+# CLASSES — Entity Hierarchy
+# =============================================================================
+
+cortex:Entity a owl:Class ;
+    rdfs:label "Entity" ;
+    rdfs:comment "A resolved entity referenced across knowledge objects." .
+
+cortex:Technology a owl:Class ;
+    rdfs:subClassOf cortex:Entity ;
+    rdfs:label "Technology" ;
+    rdfs:comment "A technology, framework, library, or tool." .
+
+cortex:Project a owl:Class ;
+    rdfs:subClassOf cortex:Entity ;
+    rdfs:label "Project" ;
+    rdfs:comment "A project or product." .
+
+cortex:Pattern a owl:Class ;
+    rdfs:subClassOf cortex:Entity ;
+    rdfs:label "Pattern" ;
+    rdfs:comment "A design pattern, architecture pattern, or anti-pattern." .
+
+cortex:Concept a owl:Class ;
+    rdfs:subClassOf cortex:Entity ;
+    rdfs:label "Concept" ;
+    rdfs:comment "An abstract concept or domain term." .
+
+# =============================================================================
+# OBJECT PROPERTIES — Relationships Between Knowledge Objects
+# =============================================================================
+
+cortex:causedBy a owl:ObjectProperty ;
+    rdfs:label "caused by" ;
+    rdfs:comment "This object was caused by or triggered by another." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range cortex:KnowledgeObject .
+
+cortex:ledTo a owl:ObjectProperty ;
+    rdfs:label "led to" ;
+    rdfs:comment "This object led to or triggered another." ;
+    owl:inverseOf cortex:causedBy ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range cortex:KnowledgeObject .
+
+cortex:contradicts a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:label "contradicts" ;
+    rdfs:comment "This object contradicts another (symmetric)." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range cortex:KnowledgeObject .
+
+cortex:supports a owl:ObjectProperty ;
+    rdfs:label "supports" ;
+    rdfs:comment "This object provides evidence for or supports another." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range cortex:KnowledgeObject .
+
+cortex:supersedes a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:label "supersedes" ;
+    rdfs:comment "This object replaces or supersedes another (transitive)." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range cortex:KnowledgeObject .
+
+cortex:dependsOn a owl:ObjectProperty ;
+    rdfs:label "depends on" ;
+    rdfs:comment "This object depends on another for validity." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range cortex:KnowledgeObject .
+
+cortex:implements a owl:ObjectProperty ;
+    rdfs:label "implements" ;
+    rdfs:comment "This session implements a decision." ;
+    rdfs:domain cortex:Session ;
+    rdfs:range cortex:Decision .
+
+cortex:mentions a owl:ObjectProperty ;
+    rdfs:label "mentions" ;
+    rdfs:comment "This knowledge object mentions an entity." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range cortex:Entity .
+
+# =============================================================================
+# DATATYPE PROPERTIES — Common to All Knowledge Objects
+# =============================================================================
+
+cortex:title a owl:DatatypeProperty ;
+    rdfs:label "title" ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+cortex:content a owl:DatatypeProperty ;
+    rdfs:label "content" ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+cortex:summary a owl:DatatypeProperty ;
+    rdfs:label "summary" ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+cortex:tags a owl:DatatypeProperty ;
+    rdfs:label "tags" ;
+    rdfs:comment "Comma-separated tags." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+cortex:project a owl:DatatypeProperty ;
+    rdfs:label "project" ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+# --- Provenance ---
+
+cortex:capturedBy a owl:DatatypeProperty ;
+    rdfs:label "captured by" ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+cortex:capturedAt a owl:DatatypeProperty ;
+    rdfs:label "captured at" ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:dateTime .
+
+cortex:sourceRef a owl:DatatypeProperty ;
+    rdfs:label "source reference" ;
+    rdfs:comment "External source URL or reference." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+cortex:confidence a owl:DatatypeProperty ;
+    rdfs:label "confidence" ;
+    rdfs:comment "Classification confidence score 0.0-1.0." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:float .
+
+# --- Temporal ---
+
+cortex:validFrom a owl:DatatypeProperty ;
+    rdfs:label "valid from" ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:dateTime .
+
+cortex:validTo a owl:DatatypeProperty ;
+    rdfs:label "valid to" ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:dateTime .
+
+cortex:supersededBy a owl:DatatypeProperty ;
+    rdfs:label "superseded by" ;
+    rdfs:comment "ID of the object that supersedes this one." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+# --- Tier ---
+
+cortex:tier a owl:DatatypeProperty ;
+    rdfs:label "tier" ;
+    rdfs:comment "Memory tier: archive, recall, or reflex." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+# --- Pipeline ---
+
+cortex:pipelineStage a owl:DatatypeProperty ;
+    rdfs:label "pipeline stage" ;
+    rdfs:comment "Current pipeline processing stage." ;
+    rdfs:domain cortex:KnowledgeObject ;
+    rdfs:range xsd:string .
+
+cortex:inferredBy a owl:DatatypeProperty ;
+    rdfs:label "inferred by" ;
+    rdfs:comment "Marks a triple as inferred by a specific reasoner." ;
+    rdfs:range xsd:string .
+
+# =============================================================================
+# DATATYPE PROPERTIES — Type-Specific
+# =============================================================================
+
+# --- Decision ---
+
+cortex:rationale a owl:DatatypeProperty ;
+    rdfs:label "rationale" ;
+    rdfs:domain cortex:Decision ;
+    rdfs:range xsd:string .
+
+cortex:alternatives a owl:DatatypeProperty ;
+    rdfs:label "alternatives" ;
+    rdfs:comment "Alternatives considered (JSON array or comma-separated)." ;
+    rdfs:domain cortex:Decision ;
+    rdfs:range xsd:string .
+
+cortex:chosen a owl:DatatypeProperty ;
+    rdfs:label "chosen" ;
+    rdfs:comment "The chosen option." ;
+    rdfs:domain cortex:Decision ;
+    rdfs:range xsd:string .
+
+cortex:decisionStatus a owl:DatatypeProperty ;
+    rdfs:label "decision status" ;
+    rdfs:comment "Status: proposed, accepted, deprecated, superseded." ;
+    rdfs:domain cortex:Decision ;
+    rdfs:range xsd:string .
+
+# --- Lesson ---
+
+cortex:cause a owl:DatatypeProperty ;
+    rdfs:label "cause" ;
+    rdfs:domain cortex:Lesson ;
+    rdfs:range xsd:string .
+
+cortex:impact a owl:DatatypeProperty ;
+    rdfs:label "impact" ;
+    rdfs:domain cortex:Lesson ;
+    rdfs:range xsd:string .
+
+cortex:prevention a owl:DatatypeProperty ;
+    rdfs:label "prevention" ;
+    rdfs:domain cortex:Lesson ;
+    rdfs:range xsd:string .
+
+# --- Fix ---
+
+cortex:symptom a owl:DatatypeProperty ;
+    rdfs:label "symptom" ;
+    rdfs:domain cortex:Fix ;
+    rdfs:range xsd:string .
+
+cortex:rootCause a owl:DatatypeProperty ;
+    rdfs:label "root cause" ;
+    rdfs:domain cortex:Fix ;
+    rdfs:range xsd:string .
+
+cortex:resolution a owl:DatatypeProperty ;
+    rdfs:label "resolution" ;
+    rdfs:domain cortex:Fix ;
+    rdfs:range xsd:string .
+
+cortex:severity a owl:DatatypeProperty ;
+    rdfs:label "severity" ;
+    rdfs:comment "Severity: low, medium, high, critical." ;
+    rdfs:domain cortex:Fix ;
+    rdfs:range xsd:string .
+
+cortex:filesAffected a owl:DatatypeProperty ;
+    rdfs:label "files affected" ;
+    rdfs:comment "Comma-separated list of affected file paths." ;
+    rdfs:domain cortex:Fix ;
+    rdfs:range xsd:string .
+
+# --- Session ---
+
+cortex:goal a owl:DatatypeProperty ;
+    rdfs:label "goal" ;
+    rdfs:domain cortex:Session ;
+    rdfs:range xsd:string .
+
+cortex:worked a owl:DatatypeProperty ;
+    rdfs:label "worked" ;
+    rdfs:comment "What worked in this session." ;
+    rdfs:domain cortex:Session ;
+    rdfs:range xsd:string .
+
+cortex:failed a owl:DatatypeProperty ;
+    rdfs:label "failed" ;
+    rdfs:comment "What failed in this session." ;
+    rdfs:domain cortex:Session ;
+    rdfs:range xsd:string .
+
+cortex:nextSteps a owl:DatatypeProperty ;
+    rdfs:label "next steps" ;
+    rdfs:domain cortex:Session ;
+    rdfs:range xsd:string .
+
+# --- Research ---
+
+cortex:question a owl:DatatypeProperty ;
+    rdfs:label "question" ;
+    rdfs:domain cortex:Research ;
+    rdfs:range xsd:string .
+
+cortex:findings a owl:DatatypeProperty ;
+    rdfs:label "findings" ;
+    rdfs:domain cortex:Research ;
+    rdfs:range xsd:string .
+
+cortex:sources a owl:DatatypeProperty ;
+    rdfs:label "sources" ;
+    rdfs:comment "Source URLs or references (comma-separated)." ;
+    rdfs:domain cortex:Research ;
+    rdfs:range xsd:string .
+
+# --- Source ---
+
+cortex:url a owl:DatatypeProperty ;
+    rdfs:label "url" ;
+    rdfs:domain cortex:Source ;
+    rdfs:range xsd:anyURI .
+
+cortex:author a owl:DatatypeProperty ;
+    rdfs:label "author" ;
+    rdfs:domain cortex:Source ;
+    rdfs:range xsd:string .
+
+cortex:credibility a owl:DatatypeProperty ;
+    rdfs:label "credibility" ;
+    rdfs:comment "Credibility score: low, medium, high." ;
+    rdfs:domain cortex:Source ;
+    rdfs:range xsd:string .
+
+# --- Synthesis ---
+
+cortex:period a owl:DatatypeProperty ;
+    rdfs:label "period" ;
+    rdfs:comment "Time period covered (e.g., '7d', '2026-03-01/2026-03-07')." ;
+    rdfs:domain cortex:Synthesis ;
+    rdfs:range xsd:string .
+
+cortex:themes a owl:DatatypeProperty ;
+    rdfs:label "themes" ;
+    rdfs:comment "Identified themes (JSON array or comma-separated)." ;
+    rdfs:domain cortex:Synthesis ;
+    rdfs:range xsd:string .
+
+cortex:sourceIds a owl:DatatypeProperty ;
+    rdfs:label "source IDs" ;
+    rdfs:comment "IDs of source objects (comma-separated)." ;
+    rdfs:domain cortex:Synthesis ;
+    rdfs:range xsd:string .
+
+# --- Idea ---
+
+cortex:feasibility a owl:DatatypeProperty ;
+    rdfs:label "feasibility" ;
+    rdfs:comment "Feasibility: low, medium, high." ;
+    rdfs:domain cortex:Idea ;
+    rdfs:range xsd:string .
+
+cortex:ideaStatus a owl:DatatypeProperty ;
+    rdfs:label "idea status" ;
+    rdfs:comment "Status: draft, exploring, validated, abandoned." ;
+    rdfs:domain cortex:Idea ;
+    rdfs:range xsd:string .
+
+cortex:dependencies a owl:DatatypeProperty ;
+    rdfs:label "dependencies" ;
+    rdfs:comment "Dependencies for this idea (comma-separated)." ;
+    rdfs:domain cortex:Idea ;
+    rdfs:range xsd:string .
+
+# =============================================================================
+# DATATYPE PROPERTIES — Entity
+# =============================================================================
+
+cortex:entityName a owl:DatatypeProperty ;
+    rdfs:label "entity name" ;
+    rdfs:comment "Canonical name of the entity." ;
+    rdfs:domain cortex:Entity ;
+    rdfs:range xsd:string .
+
+cortex:entityAliases a owl:DatatypeProperty ;
+    rdfs:label "entity aliases" ;
+    rdfs:comment "Alternative names (comma-separated)." ;
+    rdfs:domain cortex:Entity ;
+    rdfs:range xsd:string .

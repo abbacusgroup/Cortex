@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% set active = "create" %}
+{% block title %}Cortex — Create{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 1rem;">Create Knowledge Object</h2>
+
+<div class="card">
+    <form method="POST" action="/create">
+        <div class="form-group">
+            <label for="title">Title</label>
+            <input type="text" id="title" name="title" required placeholder="What is this about?">
+        </div>
+        <div class="form-group">
+            <label for="obj_type">Type</label>
+            <select id="obj_type" name="obj_type">
+                {% for t in ['idea','decision','lesson','fix','session','research','source','synthesis'] %}
+                <option value="{{ t }}">{{ t|capitalize }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="content">Content</label>
+            <textarea id="content" name="content" placeholder="Full details..."></textarea>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            <div class="form-group" style="flex:1;">
+                <label for="project">Project</label>
+                <input type="text" id="project" name="project" placeholder="Project name">
+            </div>
+            <div class="form-group" style="flex:1;">
+                <label for="tags">Tags</label>
+                <input type="text" id="tags" name="tags" placeholder="Comma-separated tags">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Capture</button>
+    </form>
+</div>
+{% endblock %}

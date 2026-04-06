@@ -1,0 +1,19 @@
+services:
+  cortex:
+    build: .
+    ports:
+      - "1314:1314"
+    volumes:
+      - cortex-data:/data
+    environment:
+      - CORTEX_DATA_DIR=/data
+      - CORTEX_HOST=0.0.0.0
+      - CORTEX_PORT=1314
+      # Uncomment and set your LLM config:
+      # - CORTEX_LLM_PROVIDER=anthropic
+      # - CORTEX_LLM_MODEL=claude-sonnet-4-20250514
+      # - CORTEX_LLM_API_KEY=sk-...
+    restart: unless-stopped
+
+volumes:
+  cortex-data:

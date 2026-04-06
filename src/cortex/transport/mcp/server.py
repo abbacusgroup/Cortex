@@ -1,0 +1,380 @@
+"""Cortex MCP server — 16 tools for AI agent integration.
+
+Provides both stdio and StreamableHTTP transports.
+Admin tools (status, synthesize, delete, export, safety_check, reason) are
+only exposed on stdio, not HTTP.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP
+
+from cortex.core.config import CortexConfig, load_config
+from cortex.core.logging import get_logger, setup_logging
+from cortex.db.store import Store
+from cortex.ontology.resolver import find_ontology
+from cortex.pipeline.orchestrator import PipelineOrchestrator
+from cortex.retrieval.engine import RetrievalEngine
+from cortex.retrieval.graph import GraphQueries
+from cortex.retrieval.learner import LearningLoop
+from cortex.retrieval.presenters import (
+    AlertPresenter,
+    BriefingPresenter,
+    DocumentPresenter,
+    DossierPresenter,
+    SynthesisPresenter,
+)
+from cortex.services.llm import LLMClient
+
+logger = get_logger("transport.mcp")
+
+# Admin tool names — only available on stdio
+ADMIN_TOOLS = frozenset({
+    "cortex_status",
+    "cortex_synthesize",
+    "cortex_delete",
+    "cortex_export",
+    "cortex_safety_check",
+    "cortex_reason",
+})
+
+
+def create_mcp_server(
+    config: CortexConfig | None = None,
+    *,
+    include_admin: bool = True,
+) -> FastMCP:
+    """Create and configure the Cortex MCP server.
+
+    Args:
+        config: Cortex configuration. If None, loads from env.
+        include_admin: If True, register admin tools (stdio mode).
+
+    Returns:
+        Configured FastMCP server instance.
+    """
+    if config is None:
+        config = load_config()
+
+    setup_logging(level=config.log_level, json_output=config.log_json)
+
+    store = Store(config)
+    try:
+        ontology_path = find_ontology()
+        store.initialize(ontology_path)
+    except FileNotFoundError:
+        pass
+
+    llm = LLMClient(config)
+    pipeline = PipelineOrchestrator(store, config)
+    engine = RetrievalEngine(store)
+    graph_queries = GraphQueries(store)
+    learner = LearningLoop(store)
+
+    mcp = FastMCP("cortex")
+
+    # ─── Public Tools ──────────────────────────────────────────────
+
+    @mcp.tool()
+    def cortex_search(
+        query: str,
+        doc_type: str = "",
+        project: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Search knowledge objects with hybrid keyword + semantic + graph ranking.
+
+        Args:
+            query: Search query text.
+            doc_type: Filter by type (decision, lesson, fix, session, etc.)
+            project: Filter by project name.
+            limit: Maximum results (default 20).
+        """
+        return engine.search(
+            query,
+            doc_type=doc_type or None,
+            project=project or None,
+            limit=limit,
+        )
+
+    @mcp.tool()
+    def cortex_context(
+        topic: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Get a briefing (summaries only) for a topic. Token-efficient.
+
+        Args:
+            topic: Topic to get context for.
+            limit: Maximum results (default 10).
+        """
+        results = engine.search(topic, limit=limit)
+        presenter = BriefingPresenter()
+        return presenter.render(results)
+
+    @mcp.tool()
+    def cortex_dossier(
+        topic: str,
+    ) -> dict[str, Any]:
+        """Build an entity/topic-centric intelligence brief.
+
+        Includes related objects, contradictions, timeline, and related entities.
+
+        Args:
+            topic: Entity name or topic to build dossier for.
+        """
+        presenter = DossierPresenter(store, llm)
+        return presenter.render(topic)
+
+    @mcp.tool()
+    def cortex_read(
+        obj_id: str,
+    ) -> dict[str, Any] | str:
+        """Read a knowledge object in full detail.
+
+        Args:
+            obj_id: Object ID to read.
+        """
+        presenter = DocumentPresenter(store)
+        result = presenter.render(obj_id)
+        if result is None:
+            return f"Not found: {obj_id}"
+        learner.record_access(obj_id)
+        return result
+
+    @mcp.tool()
+    def cortex_capture(
+        title: str,
+        content: str = "",
+        obj_type: str = "idea",
+        project: str = "",
+        tags: str = "",
+        template: str = "",
+        run_pipeline: bool = True,
+    ) -> dict[str, Any]:
+        """Capture a knowledge object with optional auto-classification.
+
+        Args:
+            title: Title for the knowledge object.
+            content: Full text content.
+            obj_type: Type (decision, lesson, fix, session, research, source, synthesis, idea).
+            project: Project name.
+            tags: Comma-separated tags.
+            template: Template name (session, fix, decision, lesson, research, idea).
+            run_pipeline: Run full intelligence pipeline (default True).
+        """
+        return pipeline.capture(
+            title=title,
+            content=content,
+            obj_type=obj_type,
+            project=project,
+            tags=tags,
+            template=template or None,
+            captured_by="mcp",
+            run_pipeline=run_pipeline,
+        )
+
+    @mcp.tool()
+    def cortex_link(
+        from_id: str,
+        rel_type: str,
+        to_id: str,
+    ) -> dict[str, Any]:
+        """Create a relationship between two knowledge objects.
+
+        Args:
+            from_id: Source object ID.
+            rel_type: Relationship type (causedBy, contradicts, supports, etc.).
+            to_id: Target object ID.
+        """
+        try:
+            store.create_relationship(from_id=from_id, rel_type=rel_type, to_id=to_id)
+            return {"status": "created", "from": from_id, "rel_type": rel_type, "to": to_id}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @mcp.tool()
+    def cortex_feedback(
+        obj_id: str,
+        relevant: bool = True,
+    ) -> dict[str, Any]:
+        """Provide explicit relevance feedback for an object.
+
+        Args:
+            obj_id: Object ID to provide feedback for.
+            relevant: True if the object was relevant/useful.
+        """
+        if relevant:
+            learner.record_access(obj_id)
+        return {
+            "status": "recorded",
+            "obj_id": obj_id,
+            "relevant": relevant,
+            "access_count": learner.get_access_count(obj_id),
+        }
+
+    @mcp.tool()
+    def cortex_graph(
+        obj_id: str = "",
+        entity: str = "",
+    ) -> dict[str, Any]:
+        """Get the knowledge graph around an object or entity.
+
+        Args:
+            obj_id: Object ID to get graph for.
+            entity: Entity name to get neighborhood for (alternative to obj_id).
+        """
+        if entity:
+            return graph_queries.entity_neighborhood(entity)
+        if obj_id:
+            return {
+                "causal_chain": graph_queries.causal_chain(obj_id),
+                "evolution": graph_queries.evolution_timeline(obj_id),
+                "relationships": store.get_relationships(obj_id),
+            }
+        return {"error": "Provide either obj_id or entity"}
+
+    @mcp.tool()
+    def cortex_list(
+        doc_type: str = "",
+        project: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List knowledge objects with optional filters.
+
+        Args:
+            doc_type: Filter by type.
+            project: Filter by project.
+            limit: Maximum results (default 50).
+        """
+        return store.list_objects(
+            obj_type=doc_type or None,
+            project=project or None,
+            limit=limit,
+        )
+
+    @mcp.tool()
+    def cortex_pipeline(
+        obj_id: str,
+    ) -> dict[str, Any]:
+        """Re-run the intelligence pipeline on an existing object.
+
+        Args:
+            obj_id: Object ID to re-process.
+        """
+        doc = store.read(obj_id)
+        if doc is None:
+            return {"error": f"Not found: {obj_id}"}
+        return pipeline.run_pipeline(obj_id)
+
+    # ─── Admin Tools ───────────────────────────────────────────────
+
+    if include_admin:
+
+        @mcp.tool()
+        def cortex_status() -> dict[str, Any]:
+            """Get Cortex status, health metrics, and object counts."""
+            stats = store.status()
+            alerts = AlertPresenter(store).render()
+            stats["alerts"] = alerts
+            stats["alert_count"] = len(alerts)
+            return stats
+
+        @mcp.tool()
+        def cortex_synthesize(
+            period_days: int = 7,
+            project: str = "",
+        ) -> dict[str, Any]:
+            """Generate a synthesis of recent knowledge.
+
+            Args:
+                period_days: Number of days to cover (default 7).
+                project: Scope to a specific project.
+            """
+            presenter = SynthesisPresenter(store, llm)
+            return presenter.render(
+                period_days=period_days,
+                project=project or None,
+            )
+
+        @mcp.tool()
+        def cortex_delete(
+            obj_id: str,
+        ) -> dict[str, Any]:
+            """Delete a knowledge object.
+
+            Args:
+                obj_id: Object ID to delete.
+            """
+            deleted = store.delete(obj_id)
+            return {
+                "status": "deleted" if deleted else "not_found",
+                "obj_id": obj_id,
+            }
+
+        @mcp.tool()
+        def cortex_export(
+            obj_id: str,
+            format: str = "markdown",
+        ) -> dict[str, Any]:
+            """Export a knowledge object.
+
+            Args:
+                obj_id: Object ID to export.
+                format: Export format (markdown).
+            """
+            doc = store.read(obj_id)
+            if doc is None:
+                return {"status": "not_found", "obj_id": obj_id}
+
+            if format == "markdown":
+                md = f"# {doc.get('title', '')}\n\n"
+                md += f"**Type:** {doc.get('type', '')}\n"
+                md += f"**Project:** {doc.get('project', '')}\n"
+                md += f"**Tags:** {doc.get('tags', '')}\n"
+                md += f"**Created:** {doc.get('created_at', '')}\n\n"
+                md += doc.get("content", "")
+                return {"status": "exported", "format": format, "content": md}
+
+            return {"status": "error", "message": f"Unknown format: {format}"}
+
+        @mcp.tool()
+        def cortex_safety_check(
+            action: str,
+            target: str,
+        ) -> dict[str, Any]:
+            """Review a potentially destructive action before executing.
+
+            Args:
+                action: The action to review (delete, bulk_delete, etc.)
+                target: What will be affected.
+            """
+            return {
+                "action": action,
+                "target": target,
+                "warning": f"This will {action} '{target}'. Confirm before proceeding.",
+                "confirmed": False,
+            }
+
+        @mcp.tool()
+        def cortex_reason() -> dict[str, Any]:
+            """Run advanced reasoning: contradictions, patterns, gaps, staleness."""
+            from cortex.pipeline.advanced_reason import AdvancedReasoner
+            reasoner = AdvancedReasoner(store, llm)
+            return reasoner.run_all()
+
+    return mcp
+
+
+def run_stdio() -> None:
+    """Run the MCP server on stdio (for Claude Code, Cursor, etc.)"""
+    mcp = create_mcp_server(include_admin=True)
+    mcp.run(transport="stdio")
+
+
+def run_http(host: str = "127.0.0.1", port: int = 1314) -> None:
+    """Run the MCP server on StreamableHTTP (for remote agents)."""
+    mcp = create_mcp_server(include_admin=False)
+    mcp.run(transport="streamable-http", host=host, port=port)

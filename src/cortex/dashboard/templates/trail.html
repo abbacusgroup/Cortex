@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% set active = "trail" %}
+{% block title %}Cortex — Query Trail{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 1rem;">Query Trail</h2>
+
+<div class="card">
+    <div class="card-header">Recent queries ({{ logs|length }})</div>
+    <table>
+        <thead><tr><th>Time</th><th>Tool</th><th>Query</th><th>Results</th><th>Duration</th></tr></thead>
+        <tbody>
+        {% for log in logs %}
+        <tr>
+            <td style="font-size: 0.75rem;">{{ log.timestamp[:19] if log.timestamp else '' }}</td>
+            <td>{{ log.tool }}</td>
+            <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">{{ log.params }}</td>
+            <td>{{ log.result_count }}</td>
+            <td>{{ "%.1f"|format(log.duration_ms) }}ms</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" style="text-align:center; color: var(--text-muted);">No queries yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
