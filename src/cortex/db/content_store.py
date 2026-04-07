@@ -146,6 +146,8 @@ class ContentStore:
         pipeline_stage: str = "ingest",
         confidence: float = 1.0,
         captured_by: str = "",
+        created_at: str | None = None,
+        updated_at: str | None = None,
     ) -> str:
         """Insert a document.
 
@@ -153,6 +155,8 @@ class ContentStore:
             The document ID.
         """
         now = datetime.now(UTC).isoformat()
+        ts_created = created_at or now
+        ts_updated = updated_at or now
         try:
             self._db.execute(
                 """INSERT INTO documents
@@ -160,7 +164,7 @@ class ContentStore:
                     tier, pipeline_stage, confidence, captured_by, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (doc_id, title, content, raw_markdown, doc_type, project, tags, summary,
-                 tier, pipeline_stage, confidence, captured_by, now, now),
+                 tier, pipeline_stage, confidence, captured_by, ts_created, ts_updated),
             )
             self._db.commit()
         except sqlite3.IntegrityError as e:

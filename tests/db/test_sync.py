@@ -281,3 +281,25 @@ class TestCrossSystemConsistency:
         for obj_id in [created_ids[14], created_ids[15]]:
             assert store.content.get(obj_id) is None
             assert store.graph.read_object(obj_id) is None
+
+
+class TestTimestamps:
+    def test_create_with_custom_timestamps_reaches_both_stores(self, store):
+        ts = "2026-03-23T00:00:00+00:00"
+        obj_id = store.create(
+            obj_type="fix",
+            title="Timestamp threading test",
+            content="Verifying timestamps reach both stores",
+            created_at=ts,
+            updated_at=ts,
+        )
+        # SQLite should have the custom timestamp
+        doc = store.content.get(obj_id)
+        assert doc is not None
+        assert doc["created_at"] == ts
+        assert doc["updated_at"] == ts
+
+        # Graph should have the custom timestamp (Oxigraph normalizes +00:00 to Z)
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None
+        assert graph_obj["capturedAt"] == "2026-03-23T00:00:00Z"

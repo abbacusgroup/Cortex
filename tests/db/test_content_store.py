@@ -124,6 +124,31 @@ class TestCRUD:
         store.insert(doc_id="2", title="B")
         assert store.total_count() == 2
 
+    def test_insert_with_custom_timestamps(self, store: ContentStore):
+        store.insert(
+            doc_id="ts-custom",
+            title="Custom TS",
+            created_at="2025-01-01T00:00:00+00:00",
+            updated_at="2025-06-15T12:30:00+00:00",
+        )
+        doc = store.get("ts-custom")
+        assert doc is not None
+        assert doc["created_at"] == "2025-01-01T00:00:00+00:00"
+        assert doc["updated_at"] == "2025-06-15T12:30:00+00:00"
+
+    def test_insert_defaults_to_now_when_no_timestamps(
+        self, store: ContentStore
+    ):
+        store.insert(doc_id="ts-default", title="Default TS")
+        doc = store.get("ts-default")
+        assert doc is not None
+        # created_at should be a non-empty ISO datetime string
+        assert isinstance(doc["created_at"], str)
+        assert len(doc["created_at"]) > 0
+        # Starts with a year (basic ISO 8601 sanity check)
+        assert doc["created_at"][:4].isdigit()
+        assert doc["updated_at"][:4].isdigit()
+
     def test_insert_duplicate_raises_store_error(
         self, store: ContentStore
     ):
