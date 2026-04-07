@@ -16,12 +16,12 @@ import pytest
 from starlette.testclient import TestClient
 
 from cortex.core.config import CortexConfig
-from cortex.dashboard.mcp_client import (
+from cortex.dashboard.server import _sessions, create_dashboard
+from cortex.transport.mcp.client import (
     MCPConnectionError,
     MCPTimeoutError,
     MCPToolError,
 )
-from cortex.dashboard.server import _sessions, create_dashboard
 
 
 class CallRecorder:
@@ -226,7 +226,7 @@ class TestMcpErrorHandlers:
 
     def _make_failing_client(self, exc_type, exc_args=None):
         """Build a fake client where every method raises the given error."""
-        from cortex.dashboard.mcp_client import MCPClientError
+        from cortex.transport.mcp.client import MCPClientError  # noqa: F401
 
         class FailingClient:
             async def search(self, *a, **kw):

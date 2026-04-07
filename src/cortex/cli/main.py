@@ -31,6 +31,34 @@ _store: Store | None = None
 _pipeline: PipelineOrchestrator | None = None
 _learner: LearningLoop | None = None
 
+# Phase 3 — global --direct flag state and MCP client singleton.
+# When --direct is set, MCP-routed commands bypass the HTTP client and open
+# the store directly (existing behavior). Default is False (MCP routing).
+_direct_mode: bool = False
+_mcp_client: Any | None = None  # CortexMCPClient — Any-typed to avoid import cycle
+_mcp_probe_done: bool = False
+
+
+@app.callback()
+def _global_options(
+    direct: bool = typer.Option(
+        False,
+        "--direct",
+        help=(
+            "Bypass the running MCP HTTP server and open the graph store directly. "
+            "Use this when the MCP server is unreachable, or for offline admin work. "
+            "Will fail with a lock error if the MCP server is currently running."
+        ),
+    ),
+) -> None:
+    """Global Cortex CLI options. Applies to all subcommands."""
+    global _direct_mode, _mcp_client, _mcp_probe_done
+    _direct_mode = direct
+    # Reset the singleton state per-invocation so CliRunner tests don't leak
+    # the previous invocation's state into the next one.
+    _mcp_client = None
+    _mcp_probe_done = False
+
 
 def _open_store_or_exit(config: CortexConfig) -> Store:
     """Open a Store, exiting cleanly with a user-friendly message if the graph DB is locked.
@@ -41,6 +69,193 @@ def _open_store_or_exit(config: CortexConfig) -> Store:
         return Store(config)
     except StoreLockedError as e:
         typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+
+# ─── Phase 3 helpers — MCP client routing ──────────────────────────────────
+
+
+def _get_mcp_client() -> Any:
+    """Singleton CortexMCPClient bound to ``config.mcp_server_url``.
+
+    Constructed lazily on first use. Returns the same instance for the rest of
+    the CLI process. Reset by ``_global_options`` between CliRunner invocations.
+    """
+    global _mcp_client
+    if _mcp_client is not None:
+        return _mcp_client
+    from cortex.transport.mcp.client import CortexMCPClient
+
+    config = load_config()
+    _mcp_client = CortexMCPClient(config.mcp_server_url, timeout_seconds=10.0)
+    return _mcp_client
+
+
+def _run_async(coro: Any) -> Any:
+    """Run an async coroutine from sync CLI code, handling running-loop edge cases.
+
+    If no event loop is currently running on this thread, ``asyncio.run`` is
+    used directly. If a loop IS already running (rare in CLI but possible if
+    a future command uses asyncio internally), the coroutine is dispatched on
+    a fresh loop in a worker thread to avoid the
+    "asyncio.run() cannot be called from a running event loop" RuntimeError.
+    """
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop running on this thread — fast path
+        return asyncio.run(coro)
+
+    # A loop is already running — fall back to a thread
+    import threading
+
+    box: list[Any] = [None]
+    exc_box: list[BaseException | None] = [None]
+
+    def _runner() -> None:
+        new_loop = asyncio.new_event_loop()
+        try:
+            box[0] = new_loop.run_until_complete(coro)
+        except BaseException as e:  # noqa: BLE001
+            exc_box[0] = e
+        finally:
+            new_loop.close()
+
+    t = threading.Thread(target=_runner)
+    t.start()
+    t.join()
+    if exc_box[0] is not None:
+        raise exc_box[0]
+    return box[0]
+
+
+# Tools the MCP HTTP server must expose for Phase 3 routing to work. The probe
+# checks all of these are present before any MCP-routed command runs.
+_REQUIRED_MCP_ROUTING_TOOLS = frozenset(
+    {
+        "cortex_search",
+        "cortex_capture",
+        "cortex_read",
+        "cortex_list",
+        "cortex_status",
+        "cortex_context",
+        "cortex_dossier",
+        "cortex_graph",
+        "cortex_synthesize",
+        "cortex_list_entities",
+        "cortex_pipeline",
+        "cortex_reason",
+    }
+)
+
+
+def _probe_mcp_lazy() -> None:
+    """Verify the MCP HTTP server is reachable AND has all required tools.
+
+    Runs at most once per CLI process (cached via ``_mcp_probe_done``). Fails
+    fast with an actionable error if the server isn't reachable, or if it's
+    missing one of the tools the CLI's MCP-routed commands depend on.
+
+    In ``--direct`` mode this function is never called.
+    """
+    global _mcp_probe_done
+    if _mcp_probe_done:
+        return
+    from cortex.transport.mcp.client import MCPClientError
+
+    client = _get_mcp_client()
+    try:
+        available = set(_run_async(client.list_tools()))
+    except MCPClientError as e:
+        config = load_config()
+        typer.secho(
+            f"Cannot reach Cortex MCP server at {config.mcp_server_url}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        typer.secho(f"  {e}", fg=typer.colors.RED, err=True)
+        typer.echo(
+            "  Either start the server in another terminal:\n"
+            "    cortex serve --transport mcp-http --host 127.0.0.1 --port 1314\n"
+            "  Or bypass it for this command with --direct:\n"
+            "    cortex --direct " + " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "    cortex --direct ...",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    missing = _REQUIRED_MCP_ROUTING_TOOLS - available
+    if missing:
+        typer.secho(
+            f"MCP server is missing required tools: {', '.join(sorted(missing))}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        typer.echo(
+            "This usually means the MCP server is from an older version of Cortex. "
+            "Update or restart it.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    _mcp_probe_done = True
+
+
+def _use_mcp() -> bool:
+    """Return True if the current command should route through the MCP HTTP server.
+
+    Centralizes the routing decision: when `--direct` is set we always go to
+    the local store. Otherwise we run the lazy probe (which fails fast if the
+    server isn't reachable) and route through MCP.
+
+    Bootstrap commands (init, setup, import-v1, import-vault) call
+    `_get_store()` directly and never go through this helper, so they always
+    use the direct path regardless of `--direct`.
+    """
+    if _direct_mode:
+        return False
+    _probe_mcp_lazy()
+    return True
+
+
+def _mcp_call_or_exit(coro_factory: Any) -> Any:
+    """Run an MCP client call and convert any error into a clean typer.Exit.
+
+    Each MCP-routed CLI command wraps its tool call in this helper:
+
+        result = _mcp_call_or_exit(lambda: _get_mcp_client().search("foo"))
+
+    The factory pattern (lambda) defers coroutine creation so we can catch
+    construction errors too. On success returns the unwrapped result; on any
+    MCP error prints a red message to stderr and raises ``typer.Exit(1)``.
+    """
+    from cortex.transport.mcp.client import (
+        MCPConnectionError,
+        MCPServerError,
+        MCPTimeoutError,
+        MCPToolError,
+    )
+
+    try:
+        return _run_async(coro_factory())
+    except MCPConnectionError as e:
+        typer.secho(f"MCP connection error: {e}", fg=typer.colors.RED, err=True)
+        typer.echo(
+            "  Either start the server in another terminal:\n"
+            "    cortex serve --transport mcp-http --host 127.0.0.1 --port 1314\n"
+            "  Or bypass it with --direct.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    except MCPTimeoutError as e:
+        typer.secho(f"MCP server timed out: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    except MCPServerError as e:
+        typer.secho(f"MCP server error: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    except MCPToolError as e:
+        typer.secho(f"MCP tool error: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 
 
@@ -140,15 +355,26 @@ def capture(
         typer.echo("Error: No content provided. Use --content or pipe via stdin.", err=True)
         raise typer.Exit(1)
 
-    result = _get_pipeline().capture(
-        title=title,
-        content=body,
-        obj_type=obj_type,
-        project=project,
-        tags=tags,
-        captured_by="cli",
-        run_pipeline=True,
-    )
+    if _use_mcp():
+        result = _mcp_call_or_exit(
+            lambda: _get_mcp_client().capture(
+                title=title,
+                content=body,
+                obj_type=obj_type,
+                project=project,
+                tags=tags,
+            )
+        )
+    else:
+        result = _get_pipeline().capture(
+            title=title,
+            content=body,
+            obj_type=obj_type,
+            project=project,
+            tags=tags,
+            captured_by="cli",
+            run_pipeline=True,
+        )
     obj_id = result["id"]
     typer.echo(f"Captured {obj_type}: {obj_id}")
     typer.echo(f"  Title: {title}")
@@ -162,8 +388,18 @@ def search(
     limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
 ) -> None:
     """Search knowledge objects with full-text search."""
-    store = _get_store()
-    results = store.search(query, doc_type=obj_type, project=project, limit=limit)
+    if _use_mcp():
+        results = _mcp_call_or_exit(
+            lambda: _get_mcp_client().search(
+                query=query,
+                doc_type=obj_type or "",
+                project=project or "",
+                limit=limit,
+            )
+        )
+    else:
+        store = _get_store()
+        results = store.search(query, doc_type=obj_type, project=project, limit=limit)
 
     if not results:
         typer.echo("No results found.")
@@ -179,14 +415,20 @@ def read(
     obj_id: str = typer.Argument(..., help="Object ID to read"),
 ) -> None:
     """Read a knowledge object in full."""
-    store = _get_store()
-    doc = store.read(obj_id)
-
-    if doc is None:
-        typer.echo(f"Not found: {obj_id}", err=True)
-        raise typer.Exit(1)
-
-    _get_learner().record_access(obj_id)
+    if _use_mcp():
+        doc = _mcp_call_or_exit(lambda: _get_mcp_client().read(obj_id))
+        # cortex_read returns a string "Not found: {id}" when missing
+        if isinstance(doc, str) or doc is None:
+            typer.echo(f"Not found: {obj_id}", err=True)
+            raise typer.Exit(1)
+        # Access tracking is done server-side inside cortex_read
+    else:
+        store = _get_store()
+        doc = store.read(obj_id)
+        if doc is None:
+            typer.echo(f"Not found: {obj_id}", err=True)
+            raise typer.Exit(1)
+        _get_learner().record_access(obj_id)
 
     typer.echo(f"{'=' * 60}")
     typer.echo(f"ID:      {doc['id']}")
@@ -218,8 +460,17 @@ def list_objects(
     limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
 ) -> None:
     """List knowledge objects."""
-    store = _get_store()
-    results = store.list_objects(obj_type=obj_type, project=project, limit=limit)
+    if _use_mcp():
+        results = _mcp_call_or_exit(
+            lambda: _get_mcp_client().list_objects(
+                doc_type=obj_type or "",
+                project=project or "",
+                limit=limit,
+            )
+        )
+    else:
+        store = _get_store()
+        results = store.list_objects(obj_type=obj_type, project=project, limit=limit)
 
     if not results:
         typer.echo("No objects found.")
@@ -233,8 +484,11 @@ def list_objects(
 @app.command()
 def status() -> None:
     """Show Cortex status and health."""
-    store = _get_store(must_init=False)
-    stats = store.status()
+    if _use_mcp():
+        stats = _mcp_call_or_exit(lambda: _get_mcp_client().status())
+    else:
+        store = _get_store(must_init=False)
+        stats = store.status()
 
     typer.echo("Cortex v0.1.0")
     typer.echo(f"  Initialized: {stats['initialized']}")
@@ -255,19 +509,22 @@ def context(
     limit: int = typer.Option(10, "--limit", "-n", help="Max results"),
 ) -> None:
     """Get a briefing (summaries only) for a topic."""
-    store = _get_store()
-    from cortex.retrieval.engine import RetrievalEngine
-    from cortex.retrieval.presenters import BriefingPresenter
+    if _use_mcp():
+        briefs = _mcp_call_or_exit(
+            lambda: _get_mcp_client().context(topic=topic, limit=limit)
+        )
+    else:
+        store = _get_store()
+        from cortex.retrieval.engine import RetrievalEngine
+        from cortex.retrieval.presenters import BriefingPresenter
 
-    engine = RetrievalEngine(store)
-    results = engine.search(topic, limit=limit)
+        engine = RetrievalEngine(store)
+        results = engine.search(topic, limit=limit)
+        briefs = BriefingPresenter().render(results) if results else []
 
-    if not results:
+    if not briefs:
         typer.echo("No context found.")
         return
-
-    presenter = BriefingPresenter()
-    briefs = presenter.render(results)
 
     typer.echo(f"Context for '{topic}' ({len(briefs)} results):\n")
     for b in briefs:
@@ -282,11 +539,16 @@ def dossier(
     topic: str = typer.Argument(..., help="Entity or topic for dossier"),
 ) -> None:
     """Build an intelligence dossier around an entity or topic."""
-    store = _get_store()
-    from cortex.retrieval.presenters import DossierPresenter
+    if _use_mcp():
+        result = _mcp_call_or_exit(
+            lambda: _get_mcp_client().dossier(topic=topic)
+        )
+    else:
+        store = _get_store()
+        from cortex.retrieval.presenters import DossierPresenter
 
-    presenter = DossierPresenter(store)
-    result = presenter.render(topic)
+        presenter = DossierPresenter(store)
+        result = presenter.render(topic)
 
     if result.get("status") == "no_knowledge_found":
         typer.echo(f"No knowledge found for '{topic}'.")
@@ -324,13 +586,23 @@ def graph(
     obj_id: str = typer.Argument(..., help="Object ID to show graph for"),
 ) -> None:
     """Show an object's relationships and graph neighborhood."""
-    store = _get_store()
-    from cortex.retrieval.graph import GraphQueries
+    if _use_mcp():
+        result = _mcp_call_or_exit(
+            lambda: _get_mcp_client().graph(obj_id=obj_id)
+        )
+        chain = result.get("causal_chain", [])
+        timeline = result.get("evolution", [])
+        rels = result.get("relationships", [])
+    else:
+        store = _get_store()
+        from cortex.retrieval.graph import GraphQueries
 
-    gq = GraphQueries(store)
+        gq = GraphQueries(store)
+        chain = gq.causal_chain(obj_id)
+        timeline = gq.evolution_timeline(obj_id)
+        rels = store.get_relationships(obj_id)
 
     # Show causal chain if applicable
-    chain = gq.causal_chain(obj_id)
     if len(chain) > 1:
         typer.echo("Causal chain:")
         for i, node in enumerate(chain):
@@ -339,7 +611,6 @@ def graph(
         typer.echo()
 
     # Show evolution timeline
-    timeline = gq.evolution_timeline(obj_id)
     if len(timeline) > 1:
         typer.echo("Evolution timeline:")
         for node in timeline:
@@ -347,7 +618,6 @@ def graph(
         typer.echo()
 
     # Show direct relationships
-    rels = store.get_relationships(obj_id)
     if rels:
         typer.echo("Relationships:")
         for r in rels:
@@ -363,11 +633,18 @@ def synthesize(
     project: str | None = typer.Option(None, "--project", "-p", help="Project"),
 ) -> None:
     """Generate a synthesis of recent knowledge."""
-    store = _get_store()
-    from cortex.retrieval.presenters import SynthesisPresenter
+    if _use_mcp():
+        result = _mcp_call_or_exit(
+            lambda: _get_mcp_client().synthesize(
+                period_days=period, project=project or ""
+            )
+        )
+    else:
+        store = _get_store()
+        from cortex.retrieval.presenters import SynthesisPresenter
 
-    presenter = SynthesisPresenter(store)
-    result = presenter.render(period_days=period, project=project)
+        presenter = SynthesisPresenter(store)
+        result = presenter.render(period_days=period, project=project)
 
     if result.get("status") == "nothing_to_synthesize":
         typer.echo(f"Nothing to synthesize in the last {period} days.")
@@ -398,15 +675,23 @@ def entities(
     project: str | None = typer.Option(None, "--project", "-p", help="Filter by project"),
 ) -> None:
     """List resolved entities in the knowledge graph."""
-    store = _get_store()
-
-    if project:
-        from cortex.retrieval.graph import GraphQueries
-        gq = GraphQueries(store)
-        overview = gq.project_overview(project)
-        ents = overview.get("entities", [])
+    if _use_mcp() and not project:
+        # MCP path: simple type-filtered listing.
+        ents = _mcp_call_or_exit(
+            lambda: _get_mcp_client().list_entities(entity_type=entity_type or "")
+        )
     else:
-        ents = store.list_entities(entity_type=entity_type)
+        # Direct path used either when --direct OR when --project is set
+        # (project_overview is direct-only — no MCP tool yet for that path).
+        store = _get_store()
+        if project:
+            from cortex.retrieval.graph import GraphQueries
+
+            gq = GraphQueries(store)
+            overview = gq.project_overview(project)
+            ents = overview.get("entities", [])
+        else:
+            ents = store.list_entities(entity_type=entity_type)
 
     if not ents:
         typer.echo("No entities found.")
@@ -418,8 +703,25 @@ def entities(
 
 
 @app.command()
-def register() -> None:
-    """Register Cortex MCP server with Claude Code."""
+def register(
+    legacy_stdio: bool = typer.Option(
+        False,
+        "--legacy-stdio",
+        help="Register the old stdio transport instead of HTTP. Use only "
+        "if you don't run a long-lived MCP HTTP server.",
+    ),
+) -> None:
+    """Register Cortex MCP server with Claude Code.
+
+    By default, registers the new HTTP transport pointing at
+    ``http://127.0.0.1:1314/mcp``. The MCP HTTP server (started via
+    ``cortex serve --transport mcp-http`` or via a launchd/systemd unit)
+    must be running for Claude Code to connect.
+
+    Pass ``--legacy-stdio`` to register the old stdio transport instead;
+    this is the pre-Phase-2 behavior, where Claude Code spawns its own
+    Cortex stdio child process per session.
+    """
     import json
 
     settings_path = Path.home() / ".claude" / "settings.json"
@@ -430,28 +732,43 @@ def register() -> None:
 
     mcp_servers = settings.setdefault("mcpServers", {})
 
-    # Find the cortex package entry point
-    import shutil
+    if legacy_stdio:
+        import shutil
 
-    cortex_bin = shutil.which("cortex")
-    if cortex_bin:
-        cmd = cortex_bin
-        args = ["serve", "--transport", "stdio"]
+        cortex_bin = shutil.which("cortex")
+        if cortex_bin:
+            cmd = cortex_bin
+            args = ["serve", "--transport", "stdio"]
+        else:
+            cmd = sys.executable
+            args = ["-m", "cortex.transport.mcp"]
+
+        mcp_servers["cortex"] = {
+            "command": cmd,
+            "args": args,
+            "env": {},
+        }
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+
+        typer.echo(f"Registered Cortex MCP (stdio) at {settings_path}")
+        typer.echo(f"  Command: {cmd} {' '.join(args)}")
     else:
-        cmd = sys.executable
-        args = ["-m", "cortex.transport.mcp"]
+        config = load_config()
+        mcp_servers["cortex"] = {
+            "type": "http",
+            "url": config.mcp_server_url,
+        }
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
 
-    mcp_servers["cortex"] = {
-        "command": cmd,
-        "args": args,
-        "env": {},
-    }
+        typer.echo(f"Registered Cortex MCP (http) at {settings_path}")
+        typer.echo(f"  URL: {config.mcp_server_url}")
+        typer.echo(
+            "  Make sure the MCP HTTP server is running:\n"
+            "    cortex serve --transport mcp-http --host 127.0.0.1 --port 1314"
+        )
 
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-
-    typer.echo(f"Registered Cortex MCP at {settings_path}")
-    typer.echo(f"  Command: {cmd} {' '.join(args)}")
     typer.echo("  Restart Claude Code to activate.")
 
 
@@ -640,7 +957,7 @@ def _probe_mcp_server(url: str, *, retries: int = 3, retry_delay: float = 1.0) -
     import asyncio
     import time
 
-    from cortex.dashboard.mcp_client import (
+    from cortex.transport.mcp.client import (
         CortexMCPClient,
         MCPClientError,
     )
@@ -671,8 +988,8 @@ def dashboard(
     """
     import uvicorn
 
-    from cortex.dashboard.mcp_client import MCPClientError
     from cortex.dashboard.server import create_dashboard
+    from cortex.transport.mcp.client import MCPClientError
 
     config = load_config()
 
@@ -720,10 +1037,18 @@ def run_pipeline_cmd(
     batch: bool = typer.Option(False, "--batch", help="Process all un-pipelined docs"),
 ) -> None:
     """Re-run the intelligence pipeline on one or all objects."""
-    store = _get_store()
-
     if batch:
-        # Query for docs at 'ingest' stage
+        # Batch mode reaches into store.content._db for the SQL query — keep
+        # it on the direct path. The MCP server has no batch tool today.
+        if not _direct_mode:
+            typer.secho(
+                "--batch requires --direct (no MCP tool for batch pipeline runs).",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        store = _get_store()
+
         docs = store.content._db.execute(
             "SELECT id, title FROM documents"
             " WHERE pipeline_stage = 'ingest'"
@@ -761,13 +1086,22 @@ def run_pipeline_cmd(
         typer.echo("Error: provide OBJ_ID or use --batch", err=True)
         raise typer.Exit(1)
 
-    doc = store.read(obj_id)
-    if doc is None:
-        typer.echo(f"Not found: {obj_id}", err=True)
-        raise typer.Exit(1)
+    if _use_mcp():
+        result = _mcp_call_or_exit(
+            lambda: _get_mcp_client().pipeline(obj_id=obj_id)
+        )
+        if "error" in result:
+            typer.echo(result["error"], err=True)
+            raise typer.Exit(1)
+    else:
+        store = _get_store()
+        doc = store.read(obj_id)
+        if doc is None:
+            typer.echo(f"Not found: {obj_id}", err=True)
+            raise typer.Exit(1)
 
-    pipe = _get_pipeline()
-    result = pipe.run_pipeline(obj_id)
+        pipe = _get_pipeline()
+        result = pipe.run_pipeline(obj_id)
     typer.echo(f"Pipeline {result.get('status', 'unknown')} for {obj_id[:12]}")
     for stage, data in result.get("pipeline_stages", {}).items():
         typer.echo(f"  {stage}: {data.get('status', '?')}")
@@ -776,11 +1110,14 @@ def run_pipeline_cmd(
 @app.command()
 def reason() -> None:
     """Run advanced reasoning (contradictions, patterns, gaps, staleness)."""
-    store = _get_store()
-    from cortex.pipeline.advanced_reason import AdvancedReasoner
+    if _use_mcp():
+        results = _mcp_call_or_exit(lambda: _get_mcp_client().reason())
+    else:
+        store = _get_store()
+        from cortex.pipeline.advanced_reason import AdvancedReasoner
 
-    reasoner = AdvancedReasoner(store)
-    results = reasoner.run_all()
+        reasoner = AdvancedReasoner(store)
+        results = reasoner.run_all()
 
     total = sum(len(v) for v in results.values() if isinstance(v, list))
     typer.echo(f"Advanced reasoning: {total} finding(s)")
