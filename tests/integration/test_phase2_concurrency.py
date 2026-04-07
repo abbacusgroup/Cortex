@@ -25,7 +25,7 @@ from typing import Iterator
 
 import pytest
 
-from cortex.dashboard.mcp_client import (
+from cortex.transport.mcp.client import (
     CortexMCPClient,
     MCPConnectionError,
 )

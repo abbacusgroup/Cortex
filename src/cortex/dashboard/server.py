@@ -25,7 +25,7 @@ from fastapi.templating import Jinja2Templates
 
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.logging import get_logger, setup_logging
-from cortex.dashboard.mcp_client import (
+from cortex.transport.mcp.client import (
     CortexMCPClient,
     MCPClientError,
     MCPConnectionError,

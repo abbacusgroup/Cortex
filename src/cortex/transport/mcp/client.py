@@ -279,3 +279,19 @@ class CortexMCPClient:
                 "offset": offset,
             },
         )
+
+    # ─── Phase 3: methods used by CLI commands ────────────────────────
+
+    async def pipeline(self, obj_id: str) -> dict[str, Any]:
+        return await self._call("cortex_pipeline", {"obj_id": obj_id})
+
+    async def synthesize(
+        self, period_days: int = 7, project: str = ""
+    ) -> dict[str, Any]:
+        return await self._call(
+            "cortex_synthesize",
+            {"period_days": period_days, "project": project},
+        )
+
+    async def reason(self) -> dict[str, Any]:
+        return await self._call("cortex_reason")

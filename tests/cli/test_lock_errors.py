@@ -28,11 +28,19 @@ def _isolate(tmp_path, monkeypatch):
     cli_mod._store = None
     cli_mod._pipeline = None
     cli_mod._learner = None
+    cli_mod._mcp_client = None
+    cli_mod._mcp_probe_done = False
     monkeypatch.setenv("CORTEX_DATA_DIR", str(tmp_path))
+    # Phase 3: lock-error tests verify the direct-store path. Force direct
+    # mode so commands like `cortex list` exercise the StoreLockedError flow
+    # instead of routing through the live MCP HTTP server.
+    monkeypatch.setattr(cli_mod, "_use_mcp", lambda: False)
     yield
     cli_mod._store = None
     cli_mod._pipeline = None
     cli_mod._learner = None
+    cli_mod._mcp_client = None
+    cli_mod._mcp_probe_done = False
 
 
 @pytest.fixture
@@ -228,7 +236,7 @@ class TestDashboardStartupProbe:
 
     def test_dashboard_fails_when_mcp_unreachable(self, monkeypatch):
         """When the MCP server probe fails, dashboard exits cleanly."""
-        from cortex.dashboard.mcp_client import MCPConnectionError
+        from cortex.transport.mcp.client import MCPConnectionError
 
         def fake_probe(url, **kw):
             raise MCPConnectionError(

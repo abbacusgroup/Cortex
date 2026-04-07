@@ -18,15 +18,26 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    """Reset module-level store and point CORTEX_DATA_DIR to tmp_path."""
+    """Reset module-level store and point CORTEX_DATA_DIR to tmp_path.
+
+    Phase 3: also forces direct-store mode (instead of routing through the
+    MCP HTTP server). These tests rely on per-test ``tmp_path`` isolation,
+    which only works against the direct store — MCP routing would hit the
+    user's real production data.
+    """
     cli_mod._store = None
     cli_mod._pipeline = None
     cli_mod._learner = None
+    cli_mod._mcp_client = None
+    cli_mod._mcp_probe_done = False
     monkeypatch.setenv("CORTEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(cli_mod, "_use_mcp", lambda: False)
     yield
     cli_mod._store = None
     cli_mod._pipeline = None
     cli_mod._learner = None
+    cli_mod._mcp_client = None
+    cli_mod._mcp_probe_done = False
 
 
 # ---------------------------------------------------------------------------

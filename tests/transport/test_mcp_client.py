@@ -1,7 +1,8 @@
-"""Tests for the dashboard's MCP HTTP client wrapper.
+"""Tests for the Cortex MCP HTTP client wrapper.
 
 The wrapper is mocked at the ``streamablehttp_client`` + ``ClientSession``
-boundary so tests don't need a running server.
+boundary so tests don't need a running server. Used by both the dashboard
+and the CLI (Phase 3).
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from cortex.dashboard.mcp_client import (
+from cortex.transport.mcp.client import (
     CortexMCPClient,
     MCPClientError,
     MCPConnectionError,
@@ -118,10 +119,10 @@ def fake_client_session():
     session_cm.__aexit__ = AsyncMock(return_value=None)
 
     with patch(
-        "cortex.dashboard.mcp_client.streamablehttp_client",
+        "cortex.transport.mcp.client.streamablehttp_client",
         return_value=transport_cm,
     ), patch(
-        "cortex.dashboard.mcp_client.ClientSession",
+        "cortex.transport.mcp.client.ClientSession",
         return_value=session_cm,
     ):
         yield session_mock
@@ -252,7 +253,7 @@ class TestCortexMCPClientErrors:
         )
         bad_cm.__aexit__ = AsyncMock(return_value=None)
         with patch(
-            "cortex.dashboard.mcp_client.streamablehttp_client",
+            "cortex.transport.mcp.client.streamablehttp_client",
             return_value=bad_cm,
         ):
             client = CortexMCPClient("http://127.0.0.1:1/mcp")
@@ -268,7 +269,7 @@ class TestCortexMCPClientErrors:
         )
         slow_cm.__aexit__ = AsyncMock(return_value=None)
         with patch(
-            "cortex.dashboard.mcp_client.streamablehttp_client",
+            "cortex.transport.mcp.client.streamablehttp_client",
             return_value=slow_cm,
         ):
             client = CortexMCPClient("http://localhost:1314/mcp", timeout_seconds=0.5)
@@ -281,7 +282,7 @@ class TestCortexMCPClientErrors:
         bad_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("weird error"))
         bad_cm.__aexit__ = AsyncMock(return_value=None)
         with patch(
-            "cortex.dashboard.mcp_client.streamablehttp_client",
+            "cortex.transport.mcp.client.streamablehttp_client",
             return_value=bad_cm,
         ):
             client = CortexMCPClient("http://localhost:1314/mcp")
