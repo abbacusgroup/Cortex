@@ -6,6 +6,12 @@ Persistence via Oxigraph's built-in storage to ~/.cortex/graph.db.
 
 from __future__ import annotations
 
+import atexit
+import json
+import os
+import subprocess
+import sys
+import weakref
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,7 +19,13 @@ from uuid import uuid4
 
 import pyoxigraph as ox
 
-from cortex.core.errors import NotFoundError, OntologyError, StoreError, ValidationError
+from cortex.core.errors import (
+    NotFoundError,
+    OntologyError,
+    StoreError,
+    StoreLockedError,
+    ValidationError,
+)
 from cortex.core.logging import get_logger
 from cortex.ontology.namespaces import (
     CLASS_MAP,
@@ -34,6 +46,146 @@ logger = get_logger("db.graph")
 MAX_CONTENT_SIZE = 10 * 1024 * 1024
 
 
+def _marker_path_for(db_path: Path) -> Path:
+    """The PID marker file lives next to the DB directory: <db_path>.lock."""
+    return db_path.parent / f"{db_path.name}.lock"
+
+
+def _process_cmdline(pid: int) -> str | None:
+    """Best-effort: read a process's command line via ``ps``. POSIX-only.
+
+    Returns None on any failure (ps missing, PID gone, timeout). Used both to
+    record the current process's cmdline in the marker AND, when reading another
+    process's marker, to verify the live cmdline still matches (defends against
+    PID reuse — see Weak Point #2 in the plan).
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    cmdline = result.stdout.strip()
+    return cmdline or None
+
+
+def _current_cmdline() -> str:
+    """Best-effort current process command line.
+
+    Tries ``ps`` first (most accurate, gives the real argv with interpreter path).
+    Falls back to sys.executable + sys.argv if ps fails.
+    """
+    cmdline = _process_cmdline(os.getpid())
+    if cmdline:
+        return cmdline
+    try:
+        return " ".join([sys.executable] + sys.argv)
+    except Exception:
+        return "<unknown>"
+
+
+def _pid_alive(pid: int) -> bool:
+    """Check whether a PID is currently running. POSIX-only (signal 0)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # PID exists but we don't own it — still counts as alive.
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _read_marker(marker_path: Path) -> dict[str, Any] | None:
+    """Read and parse the PID marker file. Returns None on any error."""
+    try:
+        raw = marker_path.read_text()
+    except FileNotFoundError:
+        return None
+    except (PermissionError, OSError) as e:
+        logger.warning("Cannot read lock marker %s: %s", marker_path, e)
+        return {"pid": None, "cmdline": "<marker unreadable>", "_unreadable": True}
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {"pid": None, "cmdline": "<malformed marker>"}
+        return data
+    except json.JSONDecodeError:
+        logger.warning("Lock marker %s is not valid JSON", marker_path)
+        return {"pid": None, "cmdline": "<malformed marker>"}
+
+
+def _write_marker(marker_path: Path) -> bool:
+    """Write the current process's PID marker. Best-effort — returns False on failure."""
+    payload = {
+        "pid": os.getpid(),
+        "cmdline": _current_cmdline(),
+        "acquired_at": datetime.now(UTC).isoformat(),
+    }
+    try:
+        marker_path.write_text(json.dumps(payload))
+        return True
+    except OSError as e:
+        logger.warning("Could not write lock marker %s: %s — continuing", marker_path, e)
+        return False
+
+
+def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None:
+    """Read the marker (if any), determine staleness, and raise StoreLockedError."""
+    marker = _read_marker(marker_path)
+    if marker is None:
+        # Lock held but no marker file — Oxigraph itself has the lock for some reason.
+        raise StoreLockedError(
+            f"Graph DB at {path} is locked, but no marker file found.",
+            holder_pid=None,
+            holder_cmdline=None,
+            is_stale=False,
+            context={"path": str(path)},
+            cause=oserror,
+        )
+
+    raw_pid = marker.get("pid")
+    holder_pid = raw_pid if isinstance(raw_pid, int) else None
+    holder_cmdline = marker.get("cmdline")
+    if not isinstance(holder_cmdline, str):
+        holder_cmdline = None
+
+    is_stale = False
+    if holder_pid is not None and not _pid_alive(holder_pid):
+        is_stale = True
+
+    raise StoreLockedError(
+        f"Graph DB at {path} is locked by another process.",
+        holder_pid=holder_pid,
+        holder_cmdline=holder_cmdline,
+        is_stale=is_stale,
+        context={"path": str(path)},
+        cause=oserror,
+    )
+
+
+# Track open GraphStore instances so atexit can clean up their markers.
+_open_markers: weakref.WeakSet[GraphStore] = weakref.WeakSet()
+
+
+def _atexit_cleanup_markers() -> None:
+    for store in list(_open_markers):
+        try:
+            store.close()
+        except Exception:
+            pass
+
+
+atexit.register(_atexit_cleanup_markers)
+
+
 class GraphStore:
     """Oxigraph RDF store for knowledge objects, relationships, and entities."""
 
@@ -42,21 +194,69 @@ class GraphStore:
 
         Args:
             path: Directory for persistent storage. If None, uses in-memory store.
+
+        Raises:
+            StoreLockedError: If another process holds the lock on the graph DB.
         """
-        self._read_only = False
+        self._path: Path | None = path
+        self._marker_path: Path | None = None
+        self._marker_owned: bool = False
+
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
+            marker_path = _marker_path_for(path)
             try:
                 self._store = ox.Store(str(path))
-            except OSError:
-                logger.warning(
-                    "Graph DB locked by another process — using in-memory fallback"
-                )
-                self._store = ox.Store()
-                self._read_only = True
+            except OSError as e:
+                _raise_locked_error(path, marker_path, e)
+            # Lock acquired — write the marker (best-effort).
+            self._marker_path = marker_path
+            self._marker_owned = _write_marker(marker_path)
+            _open_markers.add(self)
         else:
             self._store = ox.Store()
         self._ontology_loaded = False
+
+    def close(self) -> None:
+        """Release the RocksDB lock and remove the marker file.
+
+        Idempotent and safe to call multiple times. After ``close()`` the
+        store cannot be reused — calling any other method will raise
+        ``AttributeError`` from the missing ``_store``.
+        """
+        if self._marker_owned and self._marker_path is not None:
+            try:
+                self._marker_path.unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning("Could not remove lock marker %s: %s", self._marker_path, e)
+            self._marker_owned = False
+        if self in _open_markers:
+            _open_markers.discard(self)
+        # Release the underlying RocksDB lock by dropping the pyoxigraph
+        # Store reference. Without this, the OS-level lock file persists
+        # until Python garbage-collects the GraphStore (which can be much
+        # later, especially in test contexts where references linger).
+        store = getattr(self, "_store", None)
+        if store is not None:
+            try:
+                del self._store
+            except AttributeError:
+                pass
+            del store
+            import gc
+            gc.collect()
+
+    def __enter__(self) -> GraphStore:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def load_ontology(self, ontology_path: Path | None = None) -> int:
         """Load the Cortex OWL ontology into the store.
@@ -116,6 +316,7 @@ class GraphStore:
         tier: str = "archive",
         captured_by: str = "",
         confidence: float = 1.0,
+        captured_at: str | None = None,
     ) -> str:
         """Create a knowledge object in the graph.
 
@@ -129,6 +330,7 @@ class GraphStore:
             tier: Memory tier (archive, recall, reflex).
             captured_by: Who/what captured this.
             confidence: Classification confidence 0.0-1.0.
+            captured_at: ISO-8601 timestamp override; defaults to now.
 
         Returns:
             Generated object ID (UUID).
@@ -149,7 +351,7 @@ class GraphStore:
 
         obj_id = str(uuid4())
         subject = cortex_iri(f"obj/{obj_id}")
-        now = datetime.now(UTC).isoformat()
+        now = captured_at or datetime.now(UTC).isoformat()
 
         triples: list[ox.Quad] = [
             # Type assertions

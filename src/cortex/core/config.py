@@ -55,6 +55,11 @@ class CortexConfig:
 
     # Dashboard
     dashboard_password: str = ""
+    # URL of the MCP HTTP server the dashboard connects to.
+    # The dashboard never opens graph.db directly — it forwards every request
+    # to this URL via an MCP client. The server is started separately with
+    # ``cortex serve --transport mcp-http``.
+    mcp_server_url: str = "http://127.0.0.1:1314/mcp"
 
     # Vault export path
     vault_path: str = ""
@@ -148,6 +153,15 @@ def load_config(
     except ValueError:
         port = DEFAULT_PORT
 
+    mcp_server_url = _get("mcp_server_url", "http://127.0.0.1:1314/mcp")
+    if mcp_server_url and not (
+        mcp_server_url.startswith("http://") or mcp_server_url.startswith("https://")
+    ):
+        raise ConfigError(
+            f"CORTEX_MCP_SERVER_URL must be http:// or https://, got: {mcp_server_url!r}",
+            context={"value": mcp_server_url},
+        )
+
     return CortexConfig(
         data_dir=resolved_dir,
         host=_get("host", DEFAULT_HOST),
@@ -159,5 +173,6 @@ def load_config(
         log_level=_get("log_level", "INFO"),
         log_json=_get("log_json", "true").lower() in ("true", "1", "yes"),
         dashboard_password=_get("dashboard_password"),
+        mcp_server_url=mcp_server_url,
         vault_path=_get("vault_path"),
     )

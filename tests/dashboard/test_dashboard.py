@@ -1,8 +1,16 @@
-"""Tests for cortex.dashboard.server (web dashboard)."""
+"""Tests for cortex.dashboard.server (web dashboard).
+
+The dashboard is a thin MCP HTTP client. To test it without spinning up a real
+MCP HTTP server, we inject an in-process ``FakeMCPClient`` that wraps a real
+``Store`` and dispatches the same MCP tool calls the dashboard would make.
+This lets the existing assertion patterns ("create from dashboard, see in
+list") work unchanged while keeping tests fast.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import bcrypt
 import pytest
@@ -10,25 +18,113 @@ from starlette.testclient import TestClient
 
 from cortex.core.config import CortexConfig
 from cortex.dashboard.server import _sessions, create_dashboard
+from cortex.db.store import Store
+from cortex.transport.mcp.server import create_mcp_server
+
+
+class FakeMCPClient:
+    """In-process drop-in for ``CortexMCPClient``.
+
+    Holds a reference to a real ``Store`` and routes each method to the same
+    underlying functions the MCP tools call. Async signatures match the real
+    client so the dashboard's await calls work transparently.
+    """
+
+    def __init__(self, mcp):
+        self._mcp = mcp
+        self._tools = mcp._tool_manager._tools
+
+    def _call(self, name: str, **kwargs):
+        return self._tools[name].fn(**kwargs)
+
+    @property
+    def store(self) -> Store:
+        # Reach into the closure of the create_mcp_server function to expose
+        # the Store. Useful for tests that want to seed data directly.
+        # The MCP tools captured ``store`` in their closures.
+        # We retrieve it from any tool that exposes it.
+        return self._tools["cortex_list"].fn.__closure__[0].cell_contents
+
+    async def search(self, query, doc_type="", project="", limit=20):
+        return self._call(
+            "cortex_search", query=query, doc_type=doc_type, project=project, limit=limit
+        )
+
+    async def context(self, topic, limit=10):
+        return self._call("cortex_context", topic=topic, limit=limit)
+
+    async def dossier(self, topic):
+        return self._call("cortex_dossier", topic=topic)
+
+    async def read(self, obj_id):
+        return self._call("cortex_read", obj_id=obj_id)
+
+    async def capture(
+        self, title, content="", obj_type="idea", project="", tags="", **kw
+    ):
+        return self._call(
+            "cortex_capture",
+            title=title,
+            content=content,
+            obj_type=obj_type,
+            project=project,
+            tags=tags,
+        )
+
+    async def list_objects(self, doc_type="", project="", limit=50):
+        return self._call(
+            "cortex_list", doc_type=doc_type, project=project, limit=limit
+        )
+
+    async def graph(self, obj_id="", entity=""):
+        return self._call("cortex_graph", obj_id=obj_id, entity=entity)
+
+    async def status(self):
+        return self._call("cortex_status")
+
+    async def query_trail(self, limit=50):
+        return self._call("cortex_query_trail", limit=limit)
+
+    async def list_entities(self, entity_type=""):
+        return self._call("cortex_list_entities", entity_type=entity_type)
+
+    async def graph_data(self, project="", doc_type="", limit=500, offset=0):
+        return self._call(
+            "cortex_graph_data",
+            project=project,
+            doc_type=doc_type,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def list_tools(self):
+        return list(self._tools.keys())
+
+
+def _make_client(tmp_path: Path, *, password_hash: str | None = None) -> TestClient:
+    _sessions.clear()
+    config = CortexConfig(
+        data_dir=tmp_path,
+        dashboard_password=password_hash or "",
+    )
+    mcp = create_mcp_server(config, include_admin=True)
+    fake_client = FakeMCPClient(mcp)
+    app = create_dashboard(config, mcp_client=fake_client)
+    follow = password_hash is None
+    return TestClient(app, follow_redirects=follow)
 
 
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
     """TestClient wired to a fresh dashboard with no password (open access)."""
-    _sessions.clear()
-    config = CortexConfig(data_dir=tmp_path)
-    app = create_dashboard(config)
-    return TestClient(app)
+    return _make_client(tmp_path)
 
 
 @pytest.fixture()
 def auth_client(tmp_path: Path) -> TestClient:
     """TestClient wired to a dashboard with password auth enabled."""
-    _sessions.clear()
     pw_hash = bcrypt.hashpw(b"testpass", bcrypt.gensalt()).decode()
-    config = CortexConfig(data_dir=tmp_path, dashboard_password=pw_hash)
-    app = create_dashboard(config)
-    return TestClient(app, follow_redirects=False)
+    return _make_client(tmp_path, password_hash=pw_hash)
 
 
 # -- Pages Render (open access) ------------------------------------------
@@ -78,7 +174,7 @@ class TestPagesRender:
 
 class TestDocumentDetail:
     def test_detail_for_existing_object(self, client: TestClient):
-        store = client.app.state.store
+        store = client.app.state.mcp_client.store
         obj_id = store.create(
             obj_type="idea",
             title="Test Idea",
@@ -138,7 +234,7 @@ class TestSearch:
         assert resp.status_code == 200
 
     def test_search_finds_matching_document(self, client: TestClient):
-        store = client.app.state.store
+        store = client.app.state.mcp_client.store
         store.create(
             obj_type="research",
             title="Quantum Entanglement",
@@ -167,7 +263,7 @@ class TestGraphDataAPI:
         assert body["edges"] == []
 
     def test_graph_data_includes_seeded_objects(self, client: TestClient):
-        store = client.app.state.store
+        store = client.app.state.mcp_client.store
         store.create(
             obj_type="idea",
             title="Graph Node A",

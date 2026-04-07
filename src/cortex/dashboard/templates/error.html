@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Cortex — Error{% endblock %}
+{% block content %}
+<section class="error-page">
+    <h2>Cortex MCP Server Error</h2>
+    <p class="error-status">HTTP {{ status_code }} — {{ error_code }}</p>
+    <pre class="error-message">{{ error_message }}</pre>
+    <h3>What to do</h3>
+    <p>The dashboard talks to the Cortex MCP server over HTTP. If the server isn't running or is unreachable, the dashboard can't load any data.</p>
+    <p>Start the MCP server in a terminal:</p>
+    <pre><code>cortex serve --transport mcp-http --host 127.0.0.1 --port 1314</code></pre>
+    <p>Then refresh this page.</p>
+</section>
+{% endblock %}

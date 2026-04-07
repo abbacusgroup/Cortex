@@ -11,8 +11,9 @@ from typing import Any
 
 import typer
 
-from cortex.core.config import load_config
+from cortex.core.config import CortexConfig, load_config
 from cortex.core.constants import KNOWLEDGE_TYPES
+from cortex.core.errors import StoreLockedError
 from cortex.core.logging import setup_logging
 from cortex.db.store import Store
 from cortex.ontology.resolver import find_ontology
@@ -31,6 +32,18 @@ _pipeline: PipelineOrchestrator | None = None
 _learner: LearningLoop | None = None
 
 
+def _open_store_or_exit(config: CortexConfig) -> Store:
+    """Open a Store, exiting cleanly with a user-friendly message if the graph DB is locked.
+
+    This is the single chokepoint for surfacing StoreLockedError to CLI users.
+    """
+    try:
+        return Store(config)
+    except StoreLockedError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+
 def _get_store(*, must_init: bool = True) -> Store:
     """Get or create the unified store."""
     global _store
@@ -39,7 +52,7 @@ def _get_store(*, must_init: bool = True) -> Store:
 
     config = load_config()
     setup_logging(level=config.log_level, json_output=False)
-    store = Store(config)
+    store = _open_store_or_exit(config)
 
     # Auto-initialize if data dir has stores
     try:
@@ -79,7 +92,7 @@ def init(
     config = load_config(data_dir=Path(data_dir) if data_dir else None)
     setup_logging(level=config.log_level, json_output=False)
 
-    store = Store(config)
+    store = _open_store_or_exit(config)
 
     try:
         ontology_path = find_ontology()
@@ -422,13 +435,15 @@ def register() -> None:
 
     cortex_bin = shutil.which("cortex")
     if cortex_bin:
-        cortex_cmd = f"{cortex_bin} serve --transport stdio"
+        cmd = cortex_bin
+        args = ["serve", "--transport", "stdio"]
     else:
-        cortex_cmd = f"{sys.executable} -m cortex.transport.mcp"
+        cmd = sys.executable
+        args = ["-m", "cortex.transport.mcp"]
 
     mcp_servers["cortex"] = {
-        "command": cortex_cmd,
-        "args": [],
+        "command": cmd,
+        "args": args,
         "env": {},
     }
 
@@ -436,7 +451,7 @@ def register() -> None:
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
 
     typer.echo(f"Registered Cortex MCP at {settings_path}")
-    typer.echo(f"  Command: {cortex_cmd}")
+    typer.echo(f"  Command: {cmd} {' '.join(args)}")
     typer.echo("  Restart Claude Code to activate.")
 
 
@@ -444,20 +459,49 @@ def register() -> None:
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
     port: int = typer.Option(1314, "--port", help="Bind port"),
-    transport: str = typer.Option("stdio", "--transport", help="stdio or http"),
+    transport: str = typer.Option(
+        "stdio",
+        "--transport",
+        help="Transport: stdio (default, for Claude Code), mcp-http (HTTP MCP server), or http (REST API)",
+    ),
 ) -> None:
-    """Start the Cortex server (MCP or HTTP)."""
+    """Start the Cortex server.
+
+    Transports:
+        stdio    — MCP over stdio (default; for Claude Code, Cursor, etc.)
+        mcp-http — MCP over streamable-http (for browser dashboard + multi-client setups)
+        http     — REST API with API-key auth (for remote agents)
+    """
     if transport == "stdio":
         from cortex.transport.mcp.server import run_stdio
-        run_stdio()
+        try:
+            run_stdio()
+        except StoreLockedError as e:
+            typer.secho(str(e), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
+    elif transport == "mcp-http":
+        from cortex.transport.mcp.server import run_http
+        typer.echo(f"Cortex MCP (streamable-http) at http://{host}:{port}/mcp")
+        try:
+            run_http(host=host, port=port)
+        except StoreLockedError as e:
+            typer.secho(str(e), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
     elif transport == "http":
         import uvicorn
 
         from cortex.transport.api.server import create_api
-        api = create_api()
+        try:
+            api = create_api()
+        except StoreLockedError as e:
+            typer.secho(str(e), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
         uvicorn.run(api, host=host, port=port)
     else:
-        typer.echo(f"Unknown transport: {transport}", err=True)
+        typer.echo(
+            f"Unknown transport: {transport}. Valid: stdio, mcp-http, http",
+            err=True,
+        )
         raise typer.Exit(1)
 
 
@@ -482,7 +526,7 @@ def setup(
         typer.echo("  (created)")
 
     # 2. Initialize stores
-    store = Store(config)
+    store = _open_store_or_exit(config)
     try:
         ontology_path = find_ontology()
         store.initialize(ontology_path)
@@ -546,12 +590,16 @@ def import_v1(
 @app.command(name="import-vault")
 def import_vault(
     vault_path: str = typer.Argument(..., help="Path to Obsidian vault"),
+    skip_pipeline: bool = typer.Option(
+        False, "--skip-pipeline", help="Fast import without running pipeline stages"
+    ),
 ) -> None:
     """Import from an Obsidian vault."""
     store = _get_store()
+    pipeline = _get_pipeline() if not skip_pipeline else None
     from cortex.pipeline.importer import ObsidianImporter
 
-    importer = ObsidianImporter(store)
+    importer = ObsidianImporter(store, pipeline=pipeline)
     result = importer.run(Path(vault_path))
 
     if result.get("status") == "error":
@@ -560,8 +608,54 @@ def import_vault(
 
     typer.echo("Import complete:")
     typer.echo(f"  Imported: {result['imported']}")
-    typer.echo(f"  Skipped:  {result['skipped']} (duplicates)")
+    typer.echo(f"  Skipped:  {result['skipped']} (duplicates/filtered)")
     typer.echo(f"  Failed:   {result['failed']}")
+    wiki_links = result.get("wiki_links_created", 0)
+    if wiki_links:
+        typer.echo(f"  Wiki-link relationships: {wiki_links}")
+
+
+_REQUIRED_MCP_TOOLS = frozenset(
+    {
+        "cortex_search",
+        "cortex_list",
+        "cortex_read",
+        "cortex_capture",
+        "cortex_dossier",
+        "cortex_status",
+        "cortex_query_trail",
+        "cortex_graph_data",
+        "cortex_list_entities",
+    }
+)
+
+
+def _probe_mcp_server(url: str, *, retries: int = 3, retry_delay: float = 1.0) -> set[str]:
+    """Verify the MCP HTTP server is reachable AND has the expected tools.
+
+    Returns the set of tool names exposed. Raises ``MCPConnectionError`` /
+    ``MCPTimeoutError`` after exhausting retries. Used by ``cortex dashboard``
+    to fail fast with a clear error if the MCP server isn't running.
+    """
+    import asyncio
+    import time
+
+    from cortex.dashboard.mcp_client import (
+        CortexMCPClient,
+        MCPClientError,
+    )
+
+    client = CortexMCPClient(url, timeout_seconds=3.0)
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return set(asyncio.run(client.list_tools()))
+        except MCPClientError as e:
+            last_error = e
+            if attempt < retries - 1:
+                time.sleep(retry_delay)
+    assert last_error is not None
+    raise last_error
 
 
 @app.command()
@@ -569,11 +663,53 @@ def dashboard(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
     port: int = typer.Option(1315, "--port", help="Bind port"),
 ) -> None:
-    """Start the web dashboard."""
+    """Start the web dashboard.
+
+    The dashboard is a thin client of the MCP HTTP server. It probes the
+    configured ``mcp_server_url`` at startup and refuses to start if the
+    server isn't reachable or is missing required tools.
+    """
     import uvicorn
 
+    from cortex.dashboard.mcp_client import MCPClientError
     from cortex.dashboard.server import create_dashboard
-    dash = create_dashboard()
+
+    config = load_config()
+
+    # Probe the MCP server before starting uvicorn so the user gets an
+    # actionable error instead of a half-broken dashboard.
+    try:
+        available = _probe_mcp_server(config.mcp_server_url)
+    except MCPClientError as e:
+        typer.secho(
+            f"Cannot reach Cortex MCP server at {config.mcp_server_url}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        typer.secho(f"  {e}", fg=typer.colors.RED, err=True)
+        typer.echo(
+            "  Start it in another terminal:\n"
+            "    cortex serve --transport mcp-http --host 127.0.0.1 --port 1314",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    missing = _REQUIRED_MCP_TOOLS - available
+    if missing:
+        typer.secho(
+            f"MCP server at {config.mcp_server_url} is missing required tools: "
+            f"{', '.join(sorted(missing))}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        typer.echo(
+            "This usually means the MCP server is from an older version of Cortex. "
+            "Update or restart it.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    dash = create_dashboard(config)
     typer.echo(f"Dashboard at http://{host}:{port}")
     uvicorn.run(dash, host=host, port=port)
 
@@ -663,3 +799,9 @@ def _print_summary(doc: dict) -> None:
     project = doc.get("project", "")
     proj_str = f" [{project}]" if project else ""
     typer.echo(f"  {doc_id[:8]}  {doc_type:12s} {title}{proj_str}")
+
+
+# Allow `python -m cortex.cli.main ...` invocation alongside the `cortex`
+# console_scripts entry point. Used by the integration test suite.
+if __name__ == "__main__":
+    app()

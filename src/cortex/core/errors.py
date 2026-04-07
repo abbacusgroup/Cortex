@@ -77,6 +77,56 @@ class SyncError(StoreError):
     code = "CORTEX_SYNC_ERROR"
 
 
+class StoreLockedError(StoreError):
+    """Raised when the graph store cannot be opened because another process holds the lock.
+
+    Carries the holder's PID and command line (when available) so the user can identify
+    and stop the conflicting process. Set ``is_stale=True`` when the recorded PID is no
+    longer running, indicating an orphaned lock marker.
+    """
+
+    code = "CORTEX_STORE_LOCKED"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        holder_pid: int | None = None,
+        holder_cmdline: str | None = None,
+        is_stale: bool = False,
+        context: dict[str, Any] | None = None,
+        cause: Exception | None = None,
+    ):
+        if holder_pid is not None and not isinstance(holder_pid, int):
+            raise TypeError(f"holder_pid must be int or None, got {type(holder_pid).__name__}")
+        self.holder_pid = holder_pid
+        self.holder_cmdline = holder_cmdline
+        self.is_stale = is_stale
+        merged_context = dict(context or {})
+        merged_context.setdefault("holder_pid", holder_pid)
+        merged_context.setdefault("holder_cmdline", holder_cmdline)
+        merged_context.setdefault("is_stale", is_stale)
+        super().__init__(message, context=merged_context, cause=cause)
+
+    def __str__(self) -> str:
+        parts = [self.message]
+        if self.holder_pid is not None:
+            holder_desc = f"PID {self.holder_pid}"
+            if self.holder_cmdline:
+                holder_desc += f" ({self.holder_cmdline})"
+            parts.append(f"Lock holder: {holder_desc}.")
+            if self.is_stale:
+                parts.append(
+                    f"This appears to be a stale lock marker — process {self.holder_pid} "
+                    f"is no longer running. Manual cleanup may be required."
+                )
+            else:
+                parts.append(f"Stop the conflicting process or kill PID {self.holder_pid}.")
+        else:
+            parts.append("Lock holder unknown (no marker file).")
+        return " ".join(parts)
+
+
 # --- Ontology ---
 
 class OntologyError(CortexError):
