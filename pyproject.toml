@@ -53,6 +53,9 @@ build-backend = "uv_build"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+markers = [
+    "slow: end-to-end tests that spawn subprocesses (skipped in fast loops)",
+]
 
 [tool.ruff]
 target-version = "py312"

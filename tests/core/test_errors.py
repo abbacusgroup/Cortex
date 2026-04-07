@@ -16,10 +16,13 @@ from cortex.core.errors import (
     OntologyError,
     PipelineError,
     StoreError,
+    StoreLockedError,
     SyncError,
     TransportError,
     ValidationError,
 )
+
+import pytest
 
 
 class TestCortexError:
@@ -87,6 +90,7 @@ class TestErrorHierarchy:
         assert issubclass(StoreError, CortexError)
         assert issubclass(NotFoundError, StoreError)
         assert issubclass(SyncError, StoreError)
+        assert issubclass(StoreLockedError, StoreError)
 
     def test_pipeline_errors(self):
         assert issubclass(PipelineError, CortexError)
@@ -108,9 +112,107 @@ class TestErrorCodes:
     def test_unique_codes(self):
         error_classes = [
             CortexError, ConfigError, ConfigNotFoundError, ConfigPermissionError,
-            StoreError, NotFoundError, SyncError, OntologyError, ValidationError,
+            StoreError, NotFoundError, SyncError, StoreLockedError,
+            OntologyError, ValidationError,
             PipelineError, ClassificationError, LLMError,
             TransportError, AuthenticationError,
         ]
         codes = [cls.code for cls in error_classes]
         assert len(codes) == len(set(codes)), f"Duplicate codes: {codes}"
+
+
+class TestStoreLockedError:
+    """StoreLockedError carries holder PID/cmdline and produces actionable messages."""
+
+    def test_basic_with_holder(self):
+        err = StoreLockedError(
+            "Graph DB is locked.",
+            holder_pid=12345,
+            holder_cmdline="cortex serve --transport stdio",
+        )
+        assert err.holder_pid == 12345
+        assert err.holder_cmdline == "cortex serve --transport stdio"
+        assert err.is_stale is False
+        assert err.code == "CORTEX_STORE_LOCKED"
+
+    def test_str_includes_pid_and_cmdline(self):
+        err = StoreLockedError(
+            "Graph DB is locked.",
+            holder_pid=12345,
+            holder_cmdline="cortex serve --transport stdio",
+        )
+        s = str(err)
+        assert "12345" in s
+        assert "cortex serve --transport stdio" in s
+        assert "Stop the conflicting process" in s or "kill PID 12345" in s
+
+    def test_str_when_holder_unknown(self):
+        err = StoreLockedError("Graph DB is locked.")
+        s = str(err)
+        assert "unknown" in s.lower()
+        assert "PID" not in s.replace("unknown", "")  # no PID phrasing when none
+
+    def test_stale_flag_in_message(self):
+        err = StoreLockedError(
+            "Graph DB is locked.",
+            holder_pid=99999,
+            holder_cmdline="cortex serve",
+            is_stale=True,
+        )
+        assert err.is_stale is True
+        s = str(err)
+        assert "stale" in s.lower()
+        assert "99999" in s
+
+    def test_isinstance_store_error(self):
+        err = StoreLockedError("locked")
+        assert isinstance(err, StoreError)
+        assert isinstance(err, CortexError)
+        assert isinstance(err, Exception)
+
+    def test_to_dict_includes_holder_in_context(self):
+        err = StoreLockedError(
+            "locked",
+            holder_pid=42,
+            holder_cmdline="foo",
+            is_stale=False,
+        )
+        d = err.to_dict()
+        assert d["code"] == "CORTEX_STORE_LOCKED"
+        assert d["context"]["holder_pid"] == 42
+        assert d["context"]["holder_cmdline"] == "foo"
+        assert d["context"]["is_stale"] is False
+
+    def test_rejects_non_int_pid(self):
+        with pytest.raises(TypeError, match="holder_pid must be int"):
+            StoreLockedError("locked", holder_pid="abc")  # type: ignore[arg-type]
+
+    def test_accepts_none_pid(self):
+        err = StoreLockedError("locked", holder_pid=None)
+        assert err.holder_pid is None
+
+    def test_can_be_raised_and_caught_as_store_error(self):
+        """Code that catches StoreError must also catch StoreLockedError."""
+        caught = False
+        try:
+            raise StoreLockedError("locked", holder_pid=1)
+        except StoreError:
+            caught = True
+        assert caught
+
+    def test_extra_context_preserved(self):
+        err = StoreLockedError(
+            "locked",
+            holder_pid=1,
+            holder_cmdline="x",
+            context={"path": "/tmp/g.db"},
+        )
+        assert err.context["path"] == "/tmp/g.db"
+        assert err.context["holder_pid"] == 1
+
+    def test_chained_with_oserror_cause(self):
+        cause = OSError("lock hold by current process")
+        err = StoreLockedError("locked", holder_pid=42, cause=cause)
+        d = err.to_dict()
+        assert d["cause"]["code"] == "EXTERNAL"
+        assert "lock hold" in d["cause"]["message"]

@@ -1,7 +1,14 @@
 """Cortex Web Dashboard — FastAPI + Jinja2 + HTMX.
 
-Visual exploration of the knowledge graph with Abbacus brand styling.
-Authentication via bcrypt + session cookies.
+The dashboard is a thin client of the Cortex MCP HTTP server. It does NOT
+open ``graph.db`` or ``cortex.db`` directly — every read and write goes
+through ``CortexMCPClient`` to a running ``cortex serve --transport mcp-http``
+process. This avoids the Oxigraph single-writer lock and lets the dashboard
+coexist with Claude Code's MCP usage.
+
+Authentication is bcrypt-hash-based via the ``dashboard_password`` config
+field (set via ``CORTEX_DASHBOARD_PASSWORD`` env var). Sessions are kept in
+process memory.
 """
 
 from __future__ import annotations
@@ -18,13 +25,13 @@ from fastapi.templating import Jinja2Templates
 
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.logging import get_logger, setup_logging
-from cortex.db.store import Store
-from cortex.ontology.resolver import find_ontology
-from cortex.pipeline.orchestrator import PipelineOrchestrator
-from cortex.retrieval.engine import RetrievalEngine
-from cortex.retrieval.learner import LearningLoop
-from cortex.retrieval.presenters import AlertPresenter, DossierPresenter
-from cortex.services.llm import LLMClient
+from cortex.dashboard.mcp_client import (
+    CortexMCPClient,
+    MCPClientError,
+    MCPConnectionError,
+    MCPTimeoutError,
+    MCPToolError,
+)
 
 logger = get_logger("dashboard")
 
@@ -37,40 +44,39 @@ _sessions: dict[str, dict[str, Any]] = {}
 SESSION_COOKIE = "cortex_session"
 
 
-def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
-    """Create the dashboard FastAPI application."""
+def create_dashboard(
+    config: CortexConfig | None = None,
+    *,
+    mcp_client: CortexMCPClient | None = None,
+) -> FastAPI:
+    """Create the dashboard FastAPI application.
+
+    Args:
+        config: Cortex configuration. If None, loads from env.
+        mcp_client: MCP client instance. If None, one is created from
+            ``config.mcp_server_url``. Tests inject a fake here.
+    """
     if config is None:
         config = load_config()
 
     setup_logging(level=config.log_level, json_output=False)
 
-    store = Store(config)
-    try:
-        ontology_path = find_ontology()
-        store.initialize(ontology_path)
-    except FileNotFoundError:
-        pass
-
-    llm = LLMClient(config)
-    pipeline = PipelineOrchestrator(store, config)
-    engine = RetrievalEngine(store)
-    learner = LearningLoop(store)
+    if mcp_client is None:
+        mcp_client = CortexMCPClient(config.mcp_server_url, timeout_seconds=10.0)
 
     app = FastAPI(title="Cortex Dashboard", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-    # Store on app state for testing
+    # Stash on app state for tests + auth helpers
     app.state.config = config
-    app.state.store = store
+    app.state.mcp_client = mcp_client
 
     # ─── Auth Helpers ──────────────────────────────────────────────
 
     def _get_password_hash() -> str | None:
-        """Get stored password hash, or None if no password set."""
-        if config.dashboard_password:
-            return config.dashboard_password
-        return store.content.get_config("dashboard_password_hash", "") or None
+        """Get the dashboard password hash from config (env var)."""
+        return config.dashboard_password or None
 
     def _verify_password(password: str) -> bool:
         stored = _get_password_hash()
@@ -96,8 +102,45 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         return _get_session(request)
 
     def _ctx(**kwargs: Any) -> dict[str, Any]:
-        """Build template context."""
         return kwargs
+
+    # ─── MCP error handlers ────────────────────────────────────────
+
+    def _mcp_error_html(request: Request, exc: MCPClientError, status: int):
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            _ctx(
+                error_message=str(exc),
+                error_code=exc.code,
+                status_code=status,
+            ),
+            status_code=status,
+        )
+
+    def _mcp_error_json(exc: MCPClientError, status: int):
+        return JSONResponse(
+            {"error": str(exc), "code": exc.code},
+            status_code=status,
+        )
+
+    @app.exception_handler(MCPConnectionError)
+    async def _connection_handler(request: Request, exc: MCPConnectionError):
+        if request.url.path.startswith("/api/"):
+            return _mcp_error_json(exc, 503)
+        return _mcp_error_html(request, exc, 503)
+
+    @app.exception_handler(MCPTimeoutError)
+    async def _timeout_handler(request: Request, exc: MCPTimeoutError):
+        if request.url.path.startswith("/api/"):
+            return _mcp_error_json(exc, 504)
+        return _mcp_error_html(request, exc, 504)
+
+    @app.exception_handler(MCPToolError)
+    async def _tool_handler(request: Request, exc: MCPToolError):
+        if request.url.path.startswith("/api/"):
+            return _mcp_error_json(exc, 502)
+        return _mcp_error_html(request, exc, 502)
 
     # ─── Auth Routes ───────────────────────────────────────────────
 
@@ -139,9 +182,9 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         if session is None:
             return RedirectResponse("/login", status_code=302)
 
-        stats = store.status()
-        alerts = AlertPresenter(store).render()
-        recent = store.list_objects(limit=10)
+        stats = await mcp_client.status()
+        recent = await mcp_client.list_objects(limit=10)
+        alerts = stats.get("alerts", []) if isinstance(stats, dict) else []
 
         return templates.TemplateResponse(
             request,
@@ -161,16 +204,16 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
             return RedirectResponse("/login", status_code=302)
 
         if q:
-            docs = engine.search(
+            docs = await mcp_client.search(
                 q,
-                doc_type=doc_type or None,
-                project=project or None,
+                doc_type=doc_type,
+                project=project,
                 limit=50,
             )
         else:
-            docs = store.list_objects(
-                obj_type=doc_type or None,
-                project=project or None,
+            docs = await mcp_client.list_objects(
+                doc_type=doc_type,
+                project=project,
                 limit=50,
             )
 
@@ -191,11 +234,11 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         if session is None:
             return RedirectResponse("/login", status_code=302)
 
-        doc = store.read(obj_id)
-        if doc is None:
+        doc = await mcp_client.read(obj_id)
+        # cortex_read returns a string "Not found: {id}" when missing
+        if isinstance(doc, str) or doc is None:
             raise HTTPException(status_code=404, detail="Not found")
-
-        learner.record_access(obj_id)
+        # Access tracking happens server-side inside cortex_read.
         return templates.TemplateResponse(request, "detail.html", _ctx(doc=doc))
 
     @app.get("/graph", response_class=HTMLResponse)
@@ -211,7 +254,7 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         if session is None:
             return RedirectResponse("/login", status_code=302)
 
-        ents = store.list_entities(entity_type=entity_type or None)
+        ents = await mcp_client.list_entities(entity_type=entity_type)
         return templates.TemplateResponse(
             request,
             "entities.html",
@@ -238,14 +281,12 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         if session is None:
             return RedirectResponse("/login", status_code=302)
 
-        result = pipeline.capture(
+        result = await mcp_client.capture(
             title=title,
             content=content,
             obj_type=obj_type,
             project=project,
             tags=tags,
-            captured_by="dashboard",
-            run_pipeline=True,
         )
         obj_id = result["id"]
         return RedirectResponse(f"/documents/{obj_id}", status_code=302)
@@ -256,7 +297,7 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         if session is None:
             return RedirectResponse("/login", status_code=302)
 
-        logs = store.content.get_query_log(limit=50)
+        logs = await mcp_client.query_trail(limit=50)
         return templates.TemplateResponse(request, "trail.html", _ctx(logs=logs))
 
     @app.get("/settings", response_class=HTMLResponse)
@@ -268,10 +309,7 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "settings.html",
-            _ctx(
-                config=config,
-                weights=learner.get_weights(),
-            ),
+            _ctx(config=config, weights={}),
         )
 
     # ─── API Endpoints (for HTMX/Cytoscape) ───────────────────────
@@ -289,82 +327,18 @@ def create_dashboard(config: CortexConfig | None = None) -> FastAPI:
         if session is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
-        objects = store.list_objects(
-            obj_type=doc_type or None,
-            project=project or None,
-            limit=min(limit, 1000),
+        return await mcp_client.graph_data(
+            project=project,
+            doc_type=doc_type,
+            limit=limit,
             offset=offset,
         )
-
-        nodes = []
-        edges = []
-        seen_edges: set[str] = set()
-
-        for obj in objects:
-            obj_id = obj.get("id", "")
-            nodes.append(
-                {
-                    "data": {
-                        "id": obj_id,
-                        "label": obj.get("title", "")[:40],
-                        "type": obj.get("type", ""),
-                        "project": obj.get("project", ""),
-                    },
-                }
-            )
-
-            rels = store.get_relationships(obj_id)
-            for rel in rels:
-                if rel["direction"] == "outgoing":
-                    edge_key = f"{obj_id}-{rel['rel_type']}-{rel['other_id']}"
-                    if edge_key not in seen_edges:
-                        seen_edges.add(edge_key)
-                        edges.append(
-                            {
-                                "data": {
-                                    "source": obj_id,
-                                    "target": rel["other_id"],
-                                    "rel_type": rel["rel_type"],
-                                },
-                            }
-                        )
-
-        # Add entity nodes and mention edges
-        for entity in store.list_entities():
-            eid = f"entity:{entity['id']}"
-            nodes.append({
-                "data": {
-                    "id": eid,
-                    "label": entity["name"],
-                    "type": f"entity:{entity['type']}",
-                    "project": "",
-                },
-            })
-            for mid in store.graph.get_entity_mentions(entity["id"]):
-                edge_key = f"{mid}-mentions-{eid}"
-                if edge_key not in seen_edges:
-                    seen_edges.add(edge_key)
-                    edges.append({
-                        "data": {
-                            "source": mid,
-                            "target": eid,
-                            "rel_type": "mentions",
-                        },
-                    })
-
-        return {
-            "nodes": nodes,
-            "edges": edges,
-            "total": store.content.total_count(),
-            "limit": min(limit, 1000),
-            "offset": offset,
-        }
 
     @app.get("/api/dossier/{topic}")
     async def api_dossier(request: Request, topic: str):
         session = _require_auth(request)
         if session is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return DossierPresenter(store, llm).render(topic)
+        return await mcp_client.dossier(topic)
 
     return app

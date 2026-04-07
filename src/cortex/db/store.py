@@ -42,6 +42,7 @@ class Store:
 
     def close(self) -> None:
         self.content.close()
+        self.graph.close()
 
     # -------------------------------------------------------------------------
     # Knowledge Object CRUD (dual-write)
@@ -61,6 +62,8 @@ class Store:
         tier: str = "archive",
         captured_by: str = "",
         confidence: float = 1.0,
+        created_at: str | None = None,
+        updated_at: str | None = None,
     ) -> str:
         """Create a knowledge object in both stores.
 
@@ -82,6 +85,7 @@ class Store:
                 tier=tier,
                 captured_by=captured_by,
                 confidence=confidence,
+                captured_at=created_at,
             )
         except Exception as e:
             raise SyncError("Graph store write failed", cause=e)
@@ -100,6 +104,8 @@ class Store:
                 tier=tier,
                 captured_by=captured_by,
                 confidence=confidence,
+                created_at=created_at,
+                updated_at=updated_at,
             )
         except Exception as e:
             # Rollback graph on SQLite failure

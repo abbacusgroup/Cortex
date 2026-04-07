@@ -32,7 +32,7 @@ from cortex.services.llm import LLMClient
 
 logger = get_logger("transport.mcp")
 
-# Admin tool names — only available on stdio
+# Admin tool names — gated by include_admin (true for stdio + localhost mcp-http).
 ADMIN_TOOLS = frozenset({
     "cortex_status",
     "cortex_synthesize",
@@ -40,7 +40,14 @@ ADMIN_TOOLS = frozenset({
     "cortex_export",
     "cortex_safety_check",
     "cortex_reason",
+    "cortex_query_trail",
+    "cortex_graph_data",
+    "cortex_list_entities",
 })
+
+# Maximum result size caps for the new dashboard-aggregation tools.
+QUERY_TRAIL_MAX_LIMIT = 1000
+GRAPH_DATA_MAX_OBJECTS = 1000
 
 
 def create_mcp_server(
@@ -486,7 +493,127 @@ def create_mcp_server(
             reasoner = AdvancedReasoner(store, llm)
             return reasoner.run_all()
 
+        @mcp.tool()
+        def cortex_list_entities(entity_type: str = "") -> list[dict[str, Any]]:
+            """List entities in the knowledge graph, optionally filtered by type.
+
+            Args:
+                entity_type: Optional filter (technology, project, pattern, concept).
+            """
+            return store.list_entities(entity_type=entity_type or None)
+
+        @mcp.tool()
+        def cortex_query_trail(limit: int = 50) -> list[dict[str, Any]]:
+            """Return the most recent search query log entries.
+
+            Used by the dashboard's /trail page. Capped at 1000 entries.
+
+            Args:
+                limit: Number of entries to return (default 50, max 1000).
+            """
+            if limit <= 0:
+                return []
+            capped = min(limit, QUERY_TRAIL_MAX_LIMIT)
+            return store.content.get_query_log(limit=capped)
+
+        @mcp.tool()
+        def cortex_graph_data(
+            project: str = "",
+            doc_type: str = "",
+            limit: int = 500,
+            offset: int = 0,
+        ) -> dict[str, Any]:
+            """Return graph data in Cytoscape.js format for dashboard visualization.
+
+            Aggregates objects, relationships, and entities into a single payload.
+
+            Args:
+                project: Filter by project name.
+                doc_type: Filter by knowledge type.
+                limit: Maximum number of objects (default 500, max 1000).
+                offset: Pagination offset.
+            """
+            capped_limit = min(max(limit, 0), GRAPH_DATA_MAX_OBJECTS)
+            objects = store.list_objects(
+                obj_type=doc_type or None,
+                project=project or None,
+                limit=capped_limit,
+                offset=max(offset, 0),
+            )
+
+            nodes: list[dict[str, Any]] = []
+            edges: list[dict[str, Any]] = []
+            seen_edges: set[str] = set()
+
+            for obj in objects:
+                obj_id = obj.get("id", "")
+                nodes.append(
+                    {
+                        "data": {
+                            "id": obj_id,
+                            "label": obj.get("title", "")[:40],
+                            "type": obj.get("type", ""),
+                            "project": obj.get("project", ""),
+                        },
+                    }
+                )
+                for rel in store.get_relationships(obj_id):
+                    if rel["direction"] != "outgoing":
+                        continue
+                    edge_key = f"{obj_id}-{rel['rel_type']}-{rel['other_id']}"
+                    if edge_key in seen_edges:
+                        continue
+                    seen_edges.add(edge_key)
+                    edges.append(
+                        {
+                            "data": {
+                                "source": obj_id,
+                                "target": rel["other_id"],
+                                "rel_type": rel["rel_type"],
+                            },
+                        }
+                    )
+
+            for entity in store.list_entities():
+                eid = f"entity:{entity['id']}"
+                nodes.append(
+                    {
+                        "data": {
+                            "id": eid,
+                            "label": entity["name"],
+                            "type": f"entity:{entity['type']}",
+                            "project": "",
+                        },
+                    }
+                )
+                for mid in store.graph.get_entity_mentions(entity["id"]):
+                    edge_key = f"{mid}-mentions-{eid}"
+                    if edge_key in seen_edges:
+                        continue
+                    seen_edges.add(edge_key)
+                    edges.append(
+                        {
+                            "data": {
+                                "source": mid,
+                                "target": eid,
+                                "rel_type": "mentions",
+                            },
+                        }
+                    )
+
+            return {
+                "nodes": nodes,
+                "edges": edges,
+                "total": store.content.total_count(),
+                "limit": capped_limit,
+                "offset": max(offset, 0),
+            }
+
     return mcp
+
+
+# Localhost-equivalent host strings — we trust these and expose admin tools.
+_LOCALHOST_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def run_stdio() -> None:
@@ -496,6 +623,22 @@ def run_stdio() -> None:
 
 
 def run_http(host: str = "127.0.0.1", port: int = 1314) -> None:
-    """Run the MCP server on StreamableHTTP (for remote agents)."""
-    mcp = create_mcp_server(include_admin=False)
-    mcp.run(transport="streamable-http", host=host, port=port)
+    """Run the MCP server on StreamableHTTP.
+
+    When bound to a loopback host (127.0.0.1, localhost, ::1) we trust the
+    caller and expose admin tools — this is the mode the local dashboard uses.
+    For any other host (e.g. 0.0.0.0 or a public IP) admin tools are excluded
+    so untrusted remote agents cannot trigger destructive operations.
+    """
+    is_local = host in _LOCALHOST_HOSTS
+    mcp = create_mcp_server(include_admin=is_local)
+    if not is_local:
+        logger.warning(
+            "Binding MCP HTTP server to non-localhost host %s — admin tools disabled",
+            host,
+        )
+    # FastMCP reads host/port from its settings object — they're not accepted
+    # as ``run()`` kwargs in this version of the SDK.
+    mcp.settings.host = host
+    mcp.settings.port = port
+    mcp.run(transport="streamable-http")

@@ -8,7 +8,7 @@ import pytest
 
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.constants import DEFAULT_DATA_DIR, DEFAULT_HOST, DEFAULT_PORT
-from cortex.core.errors import ConfigPermissionError
+from cortex.core.errors import ConfigError, ConfigPermissionError
 
 
 class TestCortexConfig:
@@ -20,6 +20,7 @@ class TestCortexConfig:
         assert cfg.host == DEFAULT_HOST
         assert cfg.port == DEFAULT_PORT
         assert cfg.log_level == "INFO"
+        assert cfg.mcp_server_url == "http://127.0.0.1:1314/mcp"
 
     def test_derived_paths(self):
         cfg = CortexConfig(data_dir=Path("/tmp/cortex-test"))
@@ -112,3 +113,38 @@ class TestLoadConfig:
             monkeypatch.setenv("CORTEX_LOG_JSON", falsy)
             cfg = load_config(data_dir=tmp_path)
             assert cfg.log_json is False
+
+
+class TestMcpServerUrl:
+    """Tests for the mcp_server_url config field added in Phase 2.F."""
+
+    def test_default_url(self, tmp_path: Path):
+        cfg = load_config(data_dir=tmp_path)
+        assert cfg.mcp_server_url == "http://127.0.0.1:1314/mcp"
+
+    def test_env_var_override(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("CORTEX_MCP_SERVER_URL", "http://example.com:9999/mcp")
+        cfg = load_config(data_dir=tmp_path)
+        assert cfg.mcp_server_url == "http://example.com:9999/mcp"
+
+    def test_https_url_accepted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("CORTEX_MCP_SERVER_URL", "https://secure.example/mcp")
+        cfg = load_config(data_dir=tmp_path)
+        assert cfg.mcp_server_url == "https://secure.example/mcp"
+
+    def test_invalid_scheme_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("CORTEX_MCP_SERVER_URL", "gopher://example/mcp")
+        with pytest.raises(ConfigError, match="http://"):
+            load_config(data_dir=tmp_path)
+
+    def test_no_scheme_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("CORTEX_MCP_SERVER_URL", "127.0.0.1:1314/mcp")
+        with pytest.raises(ConfigError):
+            load_config(data_dir=tmp_path)
+
+    def test_path_preserved(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("CORTEX_MCP_SERVER_URL", "http://localhost:1234/v1/mcp")
+        cfg = load_config(data_dir=tmp_path)
+        assert cfg.mcp_server_url == "http://localhost:1234/v1/mcp"
