@@ -89,6 +89,20 @@ class TestCreateRead:
         assert obj is not None
         assert obj["type"] == obj_type
 
+    def test_create_with_custom_captured_at(
+        self, store: GraphStore
+    ) -> None:
+        ts = "2026-03-23T00:00:00+00:00"
+        obj_id = store.create_object(
+            obj_type="decision",
+            title="Backdated decision",
+            captured_at=ts,
+        )
+        obj = store.read_object(obj_id)
+        assert obj is not None
+        # Oxigraph normalises "+00:00" → "Z"
+        assert obj["capturedAt"] == "2026-03-23T00:00:00Z"
+
 
 class TestUpdate:
     """update_object modifies properties."""

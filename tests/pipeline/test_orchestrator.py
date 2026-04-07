@@ -214,3 +214,20 @@ class TestCaptureWithPreClassification:
         names = {e["name"] for e in ents}
         assert "Python" in names
         assert "FastAPI" in names
+
+    def test_capture_preserves_custom_timestamps(self, orchestrator, store):
+        ts = "2026-03-19T12:00:00+00:00"
+        result = orchestrator.capture(
+            title="Timestamp test",
+            content="Testing timestamp preservation through orchestrator",
+            obj_type="fix",
+            summary="A test fix with custom timestamps",
+            run_pipeline=False,
+            created_at=ts,
+            updated_at=ts,
+        )
+        obj_id = result["id"]
+        doc = store.content.get(obj_id)
+        assert doc is not None
+        assert doc["created_at"] == ts
+        assert doc["updated_at"] == ts

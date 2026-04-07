@@ -50,6 +50,8 @@ class PipelineOrchestrator:
         extra_properties: dict[str, str] | None = None,
         confidence: float = 0.0,
         run_pipeline: bool = True,
+        created_at: str | None = None,
+        updated_at: str | None = None,
     ) -> dict[str, Any]:
         """Capture a knowledge object and optionally run the full pipeline.
 
@@ -100,6 +102,8 @@ class PipelineOrchestrator:
             captured_by=captured_by,
             summary=summary,
             confidence=confidence if summary else 1.0,
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
         result: dict[str, Any] = {
