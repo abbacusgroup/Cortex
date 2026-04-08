@@ -354,6 +354,97 @@ class TestAuthStillEnforced:
         assert resp.status_code == 401
 
 
+class TestSettingsPageRendersWithoutStore:
+    """Bundle 5 / A8: Phase 2.D — the ``/settings`` page must render without
+    invoking any store-touching MCP call.
+
+    The general :class:`TestDashboardDoesNotImportStore` covers the
+    import-level contract. This test exercises the /settings endpoint
+    specifically to prove it doesn't indirectly hit a code path that
+    would open the store, even after future refactors.
+    """
+
+    def test_get_settings_renders_without_store_calls(
+        self, app_with_recorder, call_recorder
+    ):
+        client = TestClient(app_with_recorder)
+        resp = client.get("/settings")
+        assert resp.status_code == 200
+        # Any MCP method that would cause the server to touch the store.
+        store_touching = {
+            "search",
+            "read",
+            "list_objects",
+            "list_entities",
+            "capture",
+            "dossier",
+            "context",
+            "graph",
+            "graph_data",
+            "status",
+            "query_trail",
+        }
+        called = {c[0] for c in call_recorder.calls}
+        overlap = called & store_touching
+        assert not overlap, (
+            f"/settings should not invoke any store-touching MCP method, "
+            f"but called: {sorted(overlap)}"
+        )
+
+    def test_get_settings_does_not_crash_with_failing_store_client(
+        self, tmp_path
+    ):
+        """Even if every MCP method would raise, /settings still renders —
+        because it doesn't call any of them. Proves the endpoint has zero
+        dependency on the MCP client's live connection.
+        """
+        _sessions.clear()
+
+        class FailingForEverything:
+            async def search(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def list_objects(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def list_entities(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def read(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def capture(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def status(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def query_trail(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def graph_data(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def dossier(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def context(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def graph(self, *a, **kw):
+                raise MCPConnectionError("unreachable")
+
+            async def list_tools(self):
+                raise MCPConnectionError("unreachable")
+
+        config = CortexConfig(data_dir=tmp_path)
+        app = create_dashboard(config, mcp_client=FailingForEverything())
+        client = TestClient(app)
+        resp = client.get("/settings")
+        # Renders successfully — /settings has no MCP dependency
+        assert resp.status_code == 200
+
+
 class TestDashboardDoesNotDoubleCountAccess:
     """Phase 2.F regression guard: viewing a document via the dashboard must
     record exactly ONE access (the server-side cortex_read tool does it).

@@ -687,3 +687,96 @@ class TestStoreCreateAtomicity:
             )
         finally:
             store.close()
+
+
+class TestMarkerNotRequiredForLockAcquisition:
+    """Bundle 5 / A20: Phase 1.B weak-point coverage.
+
+    Race condition: a process opens the graph store successfully (acquiring
+    the RocksDB lock) but is killed BEFORE it writes the PID marker. A
+    subsequent process opens the same path — it should succeed because the
+    lock is free (process A is gone) and the absence of a marker is
+    interpreted as "no holder" (not as "must have orphan RocksDB lock").
+
+    We simulate this by monkeypatching ``_write_marker`` to return False on
+    the first open (simulating the process dying before the marker write).
+    Then we close the store (releasing the lock), restore the real
+    ``_write_marker``, and open again. The second open must succeed and
+    create its own marker.
+    """
+
+    def test_no_marker_plus_no_lock_means_clean_open(
+        self, tmp_path: Path
+    ):
+        import cortex.db.graph_store as gs_mod
+
+        db = tmp_path / "g.db"
+
+        # ─── First open: simulate the marker write being interrupted ──
+        original_write = gs_mod._write_marker
+
+        def no_marker(marker_path: Path) -> bool:
+            return False  # as if we crashed between ox.Store() and marker write
+
+        gs_mod._write_marker = no_marker  # type: ignore[assignment]
+        try:
+            store_a = GraphStore(db)
+            # Marker does NOT exist (write was aborted)
+            assert not _marker_path_for(db).exists()
+            # Store is still functional
+            assert store_a.triple_count >= 0
+            # Close releases the RocksDB lock
+            store_a.close()
+        finally:
+            gs_mod._write_marker = original_write  # type: ignore[assignment]
+
+        # Sanity: no marker, no lock held
+        assert not _marker_path_for(db).exists()
+
+        # ─── Second open: should succeed and write its own marker ─────
+        store_b = GraphStore(db)
+        try:
+            assert _marker_path_for(db).exists(), (
+                "second open should write its own marker"
+            )
+            data = json.loads(_marker_path_for(db).read_text())
+            assert data["pid"] == os.getpid()
+            assert store_b.triple_count >= 0
+        finally:
+            store_b.close()
+
+    def test_stale_marker_but_no_lock_opens_and_overwrites(
+        self, tmp_path: Path
+    ):
+        """Another marker-race variant: a stale marker file exists (from a
+        dead process) but no actual RocksDB lock is held. The new process
+        should open successfully and overwrite the marker with its own PID.
+        """
+        db = tmp_path / "g.db"
+        marker = _marker_path_for(db)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        # Write a stale marker pointing at a bogus PID + cmdline
+        stale_data = {
+            "pid": 999_999,  # almost certainly not a live PID
+            "cmdline": "cortex serve --transport mcp-http (crashed)",
+            "acquired_at": "2020-01-01T00:00:00+00:00",
+        }
+        marker.write_text(json.dumps(stale_data))
+
+        # Precondition: marker exists, no DB dir yet
+        assert marker.exists()
+        assert not db.exists()
+
+        # The open should succeed because no one actually holds the RocksDB
+        # lock — the stale marker alone doesn't prevent opening.
+        store = GraphStore(db)
+        try:
+            # Marker was overwritten with our PID
+            assert marker.exists()
+            fresh = json.loads(marker.read_text())
+            assert fresh["pid"] == os.getpid(), (
+                f"marker should now point at current PID, got {fresh['pid']}"
+            )
+            assert fresh["cmdline"] != stale_data["cmdline"]
+        finally:
+            store.close()

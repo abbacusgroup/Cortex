@@ -23,7 +23,13 @@ import pytest
 
 from cortex.transport.mcp.client import CortexMCPClient
 
-pytestmark = pytest.mark.slow
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.skipif(
+        sys.platform != "darwin",
+        reason="macOS-only: uses ps, lsof, POSIX signals, and launchd semantics",
+    ),
+]
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────

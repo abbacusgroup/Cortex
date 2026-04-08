@@ -429,26 +429,32 @@ class TestHttpClientSession:
 class TestNoDeprecationWarnings:
     """Bundle 4.1 regression guard: the mcp.client module should no longer
     emit DeprecationWarning on import or use of CortexMCPClient.
+
+    We check this in a subprocess with ``-W error::DeprecationWarning`` so
+    that (a) we don't need to reload the module (which would create new
+    class objects and break subsequent isinstance checks in other tests),
+    and (b) we catch warnings emitted during import itself.
     """
 
     def test_import_client_does_not_warn(self):
-        import importlib
-        import warnings
+        import subprocess
+        import sys
 
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            import cortex.transport.mcp.client as _c
-            importlib.reload(_c)
-            dep_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-            # Filter to just warnings from our module
-            ours = [
-                x for x in dep_warnings
-                if "streamablehttp_client" in str(x.message)
-                or "streamable_http_client" in str(x.message)
-            ]
-            assert len(ours) == 0, (
-                f"unexpected deprecation warnings from cortex.transport.mcp.client: {ours}"
-            )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-W",
+                "error::DeprecationWarning",
+                "-c",
+                "import cortex.transport.mcp.client",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"importing cortex.transport.mcp.client emitted a DeprecationWarning "
+            f"(returncode {result.returncode}):\n{result.stderr}"
+        )
 
     def test_old_name_not_imported(self):
         """The deprecated streamablehttp_client name must not appear in our
@@ -461,3 +467,245 @@ class TestNoDeprecationWarnings:
         assert hasattr(mod, "streamable_http_client"), (
             "cortex.transport.mcp.client must import streamable_http_client"
         )
+
+
+# ─── Bundle 5: validation closure (A4, A5, A6, A7) ────────────────────────
+
+
+class TestHttp500SpecificError:
+    """Bundle 5 / A4: Phase 2.C — HTTP 500 specifically (not generic transport
+    error) must be surfaced as ``MCPServerError``, not ``MCPConnectionError``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_http_500_raises_mcp_server_error(self):
+        # httpx.HTTPStatusError needs a response with a status code
+        fake_response = MagicMock()
+        fake_response.status_code = 500
+        fake_response.text = "Internal Server Error"
+        http_error = httpx.HTTPStatusError(
+            "500 Internal Server Error",
+            request=MagicMock(),
+            response=fake_response,
+        )
+
+        bad_cm = MagicMock()
+        bad_cm.__aenter__ = AsyncMock(side_effect=http_error)
+        bad_cm.__aexit__ = AsyncMock(return_value=None)
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=bad_cm,
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp")
+            with pytest.raises(MCPServerError) as exc_info:
+                await client.search("anything")
+            assert "500" in str(exc_info.value)
+            assert "localhost:1314" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_http_503_also_raises_mcp_server_error(self):
+        """Any 5xx status from the transport maps to MCPServerError."""
+        fake_response = MagicMock()
+        fake_response.status_code = 503
+        fake_response.text = "Service Unavailable"
+        http_error = httpx.HTTPStatusError(
+            "503 Service Unavailable",
+            request=MagicMock(),
+            response=fake_response,
+        )
+        bad_cm = MagicMock()
+        bad_cm.__aenter__ = AsyncMock(side_effect=http_error)
+        bad_cm.__aexit__ = AsyncMock(return_value=None)
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=bad_cm,
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp")
+            with pytest.raises(MCPServerError) as exc_info:
+                await client.search("anything")
+            assert "503" in str(exc_info.value)
+
+
+class TestCortexMCPClientConcurrency:
+    """Bundle 5 / A5: Phase 2.C stress tests for the per-call session
+    pattern. Verifies 50 simultaneous calls don't deadlock, mixed method
+    calls don't corrupt each other, and one failure doesn't affect others.
+    """
+
+    @pytest.mark.asyncio
+    async def test_50_concurrent_search_calls_via_mock(
+        self, fake_client_session
+    ):
+        """50 simultaneous search calls — none should deadlock or fail."""
+        import asyncio
+
+        fake_client_session.call_tool.return_value = _FakeCallToolResult(
+            text=json.dumps([{"id": "x", "title": "T"}])
+        )
+        client = CortexMCPClient("http://localhost:1314/mcp")
+        coros = [client.search(f"q{i}") for i in range(50)]
+        results = await asyncio.gather(*coros)
+        assert len(results) == 50
+        for r in results:
+            assert r == [{"id": "x", "title": "T"}]
+        # The underlying call_tool was invoked 50 times — per-call session
+        # pattern means no shared state collision.
+        assert fake_client_session.call_tool.call_count == 50
+
+    @pytest.mark.asyncio
+    async def test_concurrent_mixed_methods(self, fake_client_session):
+        """Mix of search/read/list calls. Verify each method routes to the
+        right underlying tool and none fail.
+        """
+        import asyncio
+
+        fake_client_session.call_tool.return_value = _FakeCallToolResult(
+            text=json.dumps([])
+        )
+        client = CortexMCPClient("http://localhost:1314/mcp")
+        coros = []
+        for i in range(20):
+            coros.append(client.search(f"q{i}"))
+            coros.append(client.list_objects(limit=10))
+            coros.append(client.read(f"id{i}"))
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        assert len(results) == 60
+        for r in results:
+            assert not isinstance(r, Exception), f"unexpected failure: {r!r}"
+
+    @pytest.mark.asyncio
+    async def test_one_failure_does_not_corrupt_others(
+        self, fake_client_session
+    ):
+        """If one of N concurrent calls raises a connection error, the
+        remaining calls still complete successfully.
+        """
+        import asyncio
+
+        call_count = {"n": 0}
+
+        def maybe_fail(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 5:
+                raise httpx.ConnectError("middle one fails")
+            return _FakeCallToolResult(text="[]")
+
+        fake_client_session.call_tool.side_effect = maybe_fail
+        client = CortexMCPClient("http://localhost:1314/mcp")
+        coros = [client.search(f"q{i}") for i in range(10)]
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        # Exactly one failure expected
+        failures = [r for r in results if isinstance(r, Exception)]
+        successes = [r for r in results if not isinstance(r, Exception)]
+        assert len(failures) == 1, f"expected 1 failure, got {len(failures)}"
+        assert len(successes) == 9, f"expected 9 successes, got {len(successes)}"
+        # The failure surfaced as a proper client error, not a raw httpx error
+        assert isinstance(failures[0], MCPClientError)
+
+
+class TestCortexMCPClientCancellation:
+    """Bundle 5 / A6: Phase 2.C cancellation semantics.
+
+    When a caller cancels an in-flight MCP call (asyncio.CancelledError),
+    the wrapper must propagate the cancellation cleanly without swallowing
+    it as a generic exception or leaking resources.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancellation_propagates_cleanly(self):
+        """Cancelling an in-flight ``search`` raises CancelledError in the
+        awaiter and the transport context manager's __aexit__ runs (no leak).
+        """
+        import asyncio
+
+        hang_event = asyncio.Event()
+
+        async def hang_forever(*args, **kwargs):
+            # Block until cancelled
+            try:
+                await hang_event.wait()
+            except asyncio.CancelledError:
+                raise
+            return _FakeCallToolResult(text="[]")
+
+        fake_session = MagicMock()
+        fake_session.initialize = AsyncMock()
+        fake_session.call_tool = AsyncMock(side_effect=hang_forever)
+
+        transport_cm = MagicMock()
+        transport_cm.__aenter__ = AsyncMock(
+            return_value=(MagicMock(), MagicMock(), MagicMock())
+        )
+        transport_cm.__aexit__ = AsyncMock(return_value=None)
+        session_cm = MagicMock()
+        session_cm.__aenter__ = AsyncMock(return_value=fake_session)
+        session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=transport_cm,
+        ), patch(
+            "cortex.transport.mcp.client.ClientSession",
+            return_value=session_cm,
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp")
+            task = asyncio.create_task(client.search("hello"))
+            # Let the task start and block inside hang_forever
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        # The transport context manager's __aexit__ should have been called
+        # so no resources are leaked.
+        assert transport_cm.__aexit__.called
+
+
+class TestCortexMCPClientTypedSignatures:
+    """Bundle 5 / A7: Phase 2.C — regression guard that every public method
+    on CortexMCPClient has a return type annotation. The wrapper is a typed
+    boundary between untyped MCP JSON and typed caller code; untyped methods
+    defeat that.
+    """
+
+    def test_all_public_methods_have_return_annotations(self):
+        import inspect
+
+        # Public methods that form the wrapper's contract
+        public_methods = [
+            "search",
+            "context",
+            "dossier",
+            "read",
+            "capture",
+            "list_objects",
+            "graph",
+            "status",
+            "query_trail",
+            "list_entities",
+            "graph_data",
+            "pipeline",
+            "synthesize",
+            "reason",
+            "list_tools",
+        ]
+        for name in public_methods:
+            method = getattr(CortexMCPClient, name, None)
+            if method is None:
+                # Method not yet implemented — skip (will be added in future
+                # bundles like Bundle 7 REST API convergence)
+                continue
+            sig = inspect.signature(method)
+            assert sig.return_annotation is not inspect.Signature.empty, (
+                f"CortexMCPClient.{name} is missing a return type annotation"
+            )
+
+    def test_at_least_one_method_has_annotation(self):
+        """Sanity: the previous test would silently pass if every method
+        were skipped. Ensure at least ``search`` is present and annotated.
+        """
+        import inspect
+
+        assert hasattr(CortexMCPClient, "search")
+        sig = inspect.signature(CortexMCPClient.search)
+        assert sig.return_annotation is not inspect.Signature.empty
