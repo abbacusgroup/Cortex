@@ -32,3 +32,8 @@ Thumbs.db
 htmlcov/
 
 # uv (lock file committed for reproducibility)
+
+# Session scratch: all per-session plans / findings / test results
+# live in ~/Lab/<name>_<DATE>.md (outside the repo) per workspace rule.
+# A stray tasks/ directory means something escaped that rule.
+tasks/
