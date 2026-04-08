@@ -140,14 +140,17 @@ def _write_marker(marker_path: Path) -> bool:
 def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None:
     """Read the marker (if any), determine staleness, and raise StoreLockedError.
 
-    Three cases the caller cares about (set as flags on the raised error):
+    Cases the caller cares about (set as flags on the raised error):
 
     1. **No marker**: lock is held but the marker file is missing. Could be a
        leftover RocksDB lock or a process that crashed before writing the marker.
        ``holder_pid=None``, no flags set.
-    2. **Stale marker**: marker exists, but the recorded PID is no longer running.
+    2. **Marker unreadable**: marker exists but we can't read it (permission
+       denied, etc.). The error message distinguishes this from "no marker"
+       so the user knows to check file permissions.
+    3. **Stale marker**: marker exists, but the recorded PID is no longer running.
        The marker is left over from a crashed process. ``is_stale=True``.
-    3. **PID reuse**: marker exists, the recorded PID IS alive, but the process
+    4. **PID reuse**: marker exists, the recorded PID IS alive, but the process
        at that PID has a different command line than the marker recorded. The
        OS reused the PID for an unrelated process — the actual lock holder
        cannot be identified from the marker. ``is_pid_reuse=True``.
@@ -162,6 +165,21 @@ def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None
             db_path=str(path),
             marker_path=str(marker_path),
             context={"path": str(path)},
+            cause=oserror,
+        )
+
+    # Detect the unreadable-marker case: _read_marker returns a sentinel dict
+    # with _unreadable=True when the file exists but can't be read.
+    if marker.get("_unreadable"):
+        raise StoreLockedError(
+            f"Graph DB at {path} is locked, AND the marker file at "
+            f"{marker_path} exists but is unreadable. Check its permissions.",
+            holder_pid=None,
+            holder_cmdline=None,
+            is_stale=False,
+            db_path=str(path),
+            marker_path=str(marker_path),
+            context={"path": str(path), "marker_unreadable": True},
             cause=oserror,
         )
 
