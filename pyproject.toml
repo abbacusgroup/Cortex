@@ -41,6 +41,11 @@ cortex = "cortex.cli.main:app"
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
+    # Bundle 9 / F.1 + F.2: xdist for parallel runs (the CI workflow uses
+    # ``pytest -n auto``); forked for the test-isolation suite that needs
+    # a fresh process per test.
+    "pytest-xdist>=3.8",
+    "pytest-forked>=1.6",
     "httpx>=0.28",
     "ruff>=0.11",
 ]

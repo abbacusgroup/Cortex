@@ -169,6 +169,7 @@ class TestMcpHttpServerLifecycle:
         assert "graph_triples" in status
 
 
+@pytest.mark.xdist_group(name="phase2_concurrency")
 class TestConcurrentClients:
     @pytest.mark.asyncio
     async def test_capture_from_one_client_visible_to_another(self, mcp_http_server):
@@ -193,7 +194,8 @@ class TestConcurrentClients:
     @pytest.mark.asyncio
     async def test_search_finds_recently_captured_object(self, mcp_http_server):
         url, _proc = mcp_http_server
-        client = CortexMCPClient(url, timeout_seconds=5.0)
+        # 15s under xdist contention (Bundle 9 / F.1).
+        client = CortexMCPClient(url, timeout_seconds=15.0)
         await client.capture(
             title="Concurrency test marker",
             content="A unique searchable phrase: zorblax-quantum",
@@ -258,6 +260,7 @@ class TestCliConflictBehavior:
         assert "Traceback" not in combined
 
 
+@pytest.mark.xdist_group(name="phase2_concurrency")
 class TestMcpHttpServerCrashRecovery:
     @pytest.mark.asyncio
     async def test_capture_from_mcp_visible_in_dashboard(
@@ -275,8 +278,11 @@ class TestMcpHttpServerCrashRecovery:
 
         url, _proc = mcp_http_server
 
-        # Capture via direct MCP client
-        client = CortexMCPClient(url, timeout_seconds=5.0)
+        # Capture via direct MCP client. 15s timeout because under
+        # ``pytest -n auto`` even within the ``phase2_concurrency``
+        # xdist_group there is enough cross-worker CPU contention to
+        # blow past the old 5s budget for ``cortex_capture``.
+        client = CortexMCPClient(url, timeout_seconds=15.0)
         result = await client.capture(
             title="Phase 2.I cross-client test",
             content="visible from dashboard via MCP HTTP server",
@@ -658,11 +664,18 @@ class TestAdminToolsExcludedOnNonLocalhost:
         assert "cortex_graph_data" in tool_names
 
 
+@pytest.mark.xdist_group(name="phase2_concurrency")
 class TestDashboardDoesNotOpenGraphDb:
     """Bundle 5 / A9: Phase 2.D contract — the dashboard process must NEVER
     open ``graph.db`` directly. Verified via ``lsof`` while the dashboard
     is running alongside the MCP HTTP server. Only the MCP server PID
     should appear in the lsof output for the graph.db directory.
+
+    Bundle 9 / F.1: marked with ``xdist_group("phase2_concurrency")`` so
+    that under ``pytest -n auto`` this entire class runs serialized within
+    a single xdist worker, alongside the other classes that spawn real
+    MCP HTTP subprocesses. Without this group, parallel workers compete
+    for CPU and the 5s default ``CortexMCPClient`` timeout fires.
     """
 
     @pytest.mark.asyncio
@@ -673,8 +686,9 @@ class TestDashboardDoesNotOpenGraphDb:
 
         url, mcp_proc = mcp_http_server
         # Seed at least one capture so the DB files definitely exist and
-        # are open on the MCP server side.
-        client = CortexMCPClient(url, timeout_seconds=5.0)
+        # are open on the MCP server side. 15s timeout under xdist
+        # contention (see Bundle 9 / F.1 fix).
+        client = CortexMCPClient(url, timeout_seconds=15.0)
         await client.capture(
             title="lsof seed", content="ensure db is touched", obj_type="idea"
         )

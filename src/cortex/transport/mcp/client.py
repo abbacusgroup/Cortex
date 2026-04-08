@@ -134,7 +134,7 @@ class CortexMCPClient:
     cancellation and reconnection semantics.
     """
 
-    def __init__(self, url: str, *, timeout_seconds: float = 5.0):
+    def __init__(self, url: str, *, timeout_seconds: float = 10.0):
         self.url = url
         self.timeout = timedelta(seconds=timeout_seconds)
         self._timeout_seconds = timeout_seconds

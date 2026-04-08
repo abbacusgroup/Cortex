@@ -1,0 +1,83 @@
+name: tests
+
+# Bundle 9 / C9: GitHub Actions CI workflow.
+#
+# Runs the full Cortex test suite on every push and pull request to ``main``.
+# The Linux job is cheap and runs on every commit. Integration tests that
+# rely on macOS-only tooling (``lsof +D``, ``launchctl``, POSIX signal
+# semantics, ``ps`` flag set) carry their own ``skipif`` at module level
+# and skip cleanly here. The macOS job runs on a daily schedule and on
+# manual dispatch so the macOS-only suite is exercised at least once a
+# day without paying the macOS runner premium on every push.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Daily at 06:00 UTC — runs the macOS job for the macOS-only suite.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-linux:
+    name: Linux (3.13) — fast suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv sync --group dev
+
+      - name: Lint with ruff
+        run: uv run ruff check src tests
+
+      - name: Run pytest
+        # The darwin-only integration tests carry their own skipif and
+        # will be reported as ``skipped`` here. xdist parallelizes the
+        # remaining suite for speed; the ``phase2_concurrency`` group
+        # ensures lock-test classes that spawn real subprocesses run
+        # serialized within a single worker (Bundle 9 / F.1).
+        run: uv run pytest tests/ -q -n auto --tb=short
+
+  test-macos:
+    name: macOS (3.13) — full suite incl. integration
+    # Only run on schedule, manual dispatch, or push to main. Skip for
+    # PRs from forks (which can't access the macOS runner pool cheaply).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv sync --group dev
+
+      - name: Run pytest (full suite, incl. macOS-only integration)
+        run: uv run pytest tests/ -q -n auto --tb=short

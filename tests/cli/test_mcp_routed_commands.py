@@ -48,7 +48,9 @@ def _install_fake_client(monkeypatch, **method_returns):
     """Install a fake MCP client that returns canned responses for the named methods.
 
     Each kwarg becomes an async method that returns its value. Also stubs
-    ``list_tools`` so the lazy probe passes.
+    ``list_tools`` so the lazy probe passes. Bundle 9 / D.2: the lazy
+    probe now goes through ``_get_probe_client``, so we patch both helpers
+    to point at the same fake.
     """
     fake = MagicMock()
 
@@ -59,6 +61,7 @@ def _install_fake_client(monkeypatch, **method_returns):
         setattr(fake, name, AsyncMock(return_value=value))
 
     monkeypatch.setattr(cli_mod, "_get_mcp_client", lambda: fake)
+    monkeypatch.setattr(cli_mod, "_get_probe_client", lambda: fake)
     return fake
 
 
@@ -83,7 +86,11 @@ class TestSearchCommand:
     def test_unreachable_mcp_exits_clean(self, monkeypatch):
         fake = MagicMock()
         fake.list_tools = AsyncMock(side_effect=MCPConnectionError("nope"))
+        # Bundle 9 / D.2: the lazy probe goes through ``_get_probe_client``
+        # now (a separate short-timeout client), so we patch that as well
+        # so the unreachable error fires from the probe path.
         monkeypatch.setattr(cli_mod, "_get_mcp_client", lambda: fake)
+        monkeypatch.setattr(cli_mod, "_get_probe_client", lambda: fake)
         result = runner.invoke(app, ["search", "anything"])
         assert result.exit_code == 1
         assert "Cannot reach" in result.output

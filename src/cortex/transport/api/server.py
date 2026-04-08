@@ -17,6 +17,7 @@ entirely.
 
 from __future__ import annotations
 
+import hmac
 import os
 import time
 from collections import defaultdict
@@ -134,8 +135,22 @@ def create_api(
         Dev mode: if no keys are configured via ``CORTEX_API_KEYS``, any
         non-empty key is accepted. This matches pre-Phase-4 behavior and
         keeps existing tests working without extra env setup.
+
+        Bundle 9 / Group 3 #1 fix: the API key is ``.strip()``'d before
+        comparison so trailing/leading whitespace pasted from a config
+        file no longer causes asymmetric 401 responses (h11 strips
+        leading OWS but preserves trailing — the bug hunt observed 200
+        for ``"  good"`` and 401 for ``"good "``). Comparison uses
+        :func:`hmac.compare_digest` for constant-time equality so the
+        auth path is not vulnerable to timing-based key recovery.
         """
         if api_key is None:
+            raise HTTPException(status_code=401, detail="Missing API key")
+
+        # Normalize: strip OWS so leading/trailing whitespace can't fool
+        # the comparison either way.
+        api_key = api_key.strip()
+        if not api_key:
             raise HTTPException(status_code=401, detail="Missing API key")
 
         valid_keys = _get_api_keys()
@@ -143,9 +158,13 @@ def create_api(
             # Dev mode — any non-empty key passes
             return api_key
 
-        if api_key not in valid_keys:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        return api_key
+        # Constant-time comparison against each valid key. We use
+        # hmac.compare_digest so an attacker who can measure response
+        # time cannot incrementally guess characters of a valid key.
+        for candidate in valid_keys:
+            if hmac.compare_digest(api_key, candidate):
+                return api_key
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
     # ─── Rate Limiting ─────────────────────────────────────────────
 

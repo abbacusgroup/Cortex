@@ -100,3 +100,50 @@ class TestGetLogger:
     def test_nested_child(self):
         child = get_logger("db.graph")
         assert child.name == "cortex.db.graph"
+
+
+class TestQuietNoisyLoggers:
+    """Bundle 9 / F.4: third-party MCP SDK loggers should be set to
+    WARNING after ``setup_logging`` runs, unless ``CORTEX_DEBUG_MCP_SDK``
+    is set to opt back into the chatty INFO logs.
+    """
+
+    NOISY = (
+        "mcp.server.streamable_http",
+        "mcp.client.streamable_http",
+        "mcp.server.streamable_http_manager",
+        "mcp.client.streamable_http_manager",
+        "mcp.server.lowlevel.server",
+    )
+
+    def setup_method(self):
+        logging.getLogger("cortex").handlers.clear()
+        for name in self.NOISY:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+
+    def test_noisy_loggers_are_quieted_by_default(self, monkeypatch):
+        monkeypatch.delenv("CORTEX_DEBUG_MCP_SDK", raising=False)
+        setup_logging()
+        for name in self.NOISY:
+            assert logging.getLogger(name).level == logging.WARNING, name
+
+    def test_debug_env_var_disables_quieting(self, monkeypatch):
+        monkeypatch.setenv("CORTEX_DEBUG_MCP_SDK", "1")
+        for name in self.NOISY:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+        setup_logging()
+        for name in self.NOISY:
+            # Untouched — left at NOTSET so the SDK's own configured
+            # level (or the root logger's INFO) is honored.
+            assert logging.getLogger(name).level == logging.NOTSET, name
+
+    def test_quieting_is_idempotent(self, monkeypatch):
+        monkeypatch.delenv("CORTEX_DEBUG_MCP_SDK", raising=False)
+        setup_logging()
+        # Manually drop the level to verify the second call re-applies.
+        logging.getLogger("mcp.server.streamable_http").setLevel(logging.DEBUG)
+        setup_logging()  # second call — should re-quiet the logger
+        assert (
+            logging.getLogger("mcp.server.streamable_http").level
+            == logging.WARNING
+        )
