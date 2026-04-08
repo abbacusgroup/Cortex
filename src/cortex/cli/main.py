@@ -80,19 +80,34 @@ def _get_mcp_client() -> Any:
 
     Constructed lazily on first use. Returns the same instance for the rest of
     the CLI process. Reset by ``_global_options`` between CliRunner invocations.
+
+    Bundle 9.1: 30s default headroom for slow CI hardware running real capture
+    pipelines (embedding model inference + LLM calls can take 15-25s). The
+    probe client at 10s (_get_probe_client) still gives fast-fail detection
+    for unreachable/hung servers, so users never actually wait 30s just to
+    find out the server is down.
+
+    Bundle 10.6: timeout is overridable via the ``CORTEX_MCP_CLIENT_TIMEOUT_SECONDS``
+    environment variable. CI sets this to 60s because the GitHub Actions
+    macOS runner + 3 concurrent xdist workers racing for CPU can push a
+    cold-start ``cortex capture`` past 30s (sentence-transformers embedding
+    model load + full pipeline). Local users keep the 30s default for
+    fast-fail UX.
     """
     global _mcp_client
     if _mcp_client is not None:
         return _mcp_client
+    import os as _os
+
     from cortex.transport.mcp.client import CortexMCPClient
 
     config = load_config()
-    # Bundle 9.1: 30s headroom for slow CI hardware running real capture
-    # pipelines (embedding model inference + LLM calls can take 15-25s).
-    # The probe client at 3s (_get_probe_client) still gives fast-fail
-    # detection for unreachable/hung servers, so users never actually
-    # wait 30s just to find out the server is down.
-    _mcp_client = CortexMCPClient(config.mcp_server_url, timeout_seconds=30.0)
+    timeout_str = _os.environ.get("CORTEX_MCP_CLIENT_TIMEOUT_SECONDS", "").strip()
+    try:
+        timeout = float(timeout_str) if timeout_str else 30.0
+    except ValueError:
+        timeout = 30.0
+    _mcp_client = CortexMCPClient(config.mcp_server_url, timeout_seconds=timeout)
     return _mcp_client
 
 
