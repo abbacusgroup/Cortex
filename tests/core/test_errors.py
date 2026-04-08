@@ -216,3 +216,71 @@ class TestStoreLockedError:
         d = err.to_dict()
         assert d["cause"]["code"] == "EXTERNAL"
         assert "lock hold" in d["cause"]["message"]
+
+    def test_pid_reuse_flag(self):
+        err = StoreLockedError(
+            "locked",
+            holder_pid=12345,
+            holder_cmdline="cortex serve",
+            is_pid_reuse=True,
+        )
+        assert err.is_pid_reuse is True
+        s = str(err)
+        assert "PID 12345 is alive" in s
+        assert "does NOT match" in s
+        assert "reused the PID" in s
+
+    def test_pid_reuse_and_stale_render_distinct_messages(self):
+        """Stale (dead PID) and PID-reuse (live PID, different cmdline) should
+        produce distinguishable error messages.
+        """
+        stale = StoreLockedError("locked", holder_pid=42, is_stale=True)
+        reuse = StoreLockedError("locked", holder_pid=42, is_pid_reuse=True)
+
+        stale_msg = str(stale).lower()
+        reuse_msg = str(reuse).lower()
+
+        # Stale message: PID is no longer running
+        assert "stale lock marker" in stale_msg
+        assert "no longer running" in stale_msg
+        # No "alive" or "reused" phrasing
+        assert "is alive" not in stale_msg
+        assert "reused the pid" not in stale_msg
+
+        # PID-reuse message: PID is alive but cmdline mismatch
+        assert "is alive" in reuse_msg
+        assert "reused the pid" in reuse_msg
+        assert "does not match" in reuse_msg
+        # No "no longer running" phrasing
+        assert "no longer running" not in reuse_msg
+
+    def test_cleanup_hint_includes_paths(self):
+        err = StoreLockedError(
+            "locked",
+            holder_pid=12345,
+            is_stale=True,
+            db_path="/Users/test/.cortex/graph.db",
+            marker_path="/Users/test/.cortex/graph.db.lock",
+        )
+        s = str(err)
+        # Both paths appear in the cleanup hint
+        assert "/Users/test/.cortex/graph.db.lock" in s
+        assert "/Users/test/.cortex/graph.db/LOCK" in s
+        # The hint is presented as a copy-pasteable command
+        assert "rm" in s
+
+    def test_cleanup_hint_falls_back_when_paths_missing(self):
+        err = StoreLockedError("locked", holder_pid=42, is_stale=True)
+        s = str(err)
+        # When paths aren't provided, we still show a generic hint
+        assert "Manual cleanup" in s
+
+    def test_db_path_in_context(self):
+        err = StoreLockedError(
+            "locked",
+            holder_pid=42,
+            db_path="/path/to/g.db",
+            marker_path="/path/to/g.db.lock",
+        )
+        d = err.to_dict()
+        assert d["context"]["db_path"] == "/path/to/g.db"

@@ -81,8 +81,18 @@ class StoreLockedError(StoreError):
     """Raised when the graph store cannot be opened because another process holds the lock.
 
     Carries the holder's PID and command line (when available) so the user can identify
-    and stop the conflicting process. Set ``is_stale=True`` when the recorded PID is no
-    longer running, indicating an orphaned lock marker.
+    and stop the conflicting process.
+
+    Three failure modes are distinguished:
+    - Normal: another process is holding the lock; user stops it.
+    - Stale (``is_stale=True``): the marker's PID is no longer running. Manual
+      cleanup of both the marker file AND RocksDB's internal LOCK file may be
+      required.
+    - PID reuse (``is_pid_reuse=True``): the marker's PID is alive, but the
+      process at that PID has a different command line than the marker recorded.
+      The marker is probably stale and the OS reused the PID for an unrelated
+      process. The actual lock holder cannot be identified — manual cleanup is
+      the only path forward.
     """
 
     code = "CORTEX_STORE_LOCKED"
@@ -94,6 +104,9 @@ class StoreLockedError(StoreError):
         holder_pid: int | None = None,
         holder_cmdline: str | None = None,
         is_stale: bool = False,
+        is_pid_reuse: bool = False,
+        db_path: str | None = None,
+        marker_path: str | None = None,
         context: dict[str, Any] | None = None,
         cause: Exception | None = None,
     ):
@@ -102,11 +115,28 @@ class StoreLockedError(StoreError):
         self.holder_pid = holder_pid
         self.holder_cmdline = holder_cmdline
         self.is_stale = is_stale
+        self.is_pid_reuse = is_pid_reuse
+        self.db_path = db_path
+        self.marker_path = marker_path
         merged_context = dict(context or {})
         merged_context.setdefault("holder_pid", holder_pid)
         merged_context.setdefault("holder_cmdline", holder_cmdline)
         merged_context.setdefault("is_stale", is_stale)
+        merged_context.setdefault("is_pid_reuse", is_pid_reuse)
+        if db_path is not None:
+            merged_context.setdefault("db_path", db_path)
         super().__init__(message, context=merged_context, cause=cause)
+
+    def _cleanup_hint(self) -> str:
+        """Return a manual cleanup command the user can copy-paste."""
+        parts = []
+        if self.marker_path:
+            parts.append(f"rm {self.marker_path}")
+        if self.db_path:
+            parts.append(f"rm -rf {self.db_path}/LOCK")
+        if not parts:
+            return "Manual cleanup may be required."
+        return "Manual cleanup: " + " ; ".join(parts)
 
     def __str__(self) -> str:
         parts = [self.message]
@@ -118,8 +148,17 @@ class StoreLockedError(StoreError):
             if self.is_stale:
                 parts.append(
                     f"This appears to be a stale lock marker — process {self.holder_pid} "
-                    f"is no longer running. Manual cleanup may be required."
+                    f"is no longer running."
                 )
+                parts.append(self._cleanup_hint())
+            elif self.is_pid_reuse:
+                parts.append(
+                    f"WARNING: PID {self.holder_pid} is alive but its current command "
+                    f"line does NOT match the marker's recorded cmdline. The marker is "
+                    f"probably stale and the OS reused the PID for an unrelated process. "
+                    f"The actual graph DB lock holder cannot be identified from the marker."
+                )
+                parts.append(self._cleanup_hint())
             else:
                 parts.append(f"Stop the conflicting process or kill PID {self.holder_pid}.")
         else:

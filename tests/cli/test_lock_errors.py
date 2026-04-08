@@ -269,3 +269,36 @@ class TestDashboardStartupProbe:
         combined = result.output + (result.stderr or "")
         assert "missing" in combined.lower()
         assert "cortex_capture" in combined or "cortex_list_entities" in combined
+
+
+class TestApiServerLockError:
+    """Bundle 1.4: ``cortex serve --transport http`` (the REST API path)
+    must catch StoreLockedError from create_api() and exit cleanly.
+
+    The CLI catches the error before uvicorn starts. There's no live HTTP
+    request handling needed because the lock is acquired at startup, not
+    per-request.
+    """
+
+    def test_create_api_raises_store_locked_error_when_locked(self, held_lock):
+        """``create_api()`` should propagate StoreLockedError unchanged."""
+        from cortex.core.errors import StoreLockedError
+        from cortex.transport.api.server import create_api
+
+        with pytest.raises(StoreLockedError) as exc_info:
+            create_api()
+        err = exc_info.value
+        assert err.holder_pid == held_lock.pid
+        assert err.holder_cmdline is not None
+
+    def test_serve_http_cli_exits_cleanly_when_locked(self, held_lock):
+        """``cortex serve --transport http`` should exit 1 with a clean
+        error when the graph DB is locked, no Python traceback.
+        """
+        result = runner.invoke(app, ["serve", "--transport", "http"])
+        assert result.exit_code == 1
+        combined = result.output + (result.stderr or "")
+        assert "locked" in combined.lower()
+        assert str(held_lock.pid) in combined
+        # No traceback in user-facing output
+        assert "Traceback" not in combined
