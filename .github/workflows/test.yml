@@ -59,10 +59,17 @@ jobs:
           # terminal. GitHub Actions exports FORCE_COLOR which makes
           # typer/click emit ANSI escape codes inside the captured
           # help output, and the default narrow COLUMNS causes line
-          # wrapping that sometimes splits option names. NO_COLOR +
-          # COLUMNS=200 makes CliRunner output deterministic.
+          # wrapping that sometimes splits option names. Bundle 9.2
+          # switched to handling this at the test level (ANSI strip
+          # in the assertion), but the env vars are kept for safety.
           NO_COLOR: "1"
           COLUMNS: "200"
+          # Bundle 9.4: slow CI runners need a longer probe timeout
+          # for the ``_probe_mcp_lazy`` path when a CLI subprocess
+          # (e.g. ``cortex capture``) probes a freshly-spawned MCP
+          # server. 30s is still well under the 30s singleton so the
+          # fast-fail trade-off is acceptable in CI.
+          CORTEX_PROBE_TIMEOUT_SECONDS: "30"
         run: uv run pytest tests/ -q -n auto --tb=short
 
   test-macos:
@@ -92,4 +99,5 @@ jobs:
         env:
           NO_COLOR: "1"
           COLUMNS: "200"
+          CORTEX_PROBE_TIMEOUT_SECONDS: "30"
         run: uv run pytest tests/ -q -n auto --tb=short
