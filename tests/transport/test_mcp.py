@@ -348,6 +348,51 @@ class TestCortexQueryTrail:
         pub_mcp = create_mcp_server(config, include_admin=False)
         assert "cortex_query_trail" not in _tool_names(pub_mcp)
 
+    def test_default_limit_is_50(self, config: CortexConfig):
+        """Bundle 4 / A10: calling cortex_query_trail() with no arguments must
+        use the default limit of 50. Seed 75 entries to distinguish "default"
+        from "return everything".
+        """
+        from cortex.db.store import Store
+
+        store = Store(config)
+        for i in range(75):
+            store.content.log_query(
+                tool="cortex_search",
+                params={"query": f"q{i}"},
+                result_ids=[],
+                duration_ms=1,
+            )
+        store.close()
+
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(mcp, "cortex_query_trail")  # no args
+        assert len(result) == 50, (
+            f"default limit should be 50, got {len(result)} entries"
+        )
+
+    def test_default_returns_all_when_fewer_than_50_logged(
+        self, config: CortexConfig
+    ):
+        """When < 50 entries exist, default should return all of them, not 0
+        and not exactly 50.
+        """
+        from cortex.db.store import Store
+
+        store = Store(config)
+        for i in range(7):
+            store.content.log_query(
+                tool="cortex_search",
+                params={"query": f"q{i}"},
+                result_ids=[],
+                duration_ms=1,
+            )
+        store.close()
+
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(mcp, "cortex_query_trail")
+        assert len(result) == 7
+
 
 class TestCortexGraphData:
     def test_empty_store_returns_empty_shape(self, config: CortexConfig):
@@ -423,3 +468,60 @@ class TestCortexGraphData:
         }
         assert id_a in obj_node_ids
         assert id_b not in obj_node_ids
+
+    def test_invalid_doc_type_falls_back_to_knowledge_object(
+        self, config: CortexConfig
+    ):
+        """Bundle 4 / A11: unknown ``doc_type`` must not crash. The current
+        code's else-branch (``graph_store.list_objects`` ~line 573) falls back
+        to querying ``cortex:KnowledgeObject`` when the type isn't in
+        ``CLASS_MAP``. This test pins that behavior.
+        """
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(mcp, "cortex_graph_data", doc_type="not_a_real_type")
+        # Does not crash, returns the cytoscape shape (possibly empty).
+        assert "nodes" in result
+        assert "edges" in result
+        assert isinstance(result["nodes"], list)
+        assert isinstance(result["edges"], list)
+
+    def test_safe_project_names_do_not_crash(self, config: CortexConfig):
+        """A11: baseline safety — simple project names containing only
+        alphanumerics / dashes / underscores must not crash the tool.
+        """
+        mcp = create_mcp_server(config, include_admin=True)
+        for safe in ["alpha", "project-1", "proj_2", "team.alpha", ""]:
+            result = _call_tool(mcp, "cortex_graph_data", project=safe)
+            assert "nodes" in result
+
+    def test_hostile_project_names_do_not_crash(self, config: CortexConfig):
+        """A11: hostile project names must NOT raise an unhandled exception
+        out of the MCP tool.
+
+        NOTE: ``graph_store.list_objects()`` currently interpolates the
+        ``project`` parameter directly into a SPARQL string literal via
+        ``f'?s cortex:project "{project}" .'`` (graph_store.py:577). In
+        principle this is a SPARQL injection surface. In practice, pyoxigraph's
+        SPARQL parser handles these malformed literals by returning zero
+        matches (no crash, no data leakage). This test pins that observed
+        behavior: hostile inputs MUST NOT crash the tool and MUST return an
+        empty-or-unfiltered valid response.
+
+        The interpolation should still be escaped properly in a future
+        hardening commit; this test would catch a regression to a crashy
+        parser variant.
+        """
+        mcp = create_mcp_server(config, include_admin=True)
+        hostile_inputs = [
+            'with"quote',             # SPARQL string terminator
+            "with'apostrophe",        # alternate delimiter
+            "with\\backslash",        # escape character
+            "with\nnewline",          # whitespace
+            '"; DROP ALL; "',         # injection attempt
+        ]
+        for hostile in hostile_inputs:
+            result = _call_tool(mcp, "cortex_graph_data", project=hostile)
+            assert "nodes" in result
+            assert "edges" in result
+            assert isinstance(result["nodes"], list)
+            assert isinstance(result["edges"], list)

@@ -304,6 +304,42 @@ class TestApiServerLockError:
         assert "Traceback" not in combined
 
 
+class TestCreateMcpServerLockError:
+    """Bundle 4 / A19: Phase 1.D unit-level coverage for create_mcp_server().
+
+    The CLI-level propagation is already covered by
+    ``TestServeMcpHttpTransport.test_mcp_http_transport_propagates_lock_error``
+    above. This class adds the direct unit test the original A+D plan called
+    for: invoking ``create_mcp_server()`` while the graph DB is locked must
+    raise ``StoreLockedError`` unchanged, populated with the holder's PID
+    and cmdline.
+    """
+
+    def test_create_mcp_server_raises_store_locked_error(self, held_lock):
+        from cortex.core.errors import StoreLockedError
+        from cortex.transport.mcp.server import create_mcp_server
+
+        with pytest.raises(StoreLockedError) as exc_info:
+            create_mcp_server()
+        err = exc_info.value
+        assert err.holder_pid == held_lock.pid
+        assert err.holder_cmdline is not None
+
+    def test_create_mcp_server_with_include_admin_false_also_raises(
+        self, held_lock
+    ):
+        """Both the admin-on and admin-off construction paths hit the same
+        Store acquisition and should propagate StoreLockedError identically.
+        """
+        from cortex.core.errors import StoreLockedError
+        from cortex.transport.mcp.server import create_mcp_server
+
+        with pytest.raises(StoreLockedError) as exc_info:
+            create_mcp_server(include_admin=False)
+        err = exc_info.value
+        assert err.holder_pid == held_lock.pid
+
+
 class TestServeMcpHttpPortInUse:
     """Phase 2.A: ``cortex serve --transport mcp-http --port X`` should fail
     cleanly when port X is already in use, NOT crash with a Python traceback.
@@ -311,7 +347,8 @@ class TestServeMcpHttpPortInUse:
     The CLI invokes ``run_http`` which calls into uvicorn under the hood;
     uvicorn raises ``OSError: [Errno 48] Address already in use`` on bind
     failure. We mock ``run_http`` to raise that exception and verify the CLI
-    handles it gracefully.
+    handles it gracefully. Bundle 4 tightened this assertion after the CLI
+    learned to catch generic OSError.
     """
 
     def test_mcp_http_port_already_in_use_exits_cleanly(self):
@@ -323,16 +360,59 @@ class TestServeMcpHttpPortInUse:
             result = runner.invoke(
                 app, ["serve", "--transport", "mcp-http", "--port", "1314"]
             )
-            # Currently the CLI doesn't catch this — it propagates as a
-            # CliRunner exception. The test documents the current behavior.
-            # If/when we add a try/except around run_http() in the CLI for
-            # generic OSError, this assertion can be tightened to:
-            #   assert result.exit_code != 0
-            #   assert "Traceback" not in result.output
-            #   assert "address already in use" in result.output.lower()
-            assert result.exit_code != 0, (
-                "port-in-use should result in non-zero exit"
+            assert result.exit_code != 0
+            combined = result.output + (result.stderr or "")
+            assert "Cannot start MCP HTTP server" in combined
+            assert "address already in use" in combined.lower()
+            assert "Traceback" not in combined
+
+
+class TestServeMcpHttpBindErrors:
+    """Bundle 4 / A1: non-lock bind failures (PermissionError, generic OSError)
+    must produce clean, actionable error messages instead of Python tracebacks.
+    """
+
+    def test_mcp_http_privileged_port_exits_cleanly(self):
+        """Binding to a privileged port (e.g. 80) raises PermissionError on
+        macOS when not root. The CLI must translate that into a clear hint.
+        """
+        with patch("cortex.transport.mcp.server.run_http") as mock_run_http:
+            mock_run_http.side_effect = PermissionError(
+                "[Errno 13] Permission denied"
             )
-            # The error should at least be visible somewhere
-            combined = result.output + (str(result.exception) if result.exception else "")
-            assert "address already in use" in combined.lower() or "errno 48" in combined.lower()
+            result = runner.invoke(
+                app, ["serve", "--transport", "mcp-http", "--port", "80"]
+            )
+            assert result.exit_code == 1
+            combined = result.output + (result.stderr or "")
+            assert "Permission denied" in combined
+            # Actionable hint
+            assert "1024" in combined or "elevated" in combined.lower()
+            assert "Traceback" not in combined
+
+    def test_mcp_http_generic_oserror_exits_cleanly(self):
+        """Other OSErrors (not lock, not permission) also exit cleanly —
+        e.g. ``[Errno 49] Can't assign requested address`` for a bad host.
+        """
+        with patch("cortex.transport.mcp.server.run_http") as mock_run_http:
+            mock_run_http.side_effect = OSError(
+                "[Errno 49] Can't assign requested address"
+            )
+            result = runner.invoke(
+                app,
+                [
+                    "serve",
+                    "--transport",
+                    "mcp-http",
+                    "--host",
+                    "192.0.2.1",
+                    "--port",
+                    "1314",
+                ],
+            )
+            assert result.exit_code == 1
+            combined = result.output + (result.stderr or "")
+            assert "Cannot start MCP HTTP server" in combined
+            assert "192.0.2.1" in combined
+            assert "1314" in combined
+            assert "Traceback" not in combined

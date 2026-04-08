@@ -13,12 +13,13 @@ endpoints can map them to the right HTTP status code.
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
 
 import httpx
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 from cortex.core.errors import CortexError
 from cortex.core.logging import get_logger
@@ -60,6 +61,20 @@ class MCPToolError(MCPClientError):
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
+
+
+@asynccontextmanager
+async def _http_client_session(url: str, timeout_seconds: float):
+    """Bridge old (timeout=N) → new (http_client=...) API.
+
+    The deprecated ``streamablehttp_client`` took ``timeout=N`` directly.
+    The canonical ``streamable_http_client`` requires an ``httpx.AsyncClient``
+    with the timeout configured on it. This helper hides the boilerplate so
+    call sites can stay as ``async with _http_client_session(url, t) as (r, w, sid):``.
+    """
+    async with httpx.AsyncClient(timeout=timeout_seconds) as http_client:
+        async with streamable_http_client(url, http_client=http_client) as result:
+            yield result
 
 
 def _unwrap_call_tool_result(name: str, result: Any) -> Any:
@@ -123,8 +138,8 @@ class CortexMCPClient:
     async def _call(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
         """Call a single MCP tool and return its unwrapped result."""
         try:
-            async with streamablehttp_client(
-                self.url, timeout=self._timeout_seconds
+            async with _http_client_session(
+                self.url, self._timeout_seconds
             ) as (read_stream, write_stream, _get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
@@ -169,8 +184,8 @@ class CortexMCPClient:
         Used at startup to verify the server is the right version.
         """
         try:
-            async with streamablehttp_client(
-                self.url, timeout=self._timeout_seconds
+            async with _http_client_session(
+                self.url, self._timeout_seconds
             ) as (read_stream, write_stream, _):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
