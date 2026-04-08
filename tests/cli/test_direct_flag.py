@@ -14,7 +14,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -72,26 +72,55 @@ class TestDirectFlagCallback:
         Note: ``--help`` short-circuits Typer and skips the global callback,
         so we need a real subcommand for the second invocation to verify the
         callback resets the state.
+
+        Bundle 9.1 / CI fix: the second invocation (without ``--direct``)
+        triggers the lazy probe via ``_probe_mcp_lazy`` → ``_get_probe_client``.
+        Without a running MCP server this would fail with exit 1 on CI. We
+        inject a fake probe client that reports all required tools so the
+        routing decision proceeds and we can assert the callback reset
+        ``_direct_mode`` correctly.
         """
-        with patch("cortex.cli.main._get_store") as mock_get_store:
+        async def fake_list_tools():
+            return list(cli_mod._REQUIRED_MCP_ROUTING_TOOLS)
+
+        fake_probe_client = MagicMock()
+        fake_probe_client.list_tools = fake_list_tools
+        fake_mcp_client = MagicMock()
+        fake_mcp_client.list_objects = AsyncMock(return_value=[])
+
+        with patch("cortex.cli.main._get_store") as mock_get_store, \
+             patch("cortex.cli.main._get_probe_client", return_value=fake_probe_client), \
+             patch("cortex.cli.main._get_mcp_client", return_value=fake_mcp_client):
             mock_store = mock_get_store.return_value
             mock_store.list_objects.return_value = []
 
-            # First invocation: --direct
+            # First invocation: --direct (uses _get_store direct path)
             result1 = runner.invoke(app, ["--direct", "list"])
             assert result1.exit_code == 0
             assert cli_mod._direct_mode is True
 
-            # Second invocation: no --direct (real subcommand, not --help)
+            # Second invocation: no --direct (uses the MCP-routed path,
+            # hence the patched probe + mcp clients).
             result2 = runner.invoke(app, ["list"])
             assert result2.exit_code == 0
             assert cli_mod._direct_mode is False  # reset by callback
 
     def test_help_mentions_direct_flag(self):
-        """`cortex --help` should document the global --direct option."""
+        """`cortex --help` should document the global --direct option.
+
+        Bundle 9.1 / CI fix: under ``FORCE_COLOR=1`` (GitHub Actions'
+        default), Rich inserts ANSI escape codes *inside* the rendered
+        option names, so ``--direct`` appears as
+        ``\\x1b[36m--\\x1b[0m\\x1b[36mdirect\\x1b[0m`` and the literal
+        substring ``--direct`` is not present. Strip ANSI codes before
+        the substring match so the assertion holds regardless of how
+        the captured output is colorized.
+        """
+        import re
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "--direct" in result.output
+        stripped = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--direct" in stripped
 
     def test_help_for_subcommand_also_shows_direct(self):
         """The global --direct should also appear under subcommand help via Typer."""

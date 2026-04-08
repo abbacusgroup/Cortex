@@ -126,8 +126,15 @@ def mcp_http_server(tmp_path: Path) -> Iterator[tuple[str, subprocess.Popen]]:
             proc.wait()
 
 
-def _run_cli(env: dict, args: list[str], *, timeout: int = 30) -> subprocess.CompletedProcess:
-    """Run `python -m cortex.cli.main <args>` with the given env."""
+def _run_cli(env: dict, args: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess:
+    """Run `python -m cortex.cli.main <args>` with the given env.
+
+    Bundle 9.1 / CI: default timeout bumped from 30s to 120s. Commands
+    like ``cortex capture`` load the sentence-transformers embedding
+    model on first use, which on slow GitHub Actions runners can take
+    45-80 seconds. 120s gives comfortable headroom without masking
+    hung commands.
+    """
     return subprocess.run(
         [sys.executable, "-u", "-m", "cortex.cli.main", *args],
         env=env,

@@ -150,7 +150,7 @@ class TestMcpHttpServerLifecycle:
     @pytest.mark.asyncio
     async def test_server_starts_and_lists_tools(self, mcp_http_server):
         url, _proc = mcp_http_server
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
         tools = await client.list_tools()
         assert "cortex_search" in tools
         assert "cortex_capture" in tools
@@ -161,7 +161,7 @@ class TestMcpHttpServerLifecycle:
     @pytest.mark.asyncio
     async def test_status_returns_live_data(self, mcp_http_server):
         url, _proc = mcp_http_server
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
         status = await client.status()
         assert isinstance(status, dict)
         assert "sqlite_total" in status
@@ -174,8 +174,8 @@ class TestConcurrentClients:
     async def test_capture_from_one_client_visible_to_another(self, mcp_http_server):
         """The whole point: write via client A, read via client B, no lock fight."""
         url, _proc = mcp_http_server
-        client_a = CortexMCPClient(url, timeout_seconds=30.0)
-        client_b = CortexMCPClient(url, timeout_seconds=30.0)
+        client_a = CortexMCPClient(url, timeout_seconds=60.0)
+        client_b = CortexMCPClient(url, timeout_seconds=60.0)
 
         result = await client_a.capture(
             title="Phase 2 concurrency test",
@@ -194,7 +194,7 @@ class TestConcurrentClients:
     async def test_search_finds_recently_captured_object(self, mcp_http_server):
         url, _proc = mcp_http_server
         # 15s under xdist contention (Bundle 9 / F.1).
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
         await client.capture(
             title="Concurrency test marker",
             content="A unique searchable phrase: zorblax-quantum",
@@ -207,7 +207,7 @@ class TestConcurrentClients:
     @pytest.mark.asyncio
     async def test_many_concurrent_reads_all_succeed(self, mcp_http_server):
         url, _proc = mcp_http_server
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
 
         # Seed a few objects
         for i in range(5):
@@ -281,7 +281,7 @@ class TestMcpHttpServerCrashRecovery:
         # ``pytest -n auto`` even within the ``phase2_concurrency``
         # xdist_group there is enough cross-worker CPU contention to
         # blow past the old 5s budget for ``cortex_capture``.
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
         result = await client.capture(
             title="Phase 2.I cross-client test",
             content="visible from dashboard via MCP HTTP server",
@@ -525,7 +525,7 @@ class TestAllAdminToolsCallableOverHttp:
     @pytest.mark.asyncio
     async def test_cortex_status_callable(self, mcp_http_server):
         url, _proc = mcp_http_server
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
         result = await client.status()
         assert isinstance(result, dict)
         assert "sqlite_total" in result
@@ -534,14 +534,14 @@ class TestAllAdminToolsCallableOverHttp:
     @pytest.mark.asyncio
     async def test_cortex_query_trail_callable(self, mcp_http_server):
         url, _proc = mcp_http_server
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
         result = await client.query_trail(limit=10)
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
     async def test_cortex_graph_data_callable(self, mcp_http_server):
         url, _proc = mcp_http_server
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
         result = await client.graph_data()
         assert isinstance(result, dict)
         assert "nodes" in result
@@ -550,7 +550,7 @@ class TestAllAdminToolsCallableOverHttp:
     @pytest.mark.asyncio
     async def test_cortex_list_entities_callable(self, mcp_http_server):
         url, _proc = mcp_http_server
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
         result = await client.list_entities()
         assert isinstance(result, list)
 
@@ -686,7 +686,7 @@ class TestDashboardDoesNotOpenGraphDb:
         # Seed at least one capture so the DB files definitely exist and
         # are open on the MCP server side. 15s timeout under xdist
         # contention (see Bundle 9 / F.1 fix).
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
         await client.capture(
             title="lsof seed", content="ensure db is touched", obj_type="idea"
         )
@@ -754,7 +754,7 @@ class TestHighConcurrencyStress:
         the plan actually wanted to verify.
         """
         url, _proc = mcp_http_server
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
 
         async def one_call():
             return await client.list_objects(limit=5)
@@ -791,7 +791,7 @@ class TestHighConcurrencyStress:
         # Hammer the server with many client calls. Kept sequential inside
         # each coroutine to stay within the server's per-request capacity
         # while still proving that client calls don't leak orphan markers.
-        client = CortexMCPClient(url, timeout_seconds=30.0)
+        client = CortexMCPClient(url, timeout_seconds=60.0)
 
         async def hammer():
             for _ in range(10):
