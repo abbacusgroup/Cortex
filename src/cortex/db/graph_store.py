@@ -103,6 +103,29 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _sparql_escape_string(value: str) -> str:
+    """Escape a Python string for safe interpolation inside a SPARQL string literal.
+
+    Applies the SPARQL 1.1 string-literal escape rules (spec §5.4, EBNF
+    ``ECHAR``) so that the returned value is always safe to embed inside
+    double-quoted SPARQL string literals. Order matters: backslash MUST
+    be escaped first, otherwise subsequent replacements would double-escape
+    their own backslashes.
+
+    Pyoxigraph 0.5.x does not expose a parameterized query API — ``Store.query``
+    only accepts a raw SPARQL string — so any user-controllable value that ends
+    up inside a literal must be escaped by the caller. This helper is the one
+    place that knows the escape rules.
+    """
+    return (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
+
 def _read_marker(marker_path: Path) -> dict[str, Any] | None:
     """Read and parse the PID marker file. Returns None on any error."""
     try:
@@ -670,7 +693,9 @@ class GraphStore:
             filters.append("?s a cortex:KnowledgeObject .")
 
         if project:
-            filters.append(f'?s cortex:project "{project}" .')
+            filters.append(
+                f'?s cortex:project "{_sparql_escape_string(project)}" .'
+            )
 
         filter_block = "\n            ".join(filters)
 

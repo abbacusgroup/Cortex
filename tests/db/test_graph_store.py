@@ -251,6 +251,119 @@ class TestCrudEdgeCases:
 
 
 # =========================================================================
+# SPARQL literal escaping (Bundle 10.1 hardening)
+# =========================================================================
+
+
+class TestSparqlEscape:
+    """Unit tests for the ``_sparql_escape_string`` helper.
+
+    Pyoxigraph 0.5.x does not provide a parameterized query API, so any
+    user-controllable value interpolated into a SPARQL string literal must
+    pass through this helper. See ``_sparql_escape_string`` in
+    ``cortex/db/graph_store.py`` and the SPARQL 1.1 spec §5.4 (``ECHAR``).
+    """
+
+    def test_clean_string_is_unchanged(self) -> None:
+        from cortex.db.graph_store import _sparql_escape_string
+
+        assert _sparql_escape_string("plain") == "plain"
+        assert _sparql_escape_string("a b c") == "a b c"
+        assert _sparql_escape_string("unicode \u6d4b") == "unicode \u6d4b"
+
+    def test_backslash_is_escaped_first(self) -> None:
+        from cortex.db.graph_store import _sparql_escape_string
+
+        # A single backslash must become two, not four (order-dependency
+        # regression guard: if we escape " before \, the \" insertion
+        # would then get its own \ re-escaped).
+        assert _sparql_escape_string("\\") == "\\\\"
+        assert _sparql_escape_string("a\\b") == "a\\\\b"
+
+    def test_double_quote_is_escaped(self) -> None:
+        from cortex.db.graph_store import _sparql_escape_string
+
+        assert _sparql_escape_string('"') == '\\"'
+        assert _sparql_escape_string('say "hi"') == 'say \\"hi\\"'
+
+    def test_whitespace_controls_are_escaped(self) -> None:
+        from cortex.db.graph_store import _sparql_escape_string
+
+        assert _sparql_escape_string("a\nb") == "a\\nb"
+        assert _sparql_escape_string("a\rb") == "a\\rb"
+        assert _sparql_escape_string("a\tb") == "a\\tb"
+
+    def test_backslash_then_quote_does_not_double_escape(self) -> None:
+        from cortex.db.graph_store import _sparql_escape_string
+
+        # Literal input: \  "   →  \\  \"
+        assert _sparql_escape_string('\\"') == '\\\\\\"'
+
+
+class TestSparqlInjectionListObjects:
+    """Adversarial tests for ``GraphStore.list_objects(project=...)``.
+
+    Before Bundle 10.1 the ``project`` filter was interpolated directly
+    into the SPARQL query. Pyoxigraph's lenient parser prevented actual
+    exploitation but the underlying string was unescaped. These tests
+    verify that the escape helper is applied correctly and that the
+    filter behaves normally for hostile values.
+    """
+
+    def test_project_with_double_quote_filters_correctly(
+        self, store: GraphStore
+    ) -> None:
+        evil_project = 'proj"name'
+        store.create_object(obj_type="fix", title="F1", project=evil_project)
+        store.create_object(obj_type="fix", title="F2", project="other")
+
+        results = store.list_objects(project=evil_project)
+        assert len(results) == 1
+        assert results[0]["title"] == "F1"
+        assert results[0]["project"] == evil_project
+
+    def test_project_with_backslash_filters_correctly(
+        self, store: GraphStore
+    ) -> None:
+        evil_project = "path\\to\\project"
+        store.create_object(obj_type="fix", title="B1", project=evil_project)
+        store.create_object(obj_type="fix", title="B2", project="clean")
+
+        results = store.list_objects(project=evil_project)
+        assert len(results) == 1
+        assert results[0]["title"] == "B1"
+        assert results[0]["project"] == evil_project
+
+    def test_project_with_newline_filters_correctly(
+        self, store: GraphStore
+    ) -> None:
+        evil_project = "line1\nline2"
+        store.create_object(obj_type="fix", title="N1", project=evil_project)
+        store.create_object(obj_type="fix", title="N2", project="plain")
+
+        results = store.list_objects(project=evil_project)
+        assert len(results) == 1
+        assert results[0]["title"] == "N1"
+
+    def test_project_injection_attempt_does_not_leak_other_rows(
+        self, store: GraphStore
+    ) -> None:
+        # Classic injection payload: try to close the literal and append
+        # a clause that would match everything. With the escape in place
+        # the whole string is a literal, so nothing matches — the query
+        # returns zero rows instead of leaking the "other" project.
+        store.create_object(obj_type="fix", title="Hidden", project="other")
+        store.create_object(obj_type="fix", title="Visible", project="target")
+
+        payload = 'target" } UNION { ?s ?p ?o . FILTER(true) '
+        results = store.list_objects(project=payload)
+        assert results == []
+
+        # Sanity check: the clean value still matches.
+        assert len(store.list_objects(project="target")) == 1
+
+
+# =========================================================================
 # Relationships
 # =========================================================================
 
