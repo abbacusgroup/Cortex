@@ -81,8 +81,13 @@ def create_api(
     setup_logging(level=config.log_level, json_output=config.log_json)
 
     if mcp_client is None:
+        # Bundle 9.3: 30s default to match the CLI singleton. The REST
+        # API forwards slow tools (search, capture) to the MCP server,
+        # and on slow CI hardware these can take 15-25s on first call
+        # due to embedding model cold-start. 10s was too tight and
+        # produced flaky 503s in the integration suite.
         mcp_client = CortexMCPClient(
-            config.mcp_server_url, timeout_seconds=10.0
+            config.mcp_server_url, timeout_seconds=30.0
         )
 
     app = FastAPI(
