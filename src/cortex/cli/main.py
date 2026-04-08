@@ -1025,17 +1025,133 @@ def _probe_mcp_server(url: str, *, retries: int = 3, retry_delay: float = 1.0) -
     raise last_error
 
 
+def _spawn_mcp_subprocess(url: str, data_dir: Path):
+    """Spawn ``cortex serve --transport mcp-http`` and wait for it ready.
+
+    Bundle 8 / B2: called by ``cortex dashboard --spawn-mcp`` when the
+    initial probe fails. Launches the MCP server as a subprocess on the
+    host/port derived from ``url``, polls for readiness via
+    ``_probe_mcp_server``, and returns the Popen handle so the caller can
+    register cleanup on exit.
+
+    Raises:
+        RuntimeError: If the subprocess failed to become ready within the
+            timeout. The subprocess has already been terminated in that
+            case.
+
+    Log files:
+        stdout → ``<data_dir>/mcp-http.log``
+        stderr → ``<data_dir>/mcp-http.err``
+        (Same paths the LaunchAgent uses — consistent for users.)
+    """
+    import os as _os
+    import subprocess
+    import time
+    from urllib.parse import urlparse
+
+    from cortex.transport.mcp.client import MCPClientError
+
+    parsed = urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 1314
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = data_dir / "mcp-http.log"
+    stderr_path = data_dir / "mcp-http.err"
+    stdout_f = stdout_path.open("a")
+    stderr_f = stderr_path.open("a")
+
+    env = _os.environ.copy()
+    env.setdefault("CORTEX_DATA_DIR", str(data_dir))
+
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-u",
+            "-m",
+            "cortex.cli.main",
+            "serve",
+            "--transport",
+            "mcp-http",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ],
+        env=env,
+        stdout=stdout_f,
+        stderr=stderr_f,
+    )
+
+    # Poll readiness for up to ~15s total (5 retry cycles × 3s timeout each).
+    deadline = time.time() + 15.0
+    last_error: Exception | None = None
+    while time.time() < deadline:
+        # Bail early if the subprocess died — no point polling a zombie.
+        if proc.poll() is not None:
+            stdout_f.close()
+            stderr_f.close()
+            log_tail = ""
+            try:
+                log_tail = stderr_path.read_text()[-500:]
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"Spawned MCP subprocess exited with code {proc.returncode} "
+                f"before becoming ready. See {stderr_path} for details.\n"
+                f"--- tail of stderr ---\n{log_tail}"
+            )
+        try:
+            _probe_mcp_server(url, retries=1, retry_delay=0.0)
+            return proc
+        except MCPClientError as e:
+            last_error = e
+            time.sleep(0.5)
+
+    # Timeout — kill the subprocess so we don't leave orphans behind.
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    finally:
+        stdout_f.close()
+        stderr_f.close()
+
+    raise RuntimeError(
+        f"Spawned MCP subprocess did not become ready within 15s at {url}. "
+        f"Last probe error: {last_error}"
+    )
+
+
 @app.command()
 def dashboard(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
     port: int = typer.Option(1315, "--port", help="Bind port"),
+    spawn_mcp: bool = typer.Option(
+        False,
+        "--spawn-mcp",
+        help=(
+            "If the MCP HTTP server is unreachable, spawn it as a subprocess "
+            "and wait for it to be ready. The subprocess is terminated when "
+            "the dashboard exits. Skipped silently if the MCP server is "
+            "already running."
+        ),
+    ),
 ) -> None:
     """Start the web dashboard.
 
     The dashboard is a thin client of the MCP HTTP server. It probes the
     configured ``mcp_server_url`` at startup and refuses to start if the
     server isn't reachable or is missing required tools.
+
+    With ``--spawn-mcp`` (Bundle 8 / B2), an unreachable MCP server is
+    launched as a subprocess on the configured host/port and waited for.
+    The subprocess is terminated when the dashboard process exits.
     """
+    import atexit
+
     import uvicorn
 
     from cortex.dashboard.server import create_dashboard
@@ -1045,21 +1161,78 @@ def dashboard(
 
     # Probe the MCP server before starting uvicorn so the user gets an
     # actionable error instead of a half-broken dashboard.
+    spawned_proc = None
     try:
         available = _probe_mcp_server(config.mcp_server_url)
-    except MCPClientError as e:
+    except MCPClientError as probe_err:
+        if not spawn_mcp:
+            typer.secho(
+                f"Cannot reach Cortex MCP server at {config.mcp_server_url}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.secho(f"  {probe_err}", fg=typer.colors.RED, err=True)
+            typer.echo(
+                "  Start it in another terminal:\n"
+                "    cortex serve --transport mcp-http --host 127.0.0.1 --port 1314\n"
+                "  Or rerun with --spawn-mcp to have the dashboard launch it for you.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        # --spawn-mcp: launch the MCP server as a subprocess and wait.
         typer.secho(
-            f"Cannot reach Cortex MCP server at {config.mcp_server_url}",
-            fg=typer.colors.RED,
+            f"MCP server at {config.mcp_server_url} unreachable — "
+            f"spawning one via --spawn-mcp…",
+            fg=typer.colors.YELLOW,
             err=True,
         )
-        typer.secho(f"  {e}", fg=typer.colors.RED, err=True)
-        typer.echo(
-            "  Start it in another terminal:\n"
-            "    cortex serve --transport mcp-http --host 127.0.0.1 --port 1314",
+        try:
+            spawned_proc = _spawn_mcp_subprocess(
+                config.mcp_server_url, config.data_dir
+            )
+        except RuntimeError as spawn_err:
+            typer.secho(
+                f"Failed to spawn MCP subprocess: {spawn_err}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        # Register cleanup so the child doesn't outlive the dashboard.
+        def _terminate_spawned():
+            if spawned_proc is None or spawned_proc.poll() is not None:
+                return
+            try:
+                spawned_proc.terminate()
+                spawned_proc.wait(timeout=10)
+            except Exception:
+                try:
+                    spawned_proc.kill()
+                    spawned_proc.wait()
+                except Exception:
+                    pass
+
+        atexit.register(_terminate_spawned)
+
+        typer.secho(
+            f"Spawned MCP server (PID {spawned_proc.pid}) — "
+            f"logs in {config.data_dir}/mcp-http.{{log,err}}",
+            fg=typer.colors.GREEN,
             err=True,
         )
-        raise typer.Exit(1)
+
+        # Re-probe now that the subprocess is up.
+        try:
+            available = _probe_mcp_server(config.mcp_server_url)
+        except MCPClientError as e:
+            typer.secho(
+                f"Spawned MCP server is not responding: {e}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            _terminate_spawned()
+            raise typer.Exit(1)
 
     missing = _REQUIRED_MCP_TOOLS - available
     if missing:
@@ -1186,6 +1359,192 @@ def _print_summary(doc: dict) -> None:
     project = doc.get("project", "")
     proj_str = f" [{project}]" if project else ""
     typer.echo(f"  {doc_id[:8]}  {doc_type:12s} {title}{proj_str}")
+
+
+# ─── `cortex doctor` sub-app (Bundle 8 / B1) ─────────────────────────────
+
+doctor_app = typer.Typer(
+    name="doctor",
+    help="Diagnostic and recovery commands for a Cortex install.",
+    no_args_is_help=True,
+)
+app.add_typer(doctor_app, name="doctor")
+
+
+@doctor_app.command("unlock")
+def doctor_unlock(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report what would be removed without touching anything.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "Skip the PID-alive check and remove the marker + RocksDB LOCK "
+            "file unconditionally. Use when a cross-user PermissionError "
+            "prevents the normal liveness check from working."
+        ),
+    ),
+) -> None:
+    """Clean up a stale graph.db lock from a crashed Cortex process.
+
+    Reads ``~/.cortex/graph.db.lock``, verifies the recorded holder PID is
+    really dead, then removes both the marker file and the RocksDB ``LOCK``
+    file inside the graph DB directory. Safe to run when nothing is locked
+    (no-op). Refuses to unlock a living holder unless ``--force`` is given.
+    """
+    from cortex.db.graph_store import (
+        _auto_recover_stale_lock,
+        _marker_path_for,
+        _pid_alive,
+        _process_cmdline,
+        _read_marker,
+    )
+
+    config = load_config()
+    db_path = config.data_dir / "graph.db"
+    marker_path = _marker_path_for(db_path)
+    rocksdb_lock = db_path / "LOCK"
+
+    if not marker_path.exists() and not rocksdb_lock.exists():
+        typer.secho(
+            "No marker file or RocksDB LOCK found — nothing to unlock.",
+            fg=typer.colors.GREEN,
+        )
+        raise typer.Exit(0)
+
+    marker = _read_marker(marker_path) if marker_path.exists() else None
+
+    if marker is not None and marker.get("_unreadable"):
+        typer.secho(
+            f"Marker file {marker_path} exists but is unreadable. "
+            f"Check its permissions (chmod/chown) and retry.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    holder_pid: int | None = None
+    holder_cmdline: str | None = None
+    if marker is not None:
+        raw_pid = marker.get("pid")
+        if isinstance(raw_pid, int):
+            holder_pid = raw_pid
+        raw_cmdline = marker.get("cmdline")
+        if isinstance(raw_cmdline, str):
+            holder_cmdline = raw_cmdline
+
+    if dry_run:
+        typer.echo("Dry run — no files will be removed.")
+        typer.echo(f"  marker: {marker_path} (exists={marker_path.exists()})")
+        typer.echo(
+            f"  rocksdb LOCK: {rocksdb_lock} (exists={rocksdb_lock.exists()})"
+        )
+        if holder_pid is not None:
+            alive = _pid_alive(holder_pid)
+            typer.echo(
+                f"  holder PID: {holder_pid} "
+                f"({'alive' if alive else 'dead'})"
+            )
+            if holder_cmdline:
+                typer.echo(f"  holder cmdline: {holder_cmdline}")
+        raise typer.Exit(0)
+
+    if force:
+        removed: list[str] = []
+        if marker_path.exists():
+            try:
+                marker_path.unlink(missing_ok=True)
+                removed.append(str(marker_path))
+            except OSError as e:
+                typer.secho(
+                    f"Could not remove marker {marker_path}: {e}",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(1)
+        if rocksdb_lock.exists():
+            try:
+                rocksdb_lock.unlink(missing_ok=True)
+                removed.append(str(rocksdb_lock))
+            except OSError as e:
+                typer.secho(
+                    f"Could not remove RocksDB LOCK {rocksdb_lock}: {e}",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(1)
+        typer.secho(
+            f"Force-unlocked. Removed: {', '.join(removed) or 'nothing'}",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(0)
+
+    # Normal path: require that we can prove the holder is gone.
+    if holder_pid is None:
+        # No marker (or malformed). Just remove whatever stale file is left.
+        removed = []
+        if marker_path.exists():
+            marker_path.unlink(missing_ok=True)
+            removed.append(str(marker_path))
+        if rocksdb_lock.exists():
+            rocksdb_lock.unlink(missing_ok=True)
+            removed.append(str(rocksdb_lock))
+        typer.secho(
+            f"Unlocked. No holder PID known; removed: "
+            f"{', '.join(removed) or 'nothing'}",
+            fg=typer.colors.GREEN,
+        )
+        raise typer.Exit(0)
+
+    if _pid_alive(holder_pid):
+        # Before refusing, check for PID reuse (same PID, different cmdline).
+        live_cmdline = _process_cmdline(holder_pid)
+        is_reuse = (
+            live_cmdline is not None
+            and holder_cmdline is not None
+            and live_cmdline != holder_cmdline
+        )
+        if is_reuse:
+            typer.secho(
+                f"PID {holder_pid} is alive but its cmdline does NOT match "
+                f"the marker. The OS has reused the PID for an unrelated "
+                f"process. Pass --force to unlock anyway.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+        else:
+            typer.secho(
+                f"PID {holder_pid} is still running — refusing to unlock "
+                f"a live holder.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.echo(
+                f"  Stop it first: kill {holder_pid}\n"
+                f"  Or override with: cortex doctor unlock --force",
+                err=True,
+            )
+        raise typer.Exit(1)
+
+    # Holder is dead — safe to auto-recover via the shared helper.
+    cleaned = _auto_recover_stale_lock(db_path, marker_path, holder_pid)
+    if not cleaned:
+        # Race: PID came back alive during the re-check.
+        typer.secho(
+            f"PID {holder_pid} became alive during the re-check; aborted.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.secho(
+        f"Unlocked. Holder PID {holder_pid} was dead; removed "
+        f"{marker_path} and {rocksdb_lock}.",
+        fg=typer.colors.GREEN,
+    )
 
 
 # Allow `python -m cortex.cli.main ...` invocation alongside the `cortex`

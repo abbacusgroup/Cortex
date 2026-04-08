@@ -515,3 +515,248 @@ class TestServeMcpHttpBindErrors:
             assert "192.0.2.1" in combined
             assert "1314" in combined
             assert "Traceback" not in combined
+
+
+class TestDashboardSpawnMcp:
+    """Bundle 8 / B2: ``cortex dashboard --spawn-mcp`` launches an MCP HTTP
+    server subprocess when the probe fails, waits for readiness, and
+    terminates the child when the dashboard exits.
+    """
+
+    def test_dashboard_without_spawn_flag_fails_on_unreachable_mcp(
+        self, monkeypatch
+    ):
+        """Regression guard: the default behavior (no --spawn-mcp) still
+        exits cleanly with the legacy error message when the probe fails.
+        """
+        from cortex.transport.mcp.client import MCPConnectionError
+
+        def failing_probe(url, **kw):
+            raise MCPConnectionError(f"Cannot reach MCP server at {url}")
+
+        monkeypatch.setattr("cortex.cli.main._probe_mcp_server", failing_probe)
+        result = runner.invoke(app, ["dashboard"])
+        assert result.exit_code == 1
+        combined = result.output + (result.stderr or "")
+        assert "Cannot reach" in combined
+        # The new hint mentioning --spawn-mcp should be present
+        assert "--spawn-mcp" in combined
+        assert "Traceback" not in combined
+
+    def test_dashboard_with_spawn_flag_spawns_and_uvicorn_runs(
+        self, monkeypatch
+    ):
+        """When the probe fails and --spawn-mcp is set, the CLI calls
+        ``_spawn_mcp_subprocess`` and then proceeds to uvicorn.run.
+        """
+        from cortex.transport.mcp.client import MCPConnectionError
+
+        probe_calls = {"n": 0}
+
+        def flaky_probe(url, **kw):
+            probe_calls["n"] += 1
+            if probe_calls["n"] == 1:
+                raise MCPConnectionError(f"Cannot reach MCP server at {url}")
+            # Second probe (after spawn) succeeds with the required tools
+            import cortex.cli.main as main_mod
+            return main_mod._REQUIRED_MCP_TOOLS
+
+        monkeypatch.setattr("cortex.cli.main._probe_mcp_server", flaky_probe)
+
+        # Fake _spawn_mcp_subprocess — don't actually start a real server
+        class FakeProc:
+            pid = 99999
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                pass
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                pass
+
+        spawn_calls = {"n": 0, "args": None}
+
+        def fake_spawn(url, data_dir):
+            spawn_calls["n"] += 1
+            spawn_calls["args"] = (url, data_dir)
+            return FakeProc()
+
+        monkeypatch.setattr("cortex.cli.main._spawn_mcp_subprocess", fake_spawn)
+
+        with patch("uvicorn.run") as mock_uvicorn, patch(
+            "cortex.dashboard.server.create_dashboard"
+        ) as mock_create:
+            mock_create.return_value = "fake_app"
+            result = runner.invoke(app, ["dashboard", "--spawn-mcp"])
+
+        assert result.exit_code == 0, (
+            f"unexpected exit: {result.output} {result.stderr}"
+        )
+        assert spawn_calls["n"] == 1
+        assert probe_calls["n"] == 2  # initial fail + post-spawn success
+        mock_uvicorn.assert_called_once()
+
+    def test_dashboard_with_spawn_flag_skips_spawn_when_probe_succeeds(
+        self, monkeypatch
+    ):
+        """If the initial probe succeeds, --spawn-mcp should NOT spawn a
+        duplicate MCP server.
+        """
+        import cortex.cli.main as main_mod
+
+        monkeypatch.setattr(
+            "cortex.cli.main._probe_mcp_server",
+            lambda url, **kw: main_mod._REQUIRED_MCP_TOOLS,
+        )
+
+        spawn_calls = {"n": 0}
+
+        def fake_spawn(url, data_dir):
+            spawn_calls["n"] += 1
+            raise RuntimeError("spawn should not have been called")
+
+        monkeypatch.setattr("cortex.cli.main._spawn_mcp_subprocess", fake_spawn)
+
+        with patch("uvicorn.run"), patch(
+            "cortex.dashboard.server.create_dashboard"
+        ) as mock_create:
+            mock_create.return_value = "fake_app"
+            result = runner.invoke(app, ["dashboard", "--spawn-mcp"])
+
+        assert result.exit_code == 0
+        assert spawn_calls["n"] == 0, (
+            "spawn must be skipped when the initial probe succeeds"
+        )
+
+    def test_dashboard_with_spawn_flag_exits_on_spawn_failure(
+        self, monkeypatch
+    ):
+        """If _spawn_mcp_subprocess raises RuntimeError (subprocess failed
+        to become ready), the dashboard exits 1 with a clean error.
+        """
+        from cortex.transport.mcp.client import MCPConnectionError
+
+        def failing_probe(url, **kw):
+            raise MCPConnectionError(f"Cannot reach MCP server at {url}")
+
+        def failing_spawn(url, data_dir):
+            raise RuntimeError("subprocess died before ready: oops")
+
+        monkeypatch.setattr("cortex.cli.main._probe_mcp_server", failing_probe)
+        monkeypatch.setattr("cortex.cli.main._spawn_mcp_subprocess", failing_spawn)
+
+        result = runner.invoke(app, ["dashboard", "--spawn-mcp"])
+        assert result.exit_code == 1
+        combined = result.output + (result.stderr or "")
+        assert "Failed to spawn MCP subprocess" in combined
+        assert "oops" in combined
+        assert "Traceback" not in combined
+
+    def test_spawn_mcp_subprocess_uses_configured_host_and_port(
+        self, monkeypatch, tmp_path
+    ):
+        """Unit test for ``_spawn_mcp_subprocess`` itself: it parses
+        host and port from the URL and passes them on the command line.
+        """
+        import cortex.cli.main as main_mod
+
+        captured: dict = {}
+
+        class FakePopen:
+            pid = 12345
+            returncode = None
+
+            def __init__(self, args, env=None, stdout=None, stderr=None):
+                captured["args"] = args
+                captured["env"] = env
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                pass
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr(
+            "cortex.cli.main._probe_mcp_server",
+            lambda url, **kw: {"cortex_search"},
+        )
+        # Patch subprocess.Popen at the module level _spawn_mcp_subprocess uses
+        import subprocess as subprocess_mod
+
+        monkeypatch.setattr(subprocess_mod, "Popen", FakePopen)
+
+        proc = main_mod._spawn_mcp_subprocess(
+            "http://127.0.0.1:9876/mcp", tmp_path
+        )
+        args = captured["args"]
+        assert "serve" in args
+        assert "--transport" in args
+        assert "mcp-http" in args
+        assert "--host" in args
+        assert "127.0.0.1" in args
+        assert "--port" in args
+        assert "9876" in args
+        # data_dir passed via env
+        assert captured["env"]["CORTEX_DATA_DIR"] == str(tmp_path)
+
+    def test_spawn_mcp_subprocess_fails_fast_on_immediate_exit(
+        self, monkeypatch, tmp_path
+    ):
+        """If the subprocess exits before becoming ready, _spawn_mcp_subprocess
+        raises RuntimeError with a clear message and the tail of stderr.
+        """
+        import cortex.cli.main as main_mod
+
+        class DeadPopen:
+            pid = 12345
+            returncode = 1
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def poll(self):
+                return 1  # already dead
+
+            def terminate(self):
+                pass
+
+            def wait(self, timeout=None):
+                return 1
+
+            def kill(self):
+                pass
+
+        # Pre-seed an error log file so the tail message has something to show
+        (tmp_path / "mcp-http.err").write_text("boom: StoreLockedError\n")
+
+        import subprocess as subprocess_mod
+
+        monkeypatch.setattr(subprocess_mod, "Popen", DeadPopen)
+
+        from cortex.transport.mcp.client import MCPConnectionError
+
+        monkeypatch.setattr(
+            "cortex.cli.main._probe_mcp_server",
+            lambda url, **kw: (_ for _ in ()).throw(
+                MCPConnectionError("not yet")
+            ),
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            main_mod._spawn_mcp_subprocess(
+                "http://127.0.0.1:9876/mcp", tmp_path
+            )
+        msg = str(exc_info.value)
+        assert "exited with code 1" in msg
+        assert "boom" in msg or "StoreLockedError" in msg

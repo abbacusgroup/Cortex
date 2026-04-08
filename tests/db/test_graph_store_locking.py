@@ -780,3 +780,395 @@ class TestMarkerNotRequiredForLockAcquisition:
             assert fresh["cmdline"] != stale_data["cmdline"]
         finally:
             store.close()
+
+
+class TestAutoRecoverStaleLock:
+    """Bundle 8 / B1: ``GraphStore.__init__`` auto-recovers when it hits a
+    lock error AND the marker says the holder is a dead PID (high-confidence
+    stale case). The recovery removes the marker + RocksDB LOCK file and
+    retries the open.
+    """
+
+    def _simulate_crashed_holder(self, tmp_path: Path) -> tuple[Path, Path, Path]:
+        """Set up the on-disk aftermath of a crashed GraphStore holder.
+
+        Opens a real store briefly to initialize the pyoxigraph directory
+        structure, closes it, then:
+
+        - Rewrites the marker with a PID that's guaranteed dead (PID 0 or
+          a very large number not in use).
+        - Leaves a (new, fabricated) RocksDB LOCK file so the auto-recovery
+          path exercises the LOCK-removal step.
+
+        Returns ``(db, marker, rocksdb_lock)`` paths.
+
+        NOTE: this does NOT simulate an actually-locked RocksDB store —
+        only the on-disk remnants. That's sufficient for the recovery logic
+        because we inject a lock error via monkeypatching ox.Store in the
+        test itself when we need to test the recovery-triggered-by-lock flow.
+        """
+        db = tmp_path / "g.db"
+        marker = _marker_path_for(db)
+        store = GraphStore(db)
+        store.close()
+        # Rewrite marker with a dead PID
+        dead_pid = 2_000_000  # very unlikely to exist
+        marker.write_text(
+            json.dumps(
+                {
+                    "pid": dead_pid,
+                    "cmdline": "cortex serve --transport mcp-http (crashed)",
+                    "acquired_at": "2020-01-01T00:00:00+00:00",
+                }
+            )
+        )
+        # Create a fake RocksDB LOCK file (the real one was removed by close())
+        rocksdb_lock = db / "LOCK"
+        rocksdb_lock.write_text("")
+        return db, marker, rocksdb_lock
+
+    def test_stale_marker_triggers_auto_recovery_on_retry(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """When ox.Store raises a lock error and the marker says the holder
+        is dead, GraphStore auto-recovers (removes marker + LOCK) and
+        retries the open successfully.
+        """
+        import pyoxigraph as ox_mod
+
+        import cortex.db.graph_store as gs_mod
+
+        db, marker, rocksdb_lock = self._simulate_crashed_holder(tmp_path)
+
+        # Make the FIRST ox.Store call raise a lock-shaped OSError, then let
+        # the retry go through normally.
+        original_store_cls = ox_mod.Store
+        call_count = {"n": 0}
+
+        def flaky_store(path_arg: str):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise OSError(
+                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
+                )
+            return original_store_cls(path_arg)
+
+        monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
+
+        store = GraphStore(db)
+        try:
+            # Auto-recovery removed the stale marker + LOCK then retried
+            assert call_count["n"] == 2, "should have retried after recovery"
+            assert marker.exists(), "new marker should be written by this process"
+            fresh = json.loads(marker.read_text())
+            assert fresh["pid"] == os.getpid()
+        finally:
+            store.close()
+
+    def test_auto_recovery_removes_rocksdb_lock_file(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Explicit assertion that the LOCK file inside graph.db/ is removed
+        by the auto-recovery path.
+        """
+        import pyoxigraph as ox_mod
+
+        import cortex.db.graph_store as gs_mod
+
+        db, marker, rocksdb_lock = self._simulate_crashed_holder(tmp_path)
+        assert rocksdb_lock.exists()
+
+        original_store_cls = ox_mod.Store
+        seen_rocksdb_lock_exists: list[bool] = []
+
+        call_count = {"n": 0}
+
+        def flaky_store(path_arg: str):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise OSError(
+                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
+                )
+            # On the retry, record whether the LOCK file was removed
+            seen_rocksdb_lock_exists.append(rocksdb_lock.exists())
+            return original_store_cls(path_arg)
+
+        monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
+
+        store = GraphStore(db)
+        try:
+            assert seen_rocksdb_lock_exists == [False], (
+                "auto-recovery should have removed graph.db/LOCK before retry"
+            )
+        finally:
+            store.close()
+
+    def test_auto_recovery_skipped_for_living_holder(self, tmp_path: Path):
+        """When the marker's PID is alive (this process's own PID),
+        auto-recovery is not triggered — StoreLockedError is raised.
+        """
+        db = tmp_path / "g.db"
+        first = GraphStore(db)
+        try:
+            # Opening again in this process triggers the in-process lock
+            # error. Because holder_pid == os.getpid() (alive), no recovery.
+            with pytest.raises(StoreLockedError) as exc_info:
+                GraphStore(db)
+            err = exc_info.value
+            assert err.holder_pid == os.getpid()
+            assert err.is_stale is False
+            assert "auto_recovery_attempted" not in err.context
+        finally:
+            first.close()
+
+    def test_auto_recovery_skipped_for_pid_reuse(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """When the marker's PID is alive but its cmdline differs from the
+        marker (PID reuse), auto-recovery is not triggered.
+        """
+        import pyoxigraph as ox_mod
+
+        import cortex.db.graph_store as gs_mod
+
+        db = tmp_path / "g.db"
+        marker = _marker_path_for(db)
+
+        # Write a marker with THIS process's PID but a bogus cmdline
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "cmdline": "some-other-program --impostor",
+                    "acquired_at": "2020-01-01T00:00:00+00:00",
+                }
+            )
+        )
+
+        # Inject a one-shot lock error so we enter the error path
+        original_store_cls = ox_mod.Store
+        call_count = {"n": 0}
+
+        def flaky_store(path_arg: str):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise OSError(
+                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
+                )
+            return original_store_cls(path_arg)
+
+        monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
+
+        with pytest.raises(StoreLockedError) as exc_info:
+            GraphStore(db)
+        err = exc_info.value
+        assert err.is_pid_reuse is True
+        assert err.is_stale is False
+        # Crucially: no retry happened, so the call count is 1
+        assert call_count["n"] == 1
+
+    def test_auto_recovery_skipped_for_missing_marker(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """When the lock error happens but there's no marker file at all,
+        auto-recovery is not triggered (we don't know enough to act safely).
+        """
+        import pyoxigraph as ox_mod
+
+        import cortex.db.graph_store as gs_mod
+
+        db = tmp_path / "g.db"
+        marker = _marker_path_for(db)
+        # Simulate "some files in db dir but no marker" by touching the dir
+        db.mkdir(parents=True, exist_ok=True)
+        assert not marker.exists()
+
+        original_store_cls = ox_mod.Store
+        call_count = {"n": 0}
+
+        def flaky_store(path_arg: str):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise OSError(
+                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
+                )
+            return original_store_cls(path_arg)
+
+        monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
+
+        with pytest.raises(StoreLockedError) as exc_info:
+            GraphStore(db)
+        err = exc_info.value
+        assert err.holder_pid is None
+        assert err.is_stale is False
+        # No retry happened
+        assert call_count["n"] == 1
+
+    def test_auto_recovery_skipped_for_unreadable_marker(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """When the marker exists but is unreadable (chmod 000), auto-recovery
+        is not triggered — we can't tell who the holder is.
+        """
+        import pyoxigraph as ox_mod
+
+        import cortex.db.graph_store as gs_mod
+
+        db = tmp_path / "g.db"
+        marker = _marker_path_for(db)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text('{"pid": 12345, "cmdline": "x"}')
+        original_mode = marker.stat().st_mode
+        marker.chmod(0o000)
+
+        original_store_cls = ox_mod.Store
+        call_count = {"n": 0}
+
+        def flaky_store(path_arg: str):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise OSError(
+                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
+                )
+            return original_store_cls(path_arg)
+
+        monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
+
+        try:
+            with pytest.raises(StoreLockedError) as exc_info:
+                GraphStore(db)
+            err = exc_info.value
+            assert err.context.get("marker_unreadable") is True
+            assert call_count["n"] == 1
+        finally:
+            marker.chmod(original_mode)
+
+    def test_auto_recovery_re_check_race(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Simulate a race: `_pid_alive` returns False in the initial
+        staleness check, then True during the re-check inside
+        `_auto_recover_stale_lock`. The original StoreLockedError should
+        be raised without any file cleanup.
+        """
+        import pyoxigraph as ox_mod
+
+        import cortex.db.graph_store as gs_mod
+
+        db, marker, rocksdb_lock = self._simulate_crashed_holder(tmp_path)
+        marker_data_before = marker.read_text()
+        lock_data_before = rocksdb_lock.read_text()
+
+        # _pid_alive will be called twice: once in _build_locked_error (→ False
+        # so is_stale=True), then again in _auto_recover_stale_lock (→ True
+        # to simulate a fresh process grabbing that PID).
+        call_count = {"n": 0}
+
+        def racy_pid_alive(pid: int) -> bool:
+            call_count["n"] += 1
+            # First call: mark stale. Second call: race aborts.
+            return call_count["n"] >= 2
+
+        monkeypatch.setattr(gs_mod, "_pid_alive", racy_pid_alive)
+
+        original_store_cls = ox_mod.Store
+
+        def always_locked(path_arg: str):
+            raise OSError(
+                "While lock file: /tmp/LOCK: Resource temporarily unavailable"
+            )
+
+        monkeypatch.setattr(gs_mod.ox, "Store", always_locked)
+
+        with pytest.raises(StoreLockedError) as exc_info:
+            GraphStore(db)
+        err = exc_info.value
+        assert err.is_stale is True
+        # Files were NOT touched because the re-check aborted cleanup
+        assert marker.read_text() == marker_data_before
+        assert rocksdb_lock.read_text() == lock_data_before
+
+    def test_auto_recovery_logs_info_on_success(
+        self, tmp_path: Path, monkeypatch, caplog
+    ):
+        """The successful auto-recovery path must emit a single INFO line
+        naming the dead holder PID.
+        """
+        import logging
+
+        import pyoxigraph as ox_mod
+
+        import cortex.db.graph_store as gs_mod
+
+        db, marker, rocksdb_lock = self._simulate_crashed_holder(tmp_path)
+
+        original_store_cls = ox_mod.Store
+        call_count = {"n": 0}
+
+        def flaky_store(path_arg: str):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise OSError(
+                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
+                )
+            return original_store_cls(path_arg)
+
+        monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
+
+        with caplog.at_level(logging.INFO, logger="cortex.db.graph"):
+            store = GraphStore(db)
+            try:
+                recovery_logs = [
+                    rec
+                    for rec in caplog.records
+                    if "Auto-recovered stale lock" in rec.getMessage()
+                ]
+                assert len(recovery_logs) == 1
+                assert "2000000" in recovery_logs[0].getMessage()
+            finally:
+                store.close()
+
+    def test_stale_locked_error_message_mentions_doctor_unlock(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """When auto-recovery does NOT fire (e.g. pid_reuse case), the error
+        message must still direct users at ``cortex doctor unlock``.
+        """
+        import pyoxigraph as ox_mod
+
+        import cortex.db.graph_store as gs_mod
+
+        db = tmp_path / "g.db"
+        marker = _marker_path_for(db)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        # Dead PID case → will trigger auto-recovery. Force non-recoverable
+        # by stubbing _auto_recover_stale_lock to return False.
+        marker.write_text(
+            json.dumps(
+                {
+                    "pid": 2_000_000,
+                    "cmdline": "cortex serve (crashed)",
+                    "acquired_at": "2020-01-01T00:00:00+00:00",
+                }
+            )
+        )
+        (db).mkdir(parents=True, exist_ok=True)
+        (db / "LOCK").write_text("")
+
+        def always_locked(path_arg: str):
+            raise OSError(
+                "While lock file: /tmp/LOCK: Resource temporarily unavailable"
+            )
+
+        # Pretend recovery always fails (returns False as if the race aborted)
+        monkeypatch.setattr(gs_mod.ox, "Store", always_locked)
+        monkeypatch.setattr(
+            gs_mod, "_auto_recover_stale_lock", lambda *a, **kw: False
+        )
+
+        with pytest.raises(StoreLockedError) as exc_info:
+            GraphStore(db)
+        msg = str(exc_info.value)
+        assert "cortex doctor unlock" in msg
+        assert "Manual cleanup:" in msg  # fallback rm commands still present

@@ -89,44 +89,45 @@ directly — they execute before any MCP server can exist.
 
 ### LaunchAgent (macOS)
 
-To start the MCP HTTP server automatically on login, save the following as
-`~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist`:
+Cortex ships two LaunchAgent templates under `deploy/` so the MCP HTTP
+server and the dashboard can both auto-start on login.
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>ai.abbacus.cortex.mcp</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/YOURUSER/Lab/cortex/.venv/bin/cortex</string>
-        <string>serve</string>
-        <string>--transport</string>
-        <string>mcp-http</string>
-        <string>--host</string>
-        <string>127.0.0.1</string>
-        <string>--port</string>
-        <string>1314</string>
-    </array>
-    <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key>
-    <string>/Users/YOURUSER/.cortex/mcp-http.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/YOURUSER/.cortex/mcp-http.err</string>
-    <key>WorkingDirectory</key>
-    <string>/Users/YOURUSER/Lab/cortex</string>
-</dict>
-</plist>
-```
-
-Then load it:
+**Install both agents** (substitute your username via `sed`):
 
 ```bash
+sed 's|YOURUSER|'"$USER"'|g' deploy/ai.abbacus.cortex.mcp.plist \
+  > ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+sed 's|YOURUSER|'"$USER"'|g' deploy/ai.abbacus.cortex.dashboard.plist \
+  > ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
+
 launchctl load ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+launchctl load ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
 ```
+
+After login, the MCP server runs on `http://127.0.0.1:1314/mcp` and the
+dashboard on `http://127.0.0.1:1315/`. Both use `KeepAlive=true`, so
+they auto-restart on crash.
+
+**Startup race note**: launchd does not guarantee load order. At cold
+boot, the dashboard may briefly probe an MCP server that isn't up yet,
+exit with "Cannot reach MCP server", and get restarted by launchd.
+Expect one or two such entries in `~/.cortex/dashboard.err` at login —
+they're harmless.
+
+**Uninstall**:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
+launchctl unload ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+rm ~/Library/LaunchAgents/ai.abbacus.cortex.{mcp,dashboard}.plist
+```
+
+**Recovery from a crashed MCP server**: if the MCP server process is
+`kill -9`'d or the machine is hard-rebooted, a stale `graph.db.lock`
+marker plus a RocksDB `LOCK` file may remain. The next `GraphStore`
+open auto-detects and cleans them up when the marker's PID is verified
+dead. For stubborn cases, run `cortex doctor unlock` — see the
+[Known limitations](#known-limitations) section.
 
 ### Claude Code integration
 
@@ -215,11 +216,30 @@ See `.env.example` for all options.
 - **`cortex pipeline --batch`** requires raw SQL access and therefore
   bypasses MCP routing. Run it with `cortex --direct pipeline --batch`,
   or temporarily stop the MCP server.
-- **REST API still opens `graph.db` directly**: `cortex serve
-  --transport http` is the third entry point and has not yet been
-  converged to the MCP-routed pattern. Running it simultaneously with
-  the LaunchAgent MCP server will fail with the lock error. This will
-  be fixed in a future release.
+
+## Recovering from a crashed MCP server
+
+If the MCP server process is killed hard (`kill -9`, power loss, kernel
+panic), it can leave behind both `~/.cortex/graph.db.lock` (Cortex's PID
+marker) and `~/.cortex/graph.db/LOCK` (RocksDB's internal lock file).
+
+Most of the time you don't need to do anything — the next `GraphStore`
+open detects the stale marker, verifies the recorded PID is really dead,
+removes both files, and retries automatically. A single `INFO` line
+("Auto-recovered stale lock") appears in the log.
+
+For cases where auto-recovery can't confirm safety (e.g. `PermissionError`
+from a cross-user process), use the doctor command:
+
+```bash
+cortex doctor unlock              # normal cleanup (refuses to unlock a live holder)
+cortex doctor unlock --dry-run    # report what would be removed
+cortex doctor unlock --force      # bypass the live-holder check (advanced)
+```
+
+`cortex dashboard --spawn-mcp` also auto-launches the MCP server as a
+subprocess if none is running, so a crashed or unstarted MCP server
+doesn't block dashboard use.
 
 See `CHANGELOG.md` for the full release history.
 

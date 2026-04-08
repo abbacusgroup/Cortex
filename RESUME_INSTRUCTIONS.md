@@ -148,6 +148,14 @@ If you see `Graph DB at ~/.cortex/graph.db is locked by another process` when ru
 - An old Claude Code session is still running somewhere — quit all Claude Code instances
 - A leftover stdio MCP process from before the restart — find and kill it: `lsof ~/.cortex/graph.db | grep -v COMMAND | awk '{print $2}' | sort -u | xargs kill`
 
+If the message includes **"stale lock marker"** (i.e. the recorded holder PID is dead), Bundle 8's auto-recovery should have already kicked in on the next open. For stubborn cases, use the guided cleanup:
+
+```bash
+cortex doctor unlock              # removes a stale marker + RocksDB LOCK
+cortex doctor unlock --dry-run    # inspect what would be removed
+cortex doctor unlock --force      # bypass the live-holder check (advanced)
+```
+
 Then retry step 2.
 
 ### Claude Code says "MCP server not connected" or shows Cortex as disconnected
@@ -177,43 +185,34 @@ The dashboard talks to MCP via HTTP. If MCP is down, the dashboard returns a 503
 
 ---
 
-## One-time eventual followup: LaunchAgent for the MCP HTTP server
+## One-time eventual followup: LaunchAgents for MCP + dashboard
 
-You currently start the MCP HTTP server manually in a terminal (step 2). Eventually you'll want it to start automatically on login. The launchd plist looks roughly like this — save to `~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist`:
+Bundle 8 ships both plist templates in `deploy/`. Install them with:
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>ai.abbacus.cortex.mcp</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/fabrizzio/Lab/cortex/.venv/bin/cortex</string>
-        <string>serve</string>
-        <string>--transport</string>
-        <string>mcp-http</string>
-        <string>--host</string>
-        <string>127.0.0.1</string>
-        <string>--port</string>
-        <string>1314</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/Users/fabrizzio/.cortex/mcp-http.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/fabrizzio/.cortex/mcp-http.err</string>
-    <key>WorkingDirectory</key>
-    <string>/Users/fabrizzio/Lab/cortex</string>
-</dict>
-</plist>
+```bash
+cd ~/Lab/cortex
+sed 's|YOURUSER|'"$USER"'|g' deploy/ai.abbacus.cortex.mcp.plist \
+  > ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+sed 's|YOURUSER|'"$USER"'|g' deploy/ai.abbacus.cortex.dashboard.plist \
+  > ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
+
+launchctl load ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+launchctl load ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
 ```
 
-Then `launchctl load ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist`. After that the MCP HTTP server starts automatically every time you log in. Don't bother with this unless you want it — manual `cortex serve` in a tmux pane works fine.
+After that the MCP HTTP server (port 1314) and the dashboard (port 1315) both auto-start at login and auto-restart on crash. Don't bother with this unless you want it — manual `cortex serve` in a tmux pane works fine.
+
+**Startup race**: launchd does not order the two agents. At cold boot, the dashboard may briefly probe an MCP server that isn't up yet, exit with "Cannot reach MCP server", and get auto-restarted by launchd a few seconds later. Expect one or two such entries in `~/.cortex/dashboard.err` at login — they're harmless.
+
+**Alternative for ad-hoc use**: `cortex dashboard --spawn-mcp` launches its own MCP subprocess on demand if none is running, and terminates it on exit. Useful for demos or first-run setups without installing both LaunchAgents.
+
+**Uninstall**:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
+launchctl unload ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+rm ~/Library/LaunchAgents/ai.abbacus.cortex.{mcp,dashboard}.plist
+```
 
 ---
 
