@@ -230,8 +230,8 @@ class CortexMCPClient:
             )
         if result is _UNSET:
             raise MCPConnectionError(
-                f"MCP list_tools call completed without a result "
-                f"(likely transport cancellation or task group teardown)",
+                "MCP list_tools call completed without a result "
+                "(likely transport cancellation or task group teardown)",
                 context={"url": self.url},
             )
         return [t.name for t in result.tools]

@@ -200,10 +200,10 @@ class TestDashboardDoesNotImportStore:
     """Strong regression guard: dashboard/server.py must not import the Store layer."""
 
     def test_server_module_does_not_import_store(self):
-        import cortex.dashboard.server as server_mod
-
         # Inspect the module's source for forbidden imports
         import inspect
+
+        import cortex.dashboard.server as server_mod
 
         src = inspect.getsource(server_mod)
         # The dashboard should NOT import any of these

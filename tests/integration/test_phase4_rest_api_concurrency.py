@@ -19,8 +19,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -89,9 +89,10 @@ def _spawn_mcp_http_server(
     )
     # Wait until the MCP HTTP endpoint is up by polling a known admin
     # tool via the REST-API-independent ``CortexMCPClient`` wrapper.
-    from cortex.transport.mcp.client import CortexMCPClient
     import asyncio
     import threading
+
+    from cortex.transport.mcp.client import CortexMCPClient
 
     deadline = time.time() + 15
     ready = [False]
@@ -223,7 +224,7 @@ class TestRestApiAndMcpHttpCoexist:
             method="POST",
             headers={"X-API-Key": "dev"},
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
             body = _json.loads(resp.read())
             assert isinstance(body, list)
@@ -245,13 +246,13 @@ class TestRestApiAndMcpHttpCoexist:
             method="POST",
             headers={"X-API-Key": "dev"},
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             assert resp.status == 200
             body = _json.loads(resp.read())
             new_id = body["id"]
 
         # Read back via direct MCP client
-        client = CortexMCPClient(mcp_url, timeout_seconds=5.0)
+        client = CortexMCPClient(mcp_url, timeout_seconds=30.0)
 
         async def _read():
             return await client.read(new_id)

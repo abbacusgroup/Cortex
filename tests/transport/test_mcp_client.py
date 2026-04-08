@@ -24,7 +24,6 @@ from cortex.transport.mcp.client import (
     _unwrap_call_tool_result,
 )
 
-
 # ─── _unwrap_call_tool_result helpers ─────────────────────────────────────
 
 

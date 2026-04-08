@@ -18,7 +18,6 @@ from cortex.core.config import CortexConfig
 from cortex.ontology.resolver import find_ontology
 from cortex.transport.api.server import create_api
 from cortex.transport.mcp.server import create_mcp_server
-
 from tests.conftest import FakeMCPClient
 
 ONTOLOGY_PATH = find_ontology()

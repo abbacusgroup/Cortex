@@ -12,7 +12,6 @@ These tests verify Phase 1 of the Oxigraph lock fix:
 from __future__ import annotations
 
 import json
-import multiprocessing
 import os
 import subprocess
 import sys
@@ -28,7 +27,6 @@ from cortex.db.graph_store import (
     _pid_alive,
     _read_marker,
 )
-
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -170,7 +168,7 @@ class TestLockFailureRaisesStoreLockedError:
             proc.terminate()
             proc.wait(timeout=5)
 
-    def test_does_NOT_silently_fall_back_to_in_memory(self, tmp_path: Path):
+    def test_does_NOT_silently_fall_back_to_in_memory(self, tmp_path: Path):  # noqa: N802
         """Regression: the old code silently created an in-memory store on lock fail.
 
         This test asserts the new code raises instead.
@@ -444,7 +442,7 @@ class TestMarkerEdgeCases:
     opens, regression guard against accidental os.kill() calls.
     """
 
-    def test_marker_NOT_written_if_open_fails_for_non_lock_reason(
+    def test_marker_NOT_written_if_open_fails_for_non_lock_reason(  # noqa: N802
         self, tmp_path: Path
     ):
         """If ``ox.Store(path)`` raises for a non-lock reason (e.g. permission
@@ -1052,7 +1050,6 @@ class TestAutoRecoverStaleLock:
         `_auto_recover_stale_lock`. The original StoreLockedError should
         be raised without any file cleanup.
         """
-        import pyoxigraph as ox_mod
 
         import cortex.db.graph_store as gs_mod
 
@@ -1071,8 +1068,6 @@ class TestAutoRecoverStaleLock:
             return call_count["n"] >= 2
 
         monkeypatch.setattr(gs_mod, "_pid_alive", racy_pid_alive)
-
-        original_store_cls = ox_mod.Store
 
         def always_locked(path_arg: str):
             raise OSError(
@@ -1135,7 +1130,6 @@ class TestAutoRecoverStaleLock:
         """When auto-recovery does NOT fire (e.g. pid_reuse case), the error
         message must still direct users at ``cortex doctor unlock``.
         """
-        import pyoxigraph as ox_mod
 
         import cortex.db.graph_store as gs_mod
 

@@ -87,7 +87,12 @@ def _get_mcp_client() -> Any:
     from cortex.transport.mcp.client import CortexMCPClient
 
     config = load_config()
-    _mcp_client = CortexMCPClient(config.mcp_server_url, timeout_seconds=10.0)
+    # Bundle 9.1: 30s headroom for slow CI hardware running real capture
+    # pipelines (embedding model inference + LLM calls can take 15-25s).
+    # The probe client at 3s (_get_probe_client) still gives fast-fail
+    # detection for unreachable/hung servers, so users never actually
+    # wait 30s just to find out the server is down.
+    _mcp_client = CortexMCPClient(config.mcp_server_url, timeout_seconds=30.0)
     return _mcp_client
 
 
@@ -204,11 +209,16 @@ def _probe_mcp_lazy() -> None:
             err=True,
         )
         typer.secho(f"  {e}", fg=typer.colors.RED, err=True)
+        direct_hint = (
+            f"    cortex --direct {' '.join(sys.argv[1:])}"
+            if len(sys.argv) > 1
+            else "    cortex --direct ..."
+        )
         typer.echo(
             "  Either start the server in another terminal:\n"
             "    cortex serve --transport mcp-http --host 127.0.0.1 --port 1314\n"
             "  Or bypass it for this command with --direct:\n"
-            "    cortex --direct " + " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "    cortex --direct ...",
+            f"{direct_hint}",
             err=True,
         )
         raise typer.Exit(1)
@@ -841,7 +851,10 @@ def serve(
     transport: str = typer.Option(
         "stdio",
         "--transport",
-        help="Transport: stdio (default, for Claude Code), mcp-http (HTTP MCP server), or http (REST API)",
+        help=(
+            "Transport: stdio (default, for Claude Code), "
+            "mcp-http (HTTP MCP server), or http (REST API)"
+        ),
     ),
     parent_watchdog: bool = typer.Option(
         False,

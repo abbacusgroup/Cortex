@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import click.exceptions
 import pytest
 from typer.testing import CliRunner
 
