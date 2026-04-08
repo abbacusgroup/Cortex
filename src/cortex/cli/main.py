@@ -825,11 +825,44 @@ def serve(
         import uvicorn
 
         from cortex.transport.api.server import create_api
+        from cortex.transport.mcp.client import MCPClientError
+
+        cfg = load_config()
+        # Phase 4: the REST API is now a thin MCP HTTP client. Probe the
+        # MCP server at startup and fail fast with an actionable error if
+        # it's unreachable or missing required tools. Mirrors the
+        # dashboard startup probe.
         try:
-            api = create_api()
-        except StoreLockedError as e:
-            typer.secho(str(e), fg=typer.colors.RED, err=True)
+            available = _probe_mcp_server(cfg.mcp_server_url)
+        except MCPClientError as e:
+            typer.secho(
+                f"Cannot reach Cortex MCP server at {cfg.mcp_server_url}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.secho(f"  {e}", fg=typer.colors.RED, err=True)
+            typer.echo(
+                "  Start it in another terminal:\n"
+                "    cortex serve --transport mcp-http --host 127.0.0.1 --port 1314",
+                err=True,
+            )
             raise typer.Exit(1)
+        missing = _REQUIRED_MCP_TOOLS - available
+        if missing:
+            typer.secho(
+                f"MCP server at {cfg.mcp_server_url} is missing required "
+                f"tools: {', '.join(sorted(missing))}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.echo(
+                "  The MCP server may be from a different Cortex version. "
+                "Restart it from the current working directory.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        api = create_api(cfg)
         uvicorn.run(api, host=host, port=port)
     else:
         typer.echo(

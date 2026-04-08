@@ -266,7 +266,19 @@ class CortexMCPClient:
         obj_type: str = "idea",
         project: str = "",
         tags: str = "",
+        template: str = "",
+        run_pipeline: bool = True,
+        summary: str = "",
+        entities: str = "",
+        properties: str = "",
     ) -> dict[str, Any]:
+        """Capture a knowledge object.
+
+        The extra kwargs (``template``, ``run_pipeline``, ``summary``,
+        ``entities``, ``properties``) mirror the ``cortex_capture`` MCP
+        tool and the REST API ``/capture`` endpoint so every caller can
+        ship the same shape of request.
+        """
         return await self._call(
             "cortex_capture",
             {
@@ -275,8 +287,58 @@ class CortexMCPClient:
                 "obj_type": obj_type,
                 "project": project,
                 "tags": tags,
+                "template": template,
+                "run_pipeline": run_pipeline,
+                "summary": summary,
+                "entities": entities,
+                "properties": properties,
             },
         )
+
+    async def link(
+        self, from_id: str, rel_type: str, to_id: str
+    ) -> dict[str, Any]:
+        """Create a typed relationship between two knowledge objects."""
+        return await self._call(
+            "cortex_link",
+            {"from_id": from_id, "rel_type": rel_type, "to_id": to_id},
+        )
+
+    async def feedback(
+        self, obj_id: str, relevant: bool = True
+    ) -> dict[str, Any]:
+        """Record explicit relevance feedback for a knowledge object."""
+        return await self._call(
+            "cortex_feedback", {"obj_id": obj_id, "relevant": relevant}
+        )
+
+    async def classify(
+        self,
+        obj_id: str,
+        summary: str = "",
+        obj_type: str = "",
+        entities: str = "",
+        properties: str = "",
+        tags: str = "",
+        project: str = "",
+    ) -> dict[str, Any]:
+        """Classify or reclassify an existing knowledge object."""
+        return await self._call(
+            "cortex_classify",
+            {
+                "obj_id": obj_id,
+                "summary": summary,
+                "obj_type": obj_type,
+                "entities": entities,
+                "properties": properties,
+                "tags": tags,
+                "project": project,
+            },
+        )
+
+    async def delete(self, obj_id: str) -> dict[str, Any]:
+        """Delete a knowledge object (admin tool)."""
+        return await self._call("cortex_delete", {"obj_id": obj_id})
 
     async def list_objects(
         self, doc_type: str = "", project: str = "", limit: int = 50
