@@ -101,10 +101,14 @@ def _get_probe_client() -> Any:
 
     Bundle 9 / D.2 fix: the probe needs to be cheap and fail fast — every
     extra second of timeout is felt by the user when the server is hung.
-    A 3s budget is enough for a healthy probe (``list_tools`` is one
-    cheap RTT) but bounds the user's wait against a SIGSTOP'd /
-    network-partitioned server. The main singleton client keeps its 10s
-    default for slow tools like ``search`` and ``capture``.
+    A 10s budget is fast enough for a healthy probe (``list_tools`` is
+    one cheap RTT even on slow CI hardware where the server is still
+    warming embedding models) but bounds the user's wait against a
+    SIGSTOP'd / network-partitioned server to well under the 30s
+    singleton timeout. Bundle 9.3: bumped 3s → 10s after CI revealed
+    that cold-MCP-server probes on GitHub Actions macOS runners can
+    take 4-7s during the sentence-transformers warm-up window, which
+    was flaking the integration tests.
 
     Tests patch this function to inject a fake client (same monkeypatch
     pattern they use for ``_get_mcp_client``).
@@ -112,7 +116,7 @@ def _get_probe_client() -> Any:
     from cortex.transport.mcp.client import CortexMCPClient
 
     config = load_config()
-    return CortexMCPClient(config.mcp_server_url, timeout_seconds=3.0)
+    return CortexMCPClient(config.mcp_server_url, timeout_seconds=10.0)
 
 
 def _run_async(coro: Any) -> Any:
