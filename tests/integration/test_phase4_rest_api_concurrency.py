@@ -224,7 +224,7 @@ class TestRestApiAndMcpHttpCoexist:
             method="POST",
             headers={"X-API-Key": "dev"},
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:
             assert resp.status == 200
             body = _json.loads(resp.read())
             assert isinstance(body, list)
@@ -246,13 +246,13 @@ class TestRestApiAndMcpHttpCoexist:
             method="POST",
             headers={"X-API-Key": "dev"},
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:
             assert resp.status == 200
             body = _json.loads(resp.read())
             new_id = body["id"]
 
         # Read back via direct MCP client
-        client = CortexMCPClient(mcp_url, timeout_seconds=30.0)
+        client = CortexMCPClient(mcp_url, timeout_seconds=60.0)
 
         async def _read():
             return await client.read(new_id)

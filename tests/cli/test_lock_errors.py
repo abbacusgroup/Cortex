@@ -199,9 +199,20 @@ class TestServeMcpHttpTransport:
             mock_run_stdio.assert_called_once()
 
     def test_http_transport_still_runs_rest_api(self):
-        """Regression: --transport http still starts the REST API, NOT the MCP HTTP server."""
+        """Regression: --transport http still starts the REST API, NOT the MCP HTTP server.
+
+        Bundle 9.1 / CI fix: ``cortex serve --transport http`` now probes
+        the MCP HTTP server at startup (Phase 4 convergence). Without a
+        running MCP server on CI the probe fails and the command exits 1.
+        Mock ``_probe_mcp_server`` so the test exercises only the ``http``
+        transport wiring.
+        """
         with patch("cortex.transport.api.server.create_api") as mock_create_api, \
-             patch("uvicorn.run") as mock_uvicorn_run:
+             patch("uvicorn.run") as mock_uvicorn_run, \
+             patch(
+                 "cortex.cli.main._probe_mcp_server",
+                 return_value=set(cli_mod._REQUIRED_MCP_TOOLS),
+             ):
             mock_create_api.return_value = "fake_api"
             result = runner.invoke(app, ["serve", "--transport", "http"])
             assert result.exit_code == 0
