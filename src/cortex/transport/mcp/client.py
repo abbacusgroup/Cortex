@@ -63,6 +63,10 @@ class MCPToolError(MCPClientError):
 # ─── Helpers ───────────────────────────────────────────────────────────────
 
 
+# Sentinel for _call() — see comment in _call for why this exists.
+_UNSET: Any = object()
+
+
 @asynccontextmanager
 async def _http_client_session(url: str, timeout_seconds: float):
     """Bridge old (timeout=N) → new (http_client=...) API.
@@ -137,6 +141,13 @@ class CortexMCPClient:
 
     async def _call(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
         """Call a single MCP tool and return its unwrapped result."""
+        # Defensive sentinel: under rare concurrency conditions a task
+        # group inside ClientSession.__aexit__ may suppress an inner error
+        # and exit the ``async with`` without raising. Without this
+        # sentinel, control flow would reach the ``return`` below with
+        # ``result`` unbound and crash with ``UnboundLocalError``. We
+        # surface a clean MCPConnectionError instead.
+        result: Any = _UNSET
         try:
             async with _http_client_session(
                 self.url, self._timeout_seconds
@@ -176,6 +187,12 @@ class CortexMCPClient:
                 context={"url": self.url},
                 cause=e,
             )
+        if result is _UNSET:
+            raise MCPConnectionError(
+                f"MCP call to {name} completed without a result "
+                f"(likely transport cancellation or task group teardown)",
+                context={"url": self.url, "tool": name},
+            )
         return _unwrap_call_tool_result(name, result)
 
     async def list_tools(self) -> list[str]:
@@ -183,6 +200,7 @@ class CortexMCPClient:
 
         Used at startup to verify the server is the right version.
         """
+        result: Any = _UNSET
         try:
             async with _http_client_session(
                 self.url, self._timeout_seconds
@@ -209,6 +227,12 @@ class CortexMCPClient:
                 f"MCP transport error: {e}",
                 context={"url": self.url},
                 cause=e,
+            )
+        if result is _UNSET:
+            raise MCPConnectionError(
+                f"MCP list_tools call completed without a result "
+                f"(likely transport cancellation or task group teardown)",
+                context={"url": self.url},
             )
         return [t.name for t in result.tools]
 

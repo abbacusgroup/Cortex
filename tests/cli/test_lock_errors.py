@@ -270,6 +270,102 @@ class TestDashboardStartupProbe:
         assert "missing" in combined.lower()
         assert "cortex_capture" in combined or "cortex_list_entities" in combined
 
+    def test_probe_times_out_under_reasonable_bound(self, monkeypatch):
+        """Bundle 5 / A12: the startup probe must finish within a bounded
+        time — no hangs on dead URLs. The probe currently has 3 retries
+        with 1s spacing between them. With a fast-failing probe mock, the
+        whole invocation should complete in well under 10s.
+        """
+        import time as _time
+
+        from cortex.transport.mcp.client import MCPConnectionError
+
+        def fail_probe(url, **kw):
+            # Simulate an immediate-fail probe (this mock stands in for the
+            # internal retry loop; the CLI's _probe_mcp_server has retries
+            # of its own, which test_probe_retries_three_times_with_1s_spacing
+            # covers directly).
+            raise MCPConnectionError("simulated unreachable")
+
+        monkeypatch.setattr("cortex.cli.main._probe_mcp_server", fail_probe)
+        start = _time.time()
+        result = runner.invoke(app, ["dashboard"])
+        duration = _time.time() - start
+        assert result.exit_code == 1
+        assert duration < 10.0, (
+            f"dashboard startup took {duration:.2f}s — probe must be bounded"
+        )
+
+    def test_probe_retries_three_times_with_1s_spacing(self, monkeypatch):
+        """Bundle 5 / A13: _probe_mcp_server makes exactly 3 attempts with
+        ≥1s spacing between them. Patches at the ``CortexMCPClient.list_tools``
+        layer so we exercise the real retry loop inside _probe_mcp_server.
+
+        NOTE: the retry_delay is 1.0s by default, so this test takes ≥2s to
+        finish (2 delays between 3 attempts).
+        """
+        import time as _time
+
+        timestamps: list[float] = []
+
+        async def fail_list_tools(self):
+            # Record the time, then raise a client error directly. The
+            # ``_probe_mcp_server`` retry loop catches ``MCPClientError`` and
+            # sleeps before retrying, which is what this test verifies.
+            timestamps.append(_time.time())
+            from cortex.transport.mcp.client import MCPConnectionError
+            raise MCPConnectionError("nope")
+
+        from cortex.transport.mcp.client import CortexMCPClient
+
+        monkeypatch.setattr(
+            CortexMCPClient,
+            "list_tools",
+            fail_list_tools,
+        )
+
+        from cortex.cli.main import _probe_mcp_server
+        from cortex.transport.mcp.client import MCPClientError
+
+        with pytest.raises(MCPClientError):
+            _probe_mcp_server(
+                "http://127.0.0.1:1/mcp", retries=3, retry_delay=1.0
+            )
+        assert len(timestamps) == 3, (
+            f"expected exactly 3 retry attempts, got {len(timestamps)}"
+        )
+        deltas = [
+            timestamps[i + 1] - timestamps[i]
+            for i in range(len(timestamps) - 1)
+        ]
+        for delta in deltas:
+            assert delta >= 0.9, (
+                f"retry spacing {delta:.3f}s below the 1s minimum "
+                f"(all deltas: {deltas})"
+            )
+
+    def test_dashboard_clean_error_on_mcp_500_response(self, monkeypatch):
+        """Bundle 5 / A14: if the MCP server is reachable but returns a 500
+        on the probe handshake (e.g. an unhealthy backend), the dashboard
+        CLI must exit cleanly with an actionable error, not a traceback.
+        """
+        from cortex.transport.mcp.client import MCPServerError
+
+        def fake_probe(url, **kw):
+            raise MCPServerError(
+                f"MCP server at {url} returned 500",
+                context={"url": url, "status": 500},
+            )
+
+        monkeypatch.setattr("cortex.cli.main._probe_mcp_server", fake_probe)
+        result = runner.invoke(app, ["dashboard"])
+        assert result.exit_code == 1
+        combined = result.output + (result.stderr or "")
+        # Error should mention the MCP server failure
+        assert "MCP" in combined
+        assert "500" in combined or "unreach" in combined.lower() or "returned" in combined.lower()
+        assert "Traceback" not in combined
+
 
 class TestApiServerLockError:
     """Bundle 1.4: ``cortex serve --transport http`` (the REST API path)
