@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Bundle 9 (bug-hunt fixes + CI)
+
+- **GitHub Actions CI** (`.github/workflows/test.yml`): Linux job runs
+  ruff + `pytest -n auto` on every push and pull request; macOS job
+  runs the full suite including the darwin-only integration tests on
+  `main` pushes, the nightly schedule, and manual `workflow_dispatch`.
+  Sets `NO_COLOR`, `COLUMNS=200`, and `CORTEX_PROBE_TIMEOUT_SECONDS`
+  env vars to stabilize tests on the slower GitHub Actions macOS
+  runner. `pytest-xdist` and `pytest-forked` were added to the
+  `[dependency-groups].dev` so `uv sync --group dev` installs them.
+- **`cortex serve --parent-watchdog`**: hidden flag used by
+  `cortex dashboard --spawn-mcp` to make the child MCP server exit
+  cleanly when the parent dashboard dies, including on SIGKILL.
+  Implemented as a daemon thread in the child that blocks on
+  `sys.stdin.read()` and calls `os._exit(0)` when the OS closes the
+  pipe. `_spawn_mcp_subprocess` in `cli/main.py` passes `stdin=PIPE`
+  and the flag automatically. Closes the A.3 orphan gap discovered
+  during the Bundle 9 bug hunt.
+- **`CORTEX_PROBE_TIMEOUT_SECONDS` env var**: controls the timeout
+  passed to `_get_probe_client()` in `cli/main.py`. Defaults to 10s
+  for local use; the CI workflow sets it to 30s because the GitHub
+  Actions macOS runner needs more headroom on cold-start tool calls
+  that also warm up the embedding model.
+- **`_quiet_noisy_loggers()`** in `core/logging.py`: quiets five
+  chatty MCP SDK loggers (`mcp.server.lowlevel.server`,
+  `mcp.server.streamable_http`, `httpx`, `httpcore.http11`,
+  `httpcore.connection`) to WARNING during normal operation. Set
+  `CORTEX_DEBUG_MCP_SDK=1` to opt back into the verbose output for
+  troubleshooting.
+
+### Changed — Bundle 9
+
+- **`CortexMCPClient` default timeout** bumped from `5.0s` to `10.0s`.
+  The 5s default was too narrow against measured p95 of ~1.4s for a
+  warm tool call, and flaked under `pytest -n auto` when CPU
+  contention pushed real RTTs past the budget.
+- **`_get_probe_client()` helper** in `cli/main.py` gives the startup
+  probe its own (shorter) timeout budget separate from the tool-call
+  client — fast-fail on local use, ample headroom on CI via
+  `CORTEX_PROBE_TIMEOUT_SECONDS`.
+- **REST API auth hardening** in `verify_api_key`: now uses
+  `hmac.compare_digest` to defeat timing-oracle attacks and
+  `str.strip()` on the header value so whitespace-padded keys
+  compare as equal. A separate re-check rejects keys that become
+  empty after strip so whitespace-only keys cannot leak through
+  dev mode.
+- **`FakePopen[bytes]` subscript workaround**: `tests/cli/test_lock_errors.py`
+  pre-imports `cortex.transport.mcp.client` at module load so the
+  upstream MCP SDK's `win32/utilities.py` class-definition-time
+  subscript runs before any test monkeypatches `subprocess.Popen`.
+  Only load-bearing under `pytest --forked`; remove with care.
+- **Phase 2 concurrency test isolation**: three test classes
+  (`TestConcurrentClients`, `TestMcpHttpServerCrashRecovery`,
+  `TestDashboardDoesNotOpenGraphDb`) now carry
+  `@pytest.mark.xdist_group("phase2_concurrency")` so xdist
+  serializes them within a single worker and avoids CPU contention
+  that blew past the CortexMCPClient timeouts.
+
+### Fixed — Bundle 9
+
+- **A.3 dashboard `--spawn-mcp` orphan on SIGKILL**: hard-killing the
+  dashboard used to leave the spawned MCP child alive (its `atexit`
+  handler never ran), and the orphan kept holding `graph.db.lock`.
+  The `--parent-watchdog` flag above closes this by exiting within
+  ~1s of the parent pipe closing. Real-subprocess test at
+  `tests/cli/test_lock_errors.py::TestParentWatchdog`.
+
 ### Added — Bundle 8 (quality-of-life hardening)
 
 - **Auto-recovery of stale locks in `GraphStore.__init__`**: when a lock
@@ -161,6 +228,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | After Bundle 5 (validation closure)                 |   783 |
 | After Phase 4 (Bundle 7, REST API as MCP client)    |   796 |
 | After Bundle 8 (doctor unlock + spawn-mcp + plists) |   833 |
+| After Bundle 9 (bug-hunt fixes + CI)                |   841 |
 
 ### Migration guide
 
