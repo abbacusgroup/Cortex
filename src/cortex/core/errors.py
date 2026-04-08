@@ -161,6 +161,10 @@ class StoreLockedError(StoreError):
                 parts.append(self._cleanup_hint())
             else:
                 parts.append(f"Stop the conflicting process or kill PID {self.holder_pid}.")
+        elif self.context.get("marker_unreadable"):
+            # The main message already explained the situation — don't add a
+            # redundant "no marker file" tail.
+            pass
         else:
             parts.append("Lock holder unknown (no marker file).")
         return " ".join(parts)

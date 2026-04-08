@@ -582,6 +582,28 @@ class TestMarkerEdgeCases:
         finally:
             first.close()
 
+    def test_unreadable_marker_reports_specific_error(self, tmp_path: Path):
+        """When the marker file exists but is unreadable (chmod 000), the
+        error message must distinguish this from the 'no marker file' case
+        so the user knows to check file permissions.
+        """
+        from cortex.db.graph_store import _raise_locked_error
+
+        db = tmp_path / "g.db"
+        marker = _marker_path_for(db)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"pid": 12345, "cmdline": "x"}))
+        original_mode = marker.stat().st_mode
+        marker.chmod(0o000)
+        try:
+            with pytest.raises(StoreLockedError) as exc_info:
+                _raise_locked_error(db, marker, OSError("lock hold"))
+            err = exc_info.value
+            assert "unreadable" in str(err).lower()
+            assert "permissions" in str(err).lower()
+        finally:
+            marker.chmod(original_mode)
+
     def test_lock_detection_never_calls_os_kill(self):
         """Regression guard: the lock-detection code path must NEVER call
         ``os.kill(pid, ...)`` to verify a holder, even when checking PID
