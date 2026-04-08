@@ -199,7 +199,7 @@ class LLMClient:
                 f"LLM call failed: {e}",
                 context={"model": self._model},
                 cause=e,
-            )
+            ) from e
 
     @staticmethod
     def _parse_json(text: str) -> Any:
@@ -214,7 +214,7 @@ class LLMClient:
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
-            raise LLMError(f"Failed to parse LLM JSON: {e}", cause=e)
+            raise LLMError(f"Failed to parse LLM JSON: {e}", cause=e) from e
 
     @staticmethod
     def _validate_classification(data: dict[str, Any]) -> dict[str, Any]:

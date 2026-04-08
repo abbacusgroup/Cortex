@@ -168,7 +168,7 @@ class ContentStore:
             )
             self._db.commit()
         except sqlite3.IntegrityError as e:
-            raise StoreError(f"Document already exists: {doc_id}", cause=e)
+            raise StoreError(f"Document already exists: {doc_id}", cause=e) from e
         return doc_id
 
     def get(self, doc_id: str) -> dict[str, Any] | None:
