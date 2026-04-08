@@ -101,22 +101,31 @@ def _get_probe_client() -> Any:
 
     Bundle 9 / D.2 fix: the probe needs to be cheap and fail fast — every
     extra second of timeout is felt by the user when the server is hung.
-    A 10s budget is fast enough for a healthy probe (``list_tools`` is
-    one cheap RTT even on slow CI hardware where the server is still
-    warming embedding models) but bounds the user's wait against a
-    SIGSTOP'd / network-partitioned server to well under the 30s
-    singleton timeout. Bundle 9.3: bumped 3s → 10s after CI revealed
-    that cold-MCP-server probes on GitHub Actions macOS runners can
-    take 4-7s during the sentence-transformers warm-up window, which
-    was flaking the integration tests.
+    10s is fast enough for a healthy probe (``list_tools`` is one cheap
+    RTT) but bounds the user's wait against a SIGSTOP'd /
+    network-partitioned server to well under the 30s singleton timeout.
+
+    Bundle 9.4: the probe timeout is overridable via the
+    ``CORTEX_PROBE_TIMEOUT_SECONDS`` environment variable. CI sets this
+    to 30s because the full ``cortex capture`` subprocess path on slow
+    runners spends 5-8s on Python startup + cortex import chain before
+    the probe even runs, leaving less than 10s for the actual probe
+    RTT. Local users keep the 10s default for fast-fail UX.
 
     Tests patch this function to inject a fake client (same monkeypatch
     pattern they use for ``_get_mcp_client``).
     """
+    import os as _os
+
     from cortex.transport.mcp.client import CortexMCPClient
 
     config = load_config()
-    return CortexMCPClient(config.mcp_server_url, timeout_seconds=10.0)
+    timeout_str = _os.environ.get("CORTEX_PROBE_TIMEOUT_SECONDS", "").strip()
+    try:
+        timeout = float(timeout_str) if timeout_str else 10.0
+    except ValueError:
+        timeout = 10.0
+    return CortexMCPClient(config.mcp_server_url, timeout_seconds=timeout)
 
 
 def _run_async(coro: Any) -> Any:
