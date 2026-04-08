@@ -164,20 +164,20 @@ class CortexMCPClient:
                 f"Cannot reach MCP server at {self.url}",
                 context={"url": self.url},
                 cause=e,
-            )
+            ) from e
         except httpx.TimeoutException as e:
             raise MCPTimeoutError(
                 f"MCP server at {self.url} timed out after {self._timeout_seconds}s",
                 context={"url": self.url, "timeout": self._timeout_seconds},
                 cause=e,
-            )
+            ) from e
         except httpx.HTTPStatusError as e:
             raise MCPServerError(
                 f"MCP server at {self.url} returned {e.response.status_code}",
                 context={"url": self.url, "status": e.response.status_code},
                 cause=e,
-            )
-        except (MCPClientError,):
+            ) from e
+        except MCPClientError:
             raise
         except Exception as e:
             # Wrap any other transport-level error so callers don't have to
@@ -186,7 +186,7 @@ class CortexMCPClient:
                 f"MCP transport error talking to {self.url}: {e}",
                 context={"url": self.url},
                 cause=e,
-            )
+            ) from e
         if result is _UNSET:
             raise MCPConnectionError(
                 f"MCP call to {name} completed without a result "
@@ -213,21 +213,21 @@ class CortexMCPClient:
                 f"Cannot reach MCP server at {self.url}",
                 context={"url": self.url},
                 cause=e,
-            )
+            ) from e
         except httpx.TimeoutException as e:
             raise MCPTimeoutError(
                 f"MCP server at {self.url} timed out",
                 context={"url": self.url},
                 cause=e,
-            )
-        except (MCPClientError,):
+            ) from e
+        except MCPClientError:
             raise
         except Exception as e:
             raise MCPConnectionError(
                 f"MCP transport error: {e}",
                 context={"url": self.url},
                 cause=e,
-            )
+            ) from e
         if result is _UNSET:
             raise MCPConnectionError(
                 "MCP list_tools call completed without a result "

@@ -115,7 +115,7 @@ def mcp_http_server(tmp_path: Path) -> Iterator[tuple[str, subprocess.Popen]]:
                 f"MCP server at {url} failed to start.\n"
                 f"--- subprocess stdout ---\n{stdout}\n"
                 f"--- subprocess stderr ---\n{stderr}"
-            )
+            ) from None
         yield url, proc, env, tmp_path
     finally:
         proc.terminate()

@@ -166,7 +166,7 @@ def _spawn_rest_api(
         raise TimeoutError(
             f"REST API at port {port} failed to start.\n"
             f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
-        )
+        ) from None
     return f"http://127.0.0.1:{port}", proc
 
 

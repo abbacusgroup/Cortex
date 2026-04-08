@@ -370,7 +370,7 @@ class GraphStore:
                         f"Failed to open graph DB at {path}: {e}",
                         context={"path": str(path)},
                         cause=e,
-                    )
+                    ) from e
 
                 # Build the candidate error so we can decide whether to
                 # attempt auto-recovery. High-confidence case: stale marker
@@ -382,7 +382,7 @@ class GraphStore:
                     and not locked_err.is_pid_reuse
                 )
                 if not recoverable:
-                    raise locked_err
+                    raise locked_err from e
 
                 if not _auto_recover_stale_lock(
                     path, marker_path, locked_err.holder_pid
@@ -390,7 +390,7 @@ class GraphStore:
                     # The re-check showed the PID came back alive — treat
                     # the lock as legitimately held and raise the original
                     # error unchanged.
-                    raise locked_err
+                    raise locked_err from e
 
                 # Retry the open now that we've cleaned up.
                 try:
@@ -481,7 +481,7 @@ class GraphStore:
                 f"Failed to parse ontology: {e}",
                 context={"path": str(ontology_path)},
                 cause=e,
-            )
+            ) from e
 
         loaded = len(self._store) - before
         self._ontology_loaded = True
@@ -963,7 +963,7 @@ class GraphStore:
                 f"SPARQL syntax error: {e}",
                 context={"query": sparql},
                 cause=e,
-            )
+            ) from e
         variables = solutions.variables
         rows = []
         for row in solutions:

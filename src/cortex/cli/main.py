@@ -69,7 +69,7 @@ def _open_store_or_exit(config: CortexConfig) -> Store:
         return Store(config)
     except StoreLockedError as e:
         typer.secho(str(e), fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 # ─── Phase 3 helpers — MCP client routing ──────────────────────────────────
@@ -234,7 +234,7 @@ def _probe_mcp_lazy() -> None:
             f"{direct_hint}",
             err=True,
         )
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     missing = _REQUIRED_MCP_ROUTING_TOOLS - available
     if missing:
@@ -298,16 +298,16 @@ def _mcp_call_or_exit(coro_factory: Any) -> Any:
             "  Or bypass it with --direct.",
             err=True,
         )
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except MCPTimeoutError as e:
         typer.secho(f"MCP server timed out: {e}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except MCPServerError as e:
         typer.secho(f"MCP server error: {e}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except MCPToolError as e:
         typer.secho(f"MCP tool error: {e}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 def _get_store(*, must_init: bool = True) -> Store:
@@ -327,7 +327,7 @@ def _get_store(*, must_init: bool = True) -> Store:
     except FileNotFoundError:
         if must_init:
             typer.echo("Error: Cortex not initialized. Run `cortex init` first.", err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
     _store = store
     return store
@@ -364,7 +364,7 @@ def init(
         ontology_path = find_ontology()
     except FileNotFoundError:
         typer.echo("Error: Ontology file not found", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     triples = store.graph.load_ontology(ontology_path)
 
@@ -893,7 +893,7 @@ def serve(
             run_stdio()
         except StoreLockedError as e:
             typer.secho(str(e), fg=typer.colors.RED, err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
     elif transport == "mcp-http":
         from cortex.transport.mcp.server import run_http
         typer.echo(f"Cortex MCP (streamable-http) at http://{host}:{port}/mcp")
@@ -903,7 +903,7 @@ def serve(
             run_http(host=host, port=port)
         except StoreLockedError as e:
             typer.secho(str(e), fg=typer.colors.RED, err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
         except PermissionError:
             typer.secho(
                 f"Permission denied binding to port {port}. Use a port >= 1024 "
@@ -911,7 +911,7 @@ def serve(
                 fg=typer.colors.RED,
                 err=True,
             )
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
         except OSError as e:
             # Catches "address already in use", DNS errors, other network
             # binding failures. Produces a clean message instead of a traceback.
@@ -920,7 +920,7 @@ def serve(
                 fg=typer.colors.RED,
                 err=True,
             )
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
     elif transport == "http":
         import uvicorn
 
@@ -946,7 +946,7 @@ def serve(
                 "    cortex serve --transport mcp-http --host 127.0.0.1 --port 1314",
                 err=True,
             )
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
         missing = _REQUIRED_MCP_TOOLS - available
         if missing:
             typer.secho(
@@ -1285,7 +1285,7 @@ def dashboard(
                 "  Or rerun with --spawn-mcp to have the dashboard launch it for you.",
                 err=True,
             )
-            raise typer.Exit(1)
+            raise typer.Exit(1) from probe_err
 
         # --spawn-mcp: launch the MCP server as a subprocess and wait.
         typer.secho(
@@ -1304,7 +1304,7 @@ def dashboard(
                 fg=typer.colors.RED,
                 err=True,
             )
-            raise typer.Exit(1)
+            raise typer.Exit(1) from spawn_err
 
         # Register cleanup so the child doesn't outlive the dashboard.
         def _terminate_spawned():
@@ -1339,7 +1339,7 @@ def dashboard(
                 err=True,
             )
             _terminate_spawned()
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
 
     missing = _REQUIRED_MCP_TOOLS - available
     if missing:
@@ -1571,7 +1571,7 @@ def doctor_unlock(
                     fg=typer.colors.RED,
                     err=True,
                 )
-                raise typer.Exit(1)
+                raise typer.Exit(1) from e
         if rocksdb_lock.exists():
             try:
                 rocksdb_lock.unlink(missing_ok=True)
@@ -1582,7 +1582,7 @@ def doctor_unlock(
                     fg=typer.colors.RED,
                     err=True,
                 )
-                raise typer.Exit(1)
+                raise typer.Exit(1) from e
         typer.secho(
             f"Force-unlocked. Removed: {', '.join(removed) or 'nothing'}",
             fg=typer.colors.YELLOW,

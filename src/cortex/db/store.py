@@ -88,7 +88,7 @@ class Store:
                 captured_at=created_at,
             )
         except Exception as e:
-            raise SyncError("Graph store write failed", cause=e)
+            raise SyncError("Graph store write failed", cause=e) from e
 
         # Write to SQLite
         try:
@@ -110,7 +110,7 @@ class Store:
         except Exception as e:
             # Rollback graph on SQLite failure
             self.graph.delete_object(obj_id)
-            raise SyncError("SQLite write failed, graph rolled back", cause=e)
+            raise SyncError("SQLite write failed, graph rolled back", cause=e) from e
 
         logger.debug("Created %s in both stores (type=%s)", obj_id, obj_type)
         return obj_id
@@ -140,7 +140,7 @@ class Store:
         except NotFoundError:
             raise
         except Exception as e:
-            raise SyncError("SQLite update failed", cause=e)
+            raise SyncError("SQLite update failed", cause=e) from e
 
         # Update graph (only string-valued properties)
         graph_updates = {k: str(v) for k, v in updates.items() if isinstance(v, str)}

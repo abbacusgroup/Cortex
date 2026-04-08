@@ -132,7 +132,7 @@ def mcp_http_server(tmp_path: Path) -> Iterator[tuple[str, subprocess.Popen]]:
                 f"MCP server at {url} failed to start.\n"
                 f"--- subprocess stdout ---\n{stdout}\n"
                 f"--- subprocess stderr ---\n{stderr}"
-            )
+            ) from None
         yield url, proc
     finally:
         proc.terminate()
@@ -455,7 +455,7 @@ def _spawn_mcp_http_server(
         raise TimeoutError(
             f"MCP server at {url} failed to start.\n"
             f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
-        )
+        ) from None
     return url, proc
 
 

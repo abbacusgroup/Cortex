@@ -145,7 +145,7 @@ def load_config(
                 f"Cannot create data directory: {resolved_dir}",
                 context={"path": str(resolved_dir)},
                 cause=e,
-            )
+            ) from e
 
     port_str = _get("port", str(DEFAULT_PORT))
     try:

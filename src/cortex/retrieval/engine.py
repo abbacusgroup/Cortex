@@ -108,7 +108,7 @@ class RetrievalEngine:
 
         # Compute combined scores
         results = []
-        for doc_id, cand in candidates.items():
+        for _doc_id, cand in candidates.items():
             scores = cand.get("scores", {})
             combined = sum(
                 scores.get(signal, 0.0) * self.weights.get(signal, 0.0)
@@ -188,7 +188,7 @@ class RetrievalEngine:
         """Compute cosine similarity between two vectors."""
         if len(a) != len(b):
             return 0.0
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=True))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(x * x for x in b))
         if norm_a == 0 or norm_b == 0:
