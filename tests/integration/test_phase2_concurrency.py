@@ -237,7 +237,7 @@ class TestCliConflictBehavior:
     ):
         import os
 
-        url, _proc = mcp_http_server
+        _url, _proc = mcp_http_server
         # Run `cortex init` against the SAME data dir the MCP server is using.
         env = os.environ.copy()
         env["CORTEX_DATA_DIR"] = str(tmp_path)

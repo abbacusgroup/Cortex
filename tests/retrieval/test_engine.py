@@ -199,7 +199,7 @@ class TestResultShape:
 
 class TestFilters:
     def test_project_filter_narrows_results(self, seeded_store):
-        store, ids = seeded_store
+        store, _ids = seeded_store
         engine = RetrievalEngine(store)
 
         # "python" appears in cortex project only
@@ -211,7 +211,7 @@ class TestFilters:
             assert r["project"] == "cortex"
 
     def test_type_filter_narrows_results(self, seeded_store):
-        store, ids = seeded_store
+        store, _ids = seeded_store
         engine = RetrievalEngine(store)
 
         results = engine.search(
@@ -280,7 +280,7 @@ class TestQueryLogging:
         assert params["query"] == "quantum"
 
     def test_query_log_records_result_ids(self, seeded_store):
-        store, ids = seeded_store
+        store, _ids = seeded_store
         engine = RetrievalEngine(store)
 
         results = engine.search("quantum")

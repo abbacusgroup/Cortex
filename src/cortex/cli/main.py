@@ -155,7 +155,7 @@ def _run_async(coro: Any) -> Any:
         new_loop = asyncio.new_event_loop()
         try:
             box[0] = new_loop.run_until_complete(coro)
-        except BaseException as e:  # noqa: BLE001
+        except BaseException as e:
             exc_box[0] = e
         finally:
             new_loop.close()
@@ -1190,7 +1190,7 @@ def _spawn_mcp_subprocess(url: str, data_dir: Path):
         stderr=stderr_f,
     )
 
-    # Poll readiness for up to ~15s total (5 retry cycles × 3s timeout each).
+    # Poll readiness for up to ~15s total (5 retry cycles x 3s timeout each).
     deadline = time.time() + 15.0
     last_error: Exception | None = None
     while time.time() < deadline:

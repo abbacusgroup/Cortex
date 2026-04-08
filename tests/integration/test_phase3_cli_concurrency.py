@@ -150,7 +150,7 @@ def _run_cli(env: dict, args: list[str], *, timeout: int = 120) -> subprocess.Co
 
 class TestCliRoutesThroughMcpServer:
     def test_cortex_status_via_mcp(self, mcp_http_server):
-        url, _proc, env, _tmp = mcp_http_server
+        _url, _proc, env, _tmp = mcp_http_server
         result = _run_cli(env, ["status"])
         assert result.returncode == 0, (
             f"cortex status failed: stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -160,7 +160,7 @@ class TestCliRoutesThroughMcpServer:
         assert "Triples:" in result.stdout
 
     def test_cortex_list_via_mcp(self, mcp_http_server):
-        url, _proc, env, _tmp = mcp_http_server
+        _url, _proc, env, _tmp = mcp_http_server
         result = _run_cli(env, ["list"])
         assert result.returncode == 0
         # Empty store: should print "No objects found."
@@ -168,7 +168,7 @@ class TestCliRoutesThroughMcpServer:
 
     def test_capture_then_read_then_list_round_trip(self, mcp_http_server):
         """Capture an object via MCP, then read it back, then list — all via MCP."""
-        url, _proc, env, _tmp = mcp_http_server
+        _url, _proc, env, _tmp = mcp_http_server
 
         # Capture
         cap = _run_cli(
@@ -200,7 +200,7 @@ class TestCliRoutesThroughMcpServer:
         assert "Phase 3 e2e test" in lst.stdout
 
     def test_search_finds_captured_object(self, mcp_http_server):
-        url, _proc, env, _tmp = mcp_http_server
+        _url, _proc, env, _tmp = mcp_http_server
         _run_cli(
             env,
             [
@@ -223,7 +223,7 @@ class TestDirectFlagInteraction:
         with the Phase 1 lock error. This documents that --direct bypasses
         MCP routing but NOT the actual graph DB lock.
         """
-        url, _proc, env, _tmp = mcp_http_server
+        _url, _proc, env, _tmp = mcp_http_server
         result = _run_cli(env, ["--direct", "list"])
         assert result.returncode == 1
         combined = result.stdout + result.stderr
@@ -260,7 +260,7 @@ class TestConcurrentCliCalls:
         """Fire 10 concurrent `cortex list` invocations against the same MCP
         server. All should succeed; no lock errors, no port issues.
         """
-        url, _proc, env, _tmp = mcp_http_server
+        _url, _proc, env, _tmp = mcp_http_server
 
         results: list[subprocess.CompletedProcess] = []
         threads: list[threading.Thread] = []

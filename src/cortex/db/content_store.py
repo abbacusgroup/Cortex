@@ -202,7 +202,7 @@ class ContentStore:
 
         updates["updated_at"] = datetime.now(UTC).isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [doc_id]
+        values = [*updates.values(), doc_id]
 
         self._db.execute(
             f"UPDATE documents SET {set_clause} WHERE id = ?", values
