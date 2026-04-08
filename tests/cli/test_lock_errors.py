@@ -16,6 +16,8 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
+import cortex.cli.main as cli_mod
+
 # Pre-load the mcp SDK before any test runs. The mcp SDK has
 # `mcp/os/win32/utilities.py` defining `class FallbackProcess` with a
 # class-level annotation `popen_obj: subprocess.Popen[bytes]` that gets
@@ -29,7 +31,6 @@ from typer.testing import CliRunner
 # import chain to run with the real ``subprocess.Popen``, fixing the
 # test under ``--forked`` without changing production code.
 import cortex.transport.mcp.client  # noqa: F401
-import cortex.cli.main as cli_mod
 from cortex.cli.main import app
 from cortex.db.graph_store import _marker_path_for
 
@@ -126,7 +127,7 @@ class TestCliLockErrors:
         assert "locked" in combined.lower()
         assert "Traceback" not in combined
 
-    def test_does_NOT_silently_succeed_with_empty_data(self, held_lock):
+    def test_does_NOT_silently_succeed_with_empty_data(self, held_lock):  # noqa: N802
         """Regression: the OLD code's silent in-memory fallback would let
         `cortex list` return zero results as if everything was fine. New code
         must fail loudly instead.
@@ -710,7 +711,7 @@ class TestDashboardSpawnMcp:
 
         monkeypatch.setattr(subprocess_mod, "Popen", FakePopen)
 
-        proc = main_mod._spawn_mcp_subprocess(
+        main_mod._spawn_mcp_subprocess(
             "http://127.0.0.1:9876/mcp", tmp_path
         )
         args = captured["args"]
@@ -794,7 +795,6 @@ class TestParentWatchdog:
         thread named ``cortex-parent-watchdog`` that we can find in
         ``threading.enumerate()``.
         """
-        import threading
 
         import cortex.cli.main as main_mod
 
@@ -812,7 +812,6 @@ class TestParentWatchdog:
         monkeypatch.setattr("sys.stdin.read", fake_read)
         monkeypatch.setattr("os._exit", fake_exit)
 
-        before = {t.name for t in threading.enumerate()}
         main_mod._start_parent_watchdog()
         # Give the thread a moment to start (and immediately exit our
         # patched stdin.read).

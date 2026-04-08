@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from cortex.core.config import CortexConfig
 from cortex.transport.mcp.server import (
-    ADMIN_TOOLS,
     _LOCALHOST_HOSTS,
+    ADMIN_TOOLS,
     create_mcp_server,
     run_http,
     run_stdio,

@@ -54,6 +54,15 @@ jobs:
         # remaining suite for speed; the ``phase2_concurrency`` group
         # ensures lock-test classes that spawn real subprocesses run
         # serialized within a single worker (Bundle 9 / F.1).
+        env:
+          # Bundle 9.1: disable Rich color output and force a wide
+          # terminal. GitHub Actions exports FORCE_COLOR which makes
+          # typer/click emit ANSI escape codes inside the captured
+          # help output, and the default narrow COLUMNS causes line
+          # wrapping that sometimes splits option names. NO_COLOR +
+          # COLUMNS=200 makes CliRunner output deterministic.
+          NO_COLOR: "1"
+          COLUMNS: "200"
         run: uv run pytest tests/ -q -n auto --tb=short
 
   test-macos:
@@ -80,4 +89,7 @@ jobs:
           uv sync --group dev
 
       - name: Run pytest (full suite, incl. macOS-only integration)
+        env:
+          NO_COLOR: "1"
+          COLUMNS: "200"
         run: uv run pytest tests/ -q -n auto --tb=short

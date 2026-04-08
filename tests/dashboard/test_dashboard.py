@@ -19,7 +19,6 @@ from starlette.testclient import TestClient
 from cortex.core.config import CortexConfig
 from cortex.dashboard.server import _sessions, create_dashboard
 from cortex.transport.mcp.server import create_mcp_server
-
 from tests.conftest import FakeMCPClient
 
 

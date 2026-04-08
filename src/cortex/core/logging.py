@@ -11,7 +11,6 @@ import os
 import sys
 from typing import Any
 
-
 # Bundle 9 / F.4: third-party loggers that flood stderr with per-request
 # INFO chatter when Cortex runs as ``cortex serve --transport mcp-http``.
 # Each session lifecycle event (Created new transport / Terminating

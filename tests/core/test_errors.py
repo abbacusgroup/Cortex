@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from cortex.core.errors import (
     AuthenticationError,
     ClassificationError,
@@ -21,8 +23,6 @@ from cortex.core.errors import (
     TransportError,
     ValidationError,
 )
-
-import pytest
 
 
 class TestCortexError:

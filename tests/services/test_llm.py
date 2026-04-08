@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from cortex.core.config import CortexConfig
 from cortex.core.errors import LLMError
 from cortex.services.llm import LLMClient
+
+# Bundle 9.1 / CI: ``litellm`` is an optional dependency (see
+# ``[project.optional-dependencies].llm`` in pyproject.toml). The dev
+# group does NOT install it, so CI and any minimal-install environment
+# won't have it. Tests that require real litellm capability are marked
+# with this skipif so they stay runnable in the llm-installed path and
+# skip cleanly elsewhere.
+_LITELLM_AVAILABLE = importlib.util.find_spec("litellm") is not None
+requires_litellm = pytest.mark.skipif(
+    not _LITELLM_AVAILABLE,
+    reason="litellm (optional dep) not installed; install with .[llm]",
+)
 
 
 @pytest.fixture()
@@ -23,6 +37,7 @@ class TestAvailability:
     def test_no_api_key_means_unavailable(self, client: LLMClient):
         assert client.available is False
 
+    @requires_litellm
     def test_with_model_and_key_is_available(self, tmp_path):
         cfg = CortexConfig(
             data_dir=tmp_path,
