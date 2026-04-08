@@ -1,6 +1,6 @@
 """Tests for the Cortex MCP HTTP client wrapper.
 
-The wrapper is mocked at the ``streamablehttp_client`` + ``ClientSession``
+The wrapper is mocked at the ``_http_client_session`` + ``ClientSession``
 boundary so tests don't need a running server. Used by both the dashboard
 and the CLI (Phase 3).
 """
@@ -20,6 +20,7 @@ from cortex.transport.mcp.client import (
     MCPServerError,
     MCPTimeoutError,
     MCPToolError,
+    _http_client_session,
     _unwrap_call_tool_result,
 )
 
@@ -96,7 +97,7 @@ class TestUnwrapResult:
 
 @pytest.fixture
 def fake_client_session():
-    """Fixture that patches both streamablehttp_client and ClientSession.
+    """Fixture that patches both _http_client_session and ClientSession.
 
     Returns a tuple ``(session_mock, set_call_tool_return)`` where the second
     element is a helper to set what ``call_tool`` returns.
@@ -106,7 +107,7 @@ def fake_client_session():
     session_mock.call_tool = AsyncMock()
     session_mock.list_tools = AsyncMock()
 
-    # streamablehttp_client returns an async context manager yielding
+    # _http_client_session returns an async context manager yielding
     # (read_stream, write_stream, get_session_id_callback)
     transport_cm = MagicMock()
     transport_cm.__aenter__ = AsyncMock(
@@ -119,7 +120,7 @@ def fake_client_session():
     session_cm.__aexit__ = AsyncMock(return_value=None)
 
     with patch(
-        "cortex.transport.mcp.client.streamablehttp_client",
+        "cortex.transport.mcp.client._http_client_session",
         return_value=transport_cm,
     ), patch(
         "cortex.transport.mcp.client.ClientSession",
@@ -253,7 +254,7 @@ class TestCortexMCPClientErrors:
         )
         bad_cm.__aexit__ = AsyncMock(return_value=None)
         with patch(
-            "cortex.transport.mcp.client.streamablehttp_client",
+            "cortex.transport.mcp.client._http_client_session",
             return_value=bad_cm,
         ):
             client = CortexMCPClient("http://127.0.0.1:1/mcp")
@@ -269,7 +270,7 @@ class TestCortexMCPClientErrors:
         )
         slow_cm.__aexit__ = AsyncMock(return_value=None)
         with patch(
-            "cortex.transport.mcp.client.streamablehttp_client",
+            "cortex.transport.mcp.client._http_client_session",
             return_value=slow_cm,
         ):
             client = CortexMCPClient("http://localhost:1314/mcp", timeout_seconds=0.5)
@@ -282,7 +283,7 @@ class TestCortexMCPClientErrors:
         bad_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("weird error"))
         bad_cm.__aexit__ = AsyncMock(return_value=None)
         with patch(
-            "cortex.transport.mcp.client.streamablehttp_client",
+            "cortex.transport.mcp.client._http_client_session",
             return_value=bad_cm,
         ):
             client = CortexMCPClient("http://localhost:1314/mcp")
@@ -325,3 +326,138 @@ class TestCortexMCPClientErrors:
             # result which _unwrap_call_tool_result surfaces as MCPToolError
             await client.search("anything")
         assert "Unknown tool" in str(exc_info.value)
+
+
+# ─── Bundle 4.1: _http_client_session helper + deprecation guard ──────────
+
+
+class TestHttpClientSession:
+    """Bundle 4 Step 4.1: the _http_client_session helper bridges the
+    deprecated ``streamablehttp_client(url, timeout=N)`` API to the canonical
+    ``streamable_http_client(url, http_client=httpx.AsyncClient(...))`` API.
+    """
+
+    @pytest.mark.asyncio
+    async def test_helper_yields_three_tuple_via_streamable_http_client(self):
+        """Helper wraps streamable_http_client and yields its (r, w, sid) tuple."""
+        fake_tuple = (MagicMock(), MagicMock(), MagicMock())
+        inner_cm = MagicMock()
+        inner_cm.__aenter__ = AsyncMock(return_value=fake_tuple)
+        inner_cm.__aexit__ = AsyncMock(return_value=None)
+        with patch(
+            "cortex.transport.mcp.client.streamable_http_client",
+            return_value=inner_cm,
+        ) as mock_streamable:
+            async with _http_client_session("http://test/mcp", 5.0) as yielded:
+                assert yielded == fake_tuple
+            # Verify streamable_http_client got called with http_client=<AsyncClient>
+            assert mock_streamable.called
+            _args, kwargs = mock_streamable.call_args
+            assert "http_client" in kwargs
+            assert isinstance(kwargs["http_client"], httpx.AsyncClient)
+
+    @pytest.mark.asyncio
+    async def test_helper_closes_httpx_client_on_exit(self):
+        """The httpx.AsyncClient created by the helper must be closed when
+        the context manager exits (no resource leaks).
+        """
+        inner_cm = MagicMock()
+        inner_cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
+        inner_cm.__aexit__ = AsyncMock(return_value=None)
+
+        captured_client: list[httpx.AsyncClient] = []
+
+        def capture(url, *, http_client, **kw):
+            captured_client.append(http_client)
+            return inner_cm
+
+        with patch(
+            "cortex.transport.mcp.client.streamable_http_client",
+            side_effect=capture,
+        ):
+            async with _http_client_session("http://test/mcp", 2.0):
+                pass
+        assert len(captured_client) == 1
+        # After exit, the client should be closed
+        assert captured_client[0].is_closed
+
+    @pytest.mark.asyncio
+    async def test_helper_propagates_connection_error(self):
+        """When the inner transport raises ConnectError, it bubbles up."""
+        inner_cm = MagicMock()
+        inner_cm.__aenter__ = AsyncMock(
+            side_effect=httpx.ConnectError("Connection refused")
+        )
+        inner_cm.__aexit__ = AsyncMock(return_value=None)
+        with patch(
+            "cortex.transport.mcp.client.streamable_http_client",
+            return_value=inner_cm,
+        ):
+            with pytest.raises(httpx.ConnectError):
+                async with _http_client_session("http://test/mcp", 5.0):
+                    pass
+
+    @pytest.mark.asyncio
+    async def test_50_concurrent_helper_invocations_no_leak(self):
+        """Stress: 50 helpers run concurrently without resource leaks."""
+        import asyncio
+
+        captured_clients: list[httpx.AsyncClient] = []
+
+        def make_cm(url, *, http_client, **kw):
+            captured_clients.append(http_client)
+            cm = MagicMock()
+            cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
+            cm.__aexit__ = AsyncMock(return_value=None)
+            return cm
+
+        with patch(
+            "cortex.transport.mcp.client.streamable_http_client",
+            side_effect=make_cm,
+        ):
+            async def one():
+                async with _http_client_session("http://test/mcp", 5.0):
+                    await asyncio.sleep(0)
+
+            await asyncio.gather(*[one() for _ in range(50)])
+
+        assert len(captured_clients) == 50
+        # All httpx clients closed after their contexts exited
+        assert all(c.is_closed for c in captured_clients)
+
+
+class TestNoDeprecationWarnings:
+    """Bundle 4.1 regression guard: the mcp.client module should no longer
+    emit DeprecationWarning on import or use of CortexMCPClient.
+    """
+
+    def test_import_client_does_not_warn(self):
+        import importlib
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            import cortex.transport.mcp.client as _c
+            importlib.reload(_c)
+            dep_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+            # Filter to just warnings from our module
+            ours = [
+                x for x in dep_warnings
+                if "streamablehttp_client" in str(x.message)
+                or "streamable_http_client" in str(x.message)
+            ]
+            assert len(ours) == 0, (
+                f"unexpected deprecation warnings from cortex.transport.mcp.client: {ours}"
+            )
+
+    def test_old_name_not_imported(self):
+        """The deprecated streamablehttp_client name must not appear in our
+        module globals — we use streamable_http_client exclusively.
+        """
+        import cortex.transport.mcp.client as mod
+        assert not hasattr(mod, "streamablehttp_client"), (
+            "cortex.transport.mcp.client should NOT re-export the deprecated name"
+        )
+        assert hasattr(mod, "streamable_http_client"), (
+            "cortex.transport.mcp.client must import streamable_http_client"
+        )

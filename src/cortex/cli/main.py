@@ -804,6 +804,23 @@ def serve(
         except StoreLockedError as e:
             typer.secho(str(e), fg=typer.colors.RED, err=True)
             raise typer.Exit(1)
+        except PermissionError:
+            typer.secho(
+                f"Permission denied binding to port {port}. Use a port >= 1024 "
+                f"or run with elevated privileges.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        except OSError as e:
+            # Catches "address already in use", DNS errors, other network
+            # binding failures. Produces a clean message instead of a traceback.
+            typer.secho(
+                f"Cannot start MCP HTTP server on {host}:{port}: {e}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
     elif transport == "http":
         import uvicorn
 
