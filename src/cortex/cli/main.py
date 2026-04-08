@@ -91,6 +91,25 @@ def _get_mcp_client() -> Any:
     return _mcp_client
 
 
+def _get_probe_client() -> Any:
+    """Construct a *short-timeout* CortexMCPClient for the lazy probe.
+
+    Bundle 9 / D.2 fix: the probe needs to be cheap and fail fast — every
+    extra second of timeout is felt by the user when the server is hung.
+    A 3s budget is enough for a healthy probe (``list_tools`` is one
+    cheap RTT) but bounds the user's wait against a SIGSTOP'd /
+    network-partitioned server. The main singleton client keeps its 10s
+    default for slow tools like ``search`` and ``capture``.
+
+    Tests patch this function to inject a fake client (same monkeypatch
+    pattern they use for ``_get_mcp_client``).
+    """
+    from cortex.transport.mcp.client import CortexMCPClient
+
+    config = load_config()
+    return CortexMCPClient(config.mcp_server_url, timeout_seconds=3.0)
+
+
 def _run_async(coro: Any) -> Any:
     """Run an async coroutine from sync CLI code, handling running-loop edge cases.
 
@@ -159,15 +178,24 @@ def _probe_mcp_lazy() -> None:
     missing one of the tools the CLI's MCP-routed commands depend on.
 
     In ``--direct`` mode this function is never called.
+
+    Bundle 9 / D.2 fix: the probe uses a dedicated short-timeout client
+    (3s) via ``_get_probe_client`` instead of the singleton (10s). The
+    singleton's wider timeout is needed for slow tools like
+    ``cortex_search`` and ``cortex_capture``, but a *probe* just needs to
+    know whether the server is alive — and against a hung server, every
+    extra second of timeout is felt by the user. Before this change,
+    ``cortex list`` against a SIGSTOP'd server waited ~10s before
+    erroring; now it's ~3s.
     """
     global _mcp_probe_done
     if _mcp_probe_done:
         return
     from cortex.transport.mcp.client import MCPClientError
 
-    client = _get_mcp_client()
+    probe_client = _get_probe_client()
     try:
-        available = set(_run_async(client.list_tools()))
+        available = set(_run_async(probe_client.list_tools()))
     except MCPClientError as e:
         config = load_config()
         typer.secho(
@@ -772,6 +800,40 @@ def register(
     typer.echo("  Restart Claude Code to activate.")
 
 
+def _start_parent_watchdog() -> None:
+    """Spawn a daemon thread that exits the process when the parent dies.
+
+    Bundle 9 / A.3: When ``cortex dashboard --spawn-mcp`` launches an MCP
+    HTTP child, an ``atexit`` handler in the parent terminates the child
+    on graceful exit. ``atexit`` does NOT run on ``SIGKILL`` / hard crash,
+    so the child would otherwise outlive the parent and keep the lock on
+    ``graph.db``. This watchdog closes that gap by relying on the OS:
+    when the parent dies, its end of the stdin pipe is closed, our
+    blocking ``sys.stdin.read()`` returns, and we ``os._exit(0)``.
+
+    Why ``os._exit`` and not ``sys.exit``: FastMCP's transport runs an
+    asyncio event loop with its own signal handlers; raising SystemExit
+    from a background thread does not necessarily reach those handlers
+    cleanly. ``os._exit`` terminates the process immediately so the lock
+    on ``graph.db`` is released and the next caller can auto-recover.
+    """
+    import os as _os
+    import sys as _sys
+    import threading
+
+    def _watch() -> None:
+        try:
+            # Blocks until the pipe is closed (parent died) or EOF.
+            _sys.stdin.read()
+        except Exception:
+            pass
+        # Parent is gone — exit hard so the lock is released immediately.
+        _os._exit(0)
+
+    t = threading.Thread(target=_watch, name="cortex-parent-watchdog", daemon=True)
+    t.start()
+
+
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
@@ -780,6 +842,16 @@ def serve(
         "stdio",
         "--transport",
         help="Transport: stdio (default, for Claude Code), mcp-http (HTTP MCP server), or http (REST API)",
+    ),
+    parent_watchdog: bool = typer.Option(
+        False,
+        "--parent-watchdog",
+        hidden=True,
+        help=(
+            "(internal) Exit when stdin closes. Set automatically by "
+            "`cortex dashboard --spawn-mcp` so the spawned MCP child cannot "
+            "outlive the dashboard even if the dashboard is SIGKILL'd."
+        ),
     ),
 ) -> None:
     """Start the Cortex server.
@@ -799,6 +871,8 @@ def serve(
     elif transport == "mcp-http":
         from cortex.transport.mcp.server import run_http
         typer.echo(f"Cortex MCP (streamable-http) at http://{host}:{port}/mcp")
+        if parent_watchdog:
+            _start_parent_watchdog()
         try:
             run_http(host=host, port=port)
         except StoreLockedError as e:
@@ -1064,6 +1138,11 @@ def _spawn_mcp_subprocess(url: str, data_dir: Path):
     env = _os.environ.copy()
     env.setdefault("CORTEX_DATA_DIR", str(data_dir))
 
+    # Bundle 9 / A.3: pass stdin=PIPE and --parent-watchdog so the spawned
+    # child exits if our process dies (even by SIGKILL, which atexit can't
+    # handle). The watchdog thread in the child blocks on sys.stdin.read();
+    # when our process exits the OS closes the pipe, the read returns, and
+    # the child os._exit(0)'s, releasing the lock on graph.db.
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -1077,8 +1156,10 @@ def _spawn_mcp_subprocess(url: str, data_dir: Path):
             host,
             "--port",
             str(port),
+            "--parent-watchdog",
         ],
         env=env,
+        stdin=subprocess.PIPE,
         stdout=stdout_f,
         stderr=stderr_f,
     )

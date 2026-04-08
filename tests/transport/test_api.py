@@ -620,3 +620,52 @@ class TestRestApiKeyFromEnvVar:
             headers={"X-API-Key": "bad-key"},
         )
         assert resp.status_code == 401
+
+    def test_configured_keys_accept_trailing_whitespace(
+        self, client: TestClient, monkeypatch
+    ):
+        """Bundle 9 / Group 3 #1: trailing whitespace in the X-API-Key
+        header used to return 401 because h11 preserved trailing OWS
+        while stripping leading OWS, producing an asymmetric and
+        confusing comparison. The auth path now ``.strip()``'s the key
+        before comparison so both sides round-trip correctly.
+        """
+        monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "good-key "},  # trailing space
+        )
+        assert resp.status_code == 200
+
+    def test_configured_keys_accept_leading_whitespace(
+        self, client: TestClient, monkeypatch
+    ):
+        """Bundle 9 / Group 3 #1: leading whitespace was already stripped
+        by h11 so this case used to ALSO return 200, but for the wrong
+        reason (HTTP-parser-level normalization, not auth-level
+        normalization). After the fix both directions are handled at
+        auth-level for symmetry.
+        """
+        monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "  good-key"},  # leading space
+        )
+        assert resp.status_code == 200
+
+    def test_whitespace_only_key_is_rejected(
+        self, client: TestClient, monkeypatch
+    ):
+        """Bundle 9 / Group 3 #1: stripping must not turn a whitespace
+        key into the empty string and silently let it through. The auth
+        path explicitly re-checks for emptiness after stripping.
+        """
+        monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "   "},
+        )
+        assert resp.status_code == 401

@@ -208,7 +208,10 @@ class TestLazyProbe:
             return _coro()
 
         cli_mod._direct_mode = False
-        with patch.object(cli_mod, "_get_mcp_client") as mock_get:
+        # Bundle 9 / D.2: the lazy probe now uses ``_get_probe_client``
+        # (a short-timeout client) instead of the singleton, so the test
+        # patches that helper.
+        with patch.object(cli_mod, "_get_probe_client") as mock_get:
             mock_client = mock_get.return_value
             mock_client.list_tools = fake_list_tools
 
@@ -231,7 +234,7 @@ class TestLazyProbe:
         async def failing_list_tools():
             raise MCPConnectionError("Cannot reach MCP server at http://test/mcp")
 
-        with patch.object(cli_mod, "_get_mcp_client") as mock_get:
+        with patch.object(cli_mod, "_get_probe_client") as mock_get:
             mock_client = mock_get.return_value
             mock_client.list_tools = failing_list_tools
 
@@ -255,7 +258,7 @@ class TestLazyProbe:
             # Return only one tool — missing all the others
             return ["cortex_search"]
 
-        with patch.object(cli_mod, "_get_mcp_client") as mock_get:
+        with patch.object(cli_mod, "_get_probe_client") as mock_get:
             mock_client = mock_get.return_value
             mock_client.list_tools = missing_tools
 

@@ -16,6 +16,19 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
+# Pre-load the mcp SDK before any test runs. The mcp SDK has
+# `mcp/os/win32/utilities.py` defining `class FallbackProcess` with a
+# class-level annotation `popen_obj: subprocess.Popen[bytes]` that gets
+# evaluated at class-definition time. ``TestDashboardSpawnMcp`` patches
+# ``subprocess.Popen`` with a non-subscriptable fake before triggering
+# the lazy ``cortex.transport.mcp.client`` import inside
+# ``_spawn_mcp_subprocess``, which would then fail with
+# ``TypeError: type 'FakePopen' is not subscriptable`` under
+# ``pytest --forked`` (because each fork starts cold and the SDK has not
+# been imported yet). Pre-loading the client module here forces the SDK
+# import chain to run with the real ``subprocess.Popen``, fixing the
+# test under ``--forked`` without changing production code.
+import cortex.transport.mcp.client  # noqa: F401
 import cortex.cli.main as cli_mod
 from cortex.cli.main import app
 from cortex.db.graph_store import _marker_path_for
@@ -671,9 +684,10 @@ class TestDashboardSpawnMcp:
             pid = 12345
             returncode = None
 
-            def __init__(self, args, env=None, stdout=None, stderr=None):
+            def __init__(self, args, env=None, stdin=None, stdout=None, stderr=None):
                 captured["args"] = args
                 captured["env"] = env
+                captured["stdin"] = stdin
 
             def poll(self):
                 return None
@@ -707,8 +721,15 @@ class TestDashboardSpawnMcp:
         assert "127.0.0.1" in args
         assert "--port" in args
         assert "9876" in args
+        # Bundle 9 / A.3: parent-watchdog flag is plumbed through so the
+        # spawned MCP child cannot outlive the dashboard even on SIGKILL.
+        assert "--parent-watchdog" in args
         # data_dir passed via env
         assert captured["env"]["CORTEX_DATA_DIR"] == str(tmp_path)
+        # stdin must be PIPE — the watchdog thread in the child blocks on it
+        # so the OS-level pipe close (caused by parent death) is what wakes
+        # the child up to terminate.
+        assert captured["stdin"] is subprocess_mod.PIPE
 
     def test_spawn_mcp_subprocess_fails_fast_on_immediate_exit(
         self, monkeypatch, tmp_path
@@ -760,3 +781,116 @@ class TestDashboardSpawnMcp:
         msg = str(exc_info.value)
         assert "exited with code 1" in msg
         assert "boom" in msg or "StoreLockedError" in msg
+
+
+class TestParentWatchdog:
+    """Bundle 9 / A.3: ``cortex serve --parent-watchdog`` exits when its
+    stdin closes (parent death). Plus end-to-end test that
+    ``dashboard --spawn-mcp`` plus a SIGKILL'd parent leaves no orphan.
+    """
+
+    def test_start_parent_watchdog_spawns_daemon_thread(self, monkeypatch):
+        """Smoke test: ``_start_parent_watchdog`` registers a daemon
+        thread named ``cortex-parent-watchdog`` that we can find in
+        ``threading.enumerate()``.
+        """
+        import threading
+
+        import cortex.cli.main as main_mod
+
+        # Don't actually let it block on real stdin and don't let it
+        # _exit() us — patch sys.stdin.read so the thread returns
+        # immediately, and patch os._exit so the test process survives.
+        called = {"exit": False}
+
+        def fake_read():
+            return ""
+
+        def fake_exit(code):
+            called["exit"] = True
+
+        monkeypatch.setattr("sys.stdin.read", fake_read)
+        monkeypatch.setattr("os._exit", fake_exit)
+
+        before = {t.name for t in threading.enumerate()}
+        main_mod._start_parent_watchdog()
+        # Give the thread a moment to start (and immediately exit our
+        # patched stdin.read).
+        for _ in range(50):
+            if called["exit"]:
+                break
+            time.sleep(0.01)
+        assert called["exit"] is True
+
+    @pytest.mark.slow
+    def test_subprocess_exits_when_parent_closes_stdin(self, tmp_path):
+        """End-to-end: launch a real ``cortex serve --transport mcp-http
+        --parent-watchdog`` subprocess with a stdin pipe; close the pipe;
+        the subprocess must exit within a few seconds.
+
+        This is the actual production fix verification — if this test
+        passes, hard-killing the dashboard cannot leave an orphaned MCP
+        child holding the lock.
+        """
+        import os
+        import socket
+
+        # Find a free port
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+
+        env = os.environ.copy()
+        env["CORTEX_DATA_DIR"] = str(tmp_path)
+
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-u",
+                "-m",
+                "cortex.cli.main",
+                "serve",
+                "--transport",
+                "mcp-http",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--parent-watchdog",
+            ],
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=Path(__file__).resolve().parents[2],
+        )
+
+        try:
+            # Give the server a moment to come up. We don't strictly need
+            # to wait for readiness — the watchdog thread runs as soon as
+            # the process starts and is independent of mcp.run().
+            time.sleep(2.0)
+            assert proc.poll() is None, "subprocess died before we could kill it"
+
+            # Close stdin — this is what happens to the child when the
+            # parent dies (the OS closes the pipe end the parent owned).
+            assert proc.stdin is not None
+            proc.stdin.close()
+
+            # The watchdog should pick up the EOF and call os._exit(0)
+            # within a fraction of a second. Give it 10s to be safe on
+            # slow CI machines.
+            try:
+                rc = proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                pytest.fail(
+                    "subprocess did not exit within 10s of stdin close — "
+                    "watchdog is broken; orphan bug not fixed"
+                )
+            assert rc == 0, f"watchdog exit was non-zero ({rc})"
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
