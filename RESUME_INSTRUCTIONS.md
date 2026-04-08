@@ -214,3 +214,44 @@ You currently start the MCP HTTP server manually in a terminal (step 2). Eventua
 ```
 
 Then `launchctl load ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist`. After that the MCP HTTP server starts automatically every time you log in. Don't bother with this unless you want it — manual `cortex serve` in a tmux pane works fine.
+
+---
+
+## Claude Code MCP session staleness (upstream issue)
+
+After you install the LaunchAgent (or any time you restart the MCP HTTP server
+manually), Claude Code may start failing its Cortex MCP tool calls with an
+error like:
+
+```
+{"code":-32600,"message":"Session not found"}
+```
+
+This is because Claude Code's MCP client establishes a **session ID** the
+first time it connects to the HTTP MCP server. When the server restarts
+(launchctl reload, `KeepAlive` auto-restart, manual Ctrl+C and relaunch), the
+new server process doesn't recognize the old session ID and rejects
+subsequent calls.
+
+**This is an upstream Claude Code behavior, not a Cortex bug.** The fix is to
+restart Claude Code itself:
+
+1. `Cmd+Q` to quit Claude Code
+2. Re-open Claude Code
+3. `claude --resume` to pick up the conversation you were in
+
+**Workarounds that do NOT work:**
+- `claude /mcp reconnect` — does not refresh the session ID
+- Waiting for KeepAlive to settle — the server is healthy, Claude Code just
+  has a stale handle
+- Restarting only the LaunchAgent — Claude Code still holds the old session
+
+**The dashboard and CLI do NOT have this issue.** `transport/mcp/client.py`
+opens a fresh MCP session per request (per-call session pattern), so the
+dashboard and `cortex` CLI commands reconnect transparently after any MCP
+restart. Only long-lived MCP client connections (Claude Code) are affected.
+
+**In practice**, you only hit this when you intentionally restart the MCP
+server. Under KeepAlive the server only restarts if it crashes, which is
+rare. Still, if Cortex tools suddenly stop working from Claude Code, the
+first thing to try is `Cmd+Q` and re-open.
