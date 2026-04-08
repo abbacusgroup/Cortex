@@ -145,6 +145,75 @@ def _run_cli(env: dict, args: list[str], *, timeout: int = 120) -> subprocess.Co
     )
 
 
+def _drain_pipe_nonblocking(pipe, limit: int = 4096) -> str:
+    """Read up to ``limit`` bytes from a subprocess pipe without blocking.
+
+    Bundle 10.6 diagnostic helper: when a CLI subprocess in one of these
+    integration tests fails, we want to also dump what the MCP server
+    subprocess was writing to its stderr at the same moment. The server
+    is still running (the fixture teardown hasn't happened yet), so we
+    can't just ``read()`` the pipe — that would block until EOF. Instead
+    we set the pipe's fd to O_NONBLOCK and do one bounded ``os.read``.
+
+    Returns the (possibly partial) decoded output. Never raises — on
+    any failure it returns an empty string so the test assertion's
+    primary failure message still surfaces cleanly.
+    """
+    if pipe is None:
+        return ""
+    try:
+        import fcntl
+        import os
+
+        fd = pipe.fileno()
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        chunks: list[bytes] = []
+        remaining = limit
+        while remaining > 0:
+            try:
+                chunk = os.read(fd, min(remaining, 4096))
+            except BlockingIOError:
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _assert_cli_ok(
+    cap: subprocess.CompletedProcess,
+    mcp_proc: subprocess.Popen,
+    *,
+    label: str = "cli",
+) -> None:
+    """Assert ``cap.returncode == 0`` with a server-stderr dump on failure.
+
+    Bundle 10.6: the failing CI run gave us only the wrapped "unhandled
+    errors in a TaskGroup" message from the CLI subprocess's stderr,
+    which doesn't identify the real inner exception. On failure we now
+    ALSO dump whatever the MCP server subprocess had written to its
+    stderr pipe at that moment. This is non-blocking and bounded so it
+    can't hang the test teardown.
+    """
+    if cap.returncode == 0:
+        return
+    server_stderr = _drain_pipe_nonblocking(mcp_proc.stderr)
+    server_stdout = _drain_pipe_nonblocking(mcp_proc.stdout)
+    import pytest
+
+    pytest.fail(
+        f"{label} failed (returncode={cap.returncode})\n"
+        f"--- cli stdout ---\n{cap.stdout}\n"
+        f"--- cli stderr ---\n{cap.stderr}\n"
+        f"--- mcp server stdout (non-blocking snapshot) ---\n{server_stdout}\n"
+        f"--- mcp server stderr (non-blocking snapshot) ---\n{server_stderr}"
+    )
+
+
 # ─── Tests ────────────────────────────────────────────────────────────────
 
 
@@ -168,7 +237,7 @@ class TestCliRoutesThroughMcpServer:
 
     def test_capture_then_read_then_list_round_trip(self, mcp_http_server):
         """Capture an object via MCP, then read it back, then list — all via MCP."""
-        _url, _proc, env, _tmp = mcp_http_server
+        _url, proc, env, _tmp = mcp_http_server
 
         # Capture
         cap = _run_cli(
@@ -182,7 +251,7 @@ class TestCliRoutesThroughMcpServer:
                 "captured via cortex CLI through MCP HTTP",
             ],
         )
-        assert cap.returncode == 0, f"capture failed: {cap.stderr}"
+        _assert_cli_ok(cap, proc, label="cortex capture")
         # Extract the object ID from the output
         lines = cap.stdout.strip().split("\n")
         first_line = lines[0]  # "Captured idea: <uuid>"
@@ -191,12 +260,12 @@ class TestCliRoutesThroughMcpServer:
 
         # Read it back
         read = _run_cli(env, ["read", obj_id])
-        assert read.returncode == 0
+        _assert_cli_ok(read, proc, label="cortex read")
         assert "Phase 3 e2e test object" in read.stdout
 
         # List should include it
         lst = _run_cli(env, ["list"])
-        assert lst.returncode == 0
+        _assert_cli_ok(lst, proc, label="cortex list")
         assert "Phase 3 e2e test" in lst.stdout
 
     def test_search_finds_captured_object(self, mcp_http_server):

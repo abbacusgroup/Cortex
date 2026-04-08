@@ -70,6 +70,14 @@ jobs:
           # server. 30s is still well under the 30s singleton so the
           # fast-fail trade-off is acceptable in CI.
           CORTEX_PROBE_TIMEOUT_SECONDS: "30"
+          # Bundle 10.6: cold-start ``cortex capture`` on the slow
+          # GitHub Actions macOS runner can exceed the 30s default
+          # timeout on the singleton CLI client when the embedding
+          # model is loading and 3 xdist workers are racing for CPU.
+          # 60s gives that case the breathing room it needs without
+          # masking real hangs (which are still bounded by the
+          # _run_cli 120s wall-clock timeout at the test layer).
+          CORTEX_MCP_CLIENT_TIMEOUT_SECONDS: "60"
         run: uv run pytest tests/ -q -n auto --tb=short
 
   test-macos:
@@ -100,4 +108,8 @@ jobs:
           NO_COLOR: "1"
           COLUMNS: "200"
           CORTEX_PROBE_TIMEOUT_SECONDS: "30"
+          # Bundle 10.6: see Linux job comment — 60s singleton timeout
+          # keeps cold-start capture pipeline calls inside the budget
+          # even when three xdist workers are competing for CPU.
+          CORTEX_MCP_CLIENT_TIMEOUT_SECONDS: "60"
         run: uv run pytest tests/ -q -n auto --tb=short
