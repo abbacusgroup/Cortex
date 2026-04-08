@@ -128,15 +128,25 @@ class StoreLockedError(StoreError):
         super().__init__(message, context=merged_context, cause=cause)
 
     def _cleanup_hint(self) -> str:
-        """Return a manual cleanup command the user can copy-paste."""
-        parts = []
+        """Return a cleanup hint the user can copy-paste.
+
+        Prefers the guided ``cortex doctor unlock`` command when a marker
+        path is known; falls back to raw ``rm`` commands for users who
+        want to cleanup by hand.
+        """
+        parts: list[str] = []
+        if self.marker_path or self.db_path:
+            parts.append("Run: cortex doctor unlock")
+        manual: list[str] = []
         if self.marker_path:
-            parts.append(f"rm {self.marker_path}")
+            manual.append(f"rm {self.marker_path}")
         if self.db_path:
-            parts.append(f"rm -rf {self.db_path}/LOCK")
+            manual.append(f"rm -rf {self.db_path}/LOCK")
+        if manual:
+            parts.append("Manual cleanup: " + " ; ".join(manual))
         if not parts:
             return "Manual cleanup may be required."
-        return "Manual cleanup: " + " ; ".join(parts)
+        return " — ".join(parts)
 
     def __str__(self) -> str:
         parts = [self.message]
@@ -150,6 +160,11 @@ class StoreLockedError(StoreError):
                     f"This appears to be a stale lock marker — process {self.holder_pid} "
                     f"is no longer running."
                 )
+                if self.context.get("auto_recovery_attempted"):
+                    parts.append(
+                        "Auto-recovery was already attempted and failed — "
+                        "manual cleanup may be required."
+                    )
                 parts.append(self._cleanup_hint())
             elif self.is_pid_reuse:
                 parts.append(

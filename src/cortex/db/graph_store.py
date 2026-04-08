@@ -137,10 +137,64 @@ def _write_marker(marker_path: Path) -> bool:
         return False
 
 
-def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None:
-    """Read the marker (if any), determine staleness, and raise StoreLockedError.
+def _auto_recover_stale_lock(
+    path: Path, marker_path: Path, stale_pid: int
+) -> bool:
+    """Attempt to recover a stale lock safely.
 
-    Cases the caller cares about (set as flags on the raised error):
+    Called when ``_raise_locked_error`` would report ``is_stale=True`` AND
+    ``is_pid_reuse=False`` — i.e. a high-confidence signal that the recorded
+    holder PID is really gone. We:
+
+    1. Re-verify ``_pid_alive(stale_pid) is False`` right before mutating
+       anything, closing the tiny window between detection and cleanup.
+    2. Remove the marker file (``graph.db.lock``).
+    3. Remove the RocksDB ``LOCK`` file inside the DB directory if present.
+    4. Log a single INFO line describing what was cleaned.
+
+    Returns True if cleanup happened, False if the re-check showed the PID
+    became alive (race — caller should treat the lock as legitimately held).
+
+    This helper never raises. Exceptions during unlink are logged and the
+    helper returns True anyway — the subsequent retry of ``ox.Store`` will
+    produce the appropriate error if cleanup wasn't sufficient.
+    """
+    # Re-check: has a new process grabbed the PID since we decided it was stale?
+    if _pid_alive(stale_pid):
+        logger.warning(
+            "Auto-recovery aborted: PID %d became alive during the re-check "
+            "(race with a fresh process).",
+            stale_pid,
+        )
+        return False
+
+    try:
+        marker_path.unlink(missing_ok=True)
+    except OSError as e:
+        logger.warning("Could not remove stale marker %s: %s", marker_path, e)
+
+    rocksdb_lock = path / "LOCK"
+    try:
+        rocksdb_lock.unlink(missing_ok=True)
+    except OSError as e:
+        logger.warning("Could not remove RocksDB LOCK %s: %s", rocksdb_lock, e)
+
+    logger.info(
+        "Auto-recovered stale lock: holder PID %d is dead, removed marker at "
+        "%s and RocksDB LOCK at %s",
+        stale_pid,
+        marker_path,
+        rocksdb_lock,
+    )
+    return True
+
+
+def _build_locked_error(
+    path: Path, marker_path: Path, oserror: OSError
+) -> StoreLockedError:
+    """Read the marker (if any), determine staleness, and build a StoreLockedError.
+
+    Cases encoded as flags on the returned error:
 
     1. **No marker**: lock is held but the marker file is missing. Could be a
        leftover RocksDB lock or a process that crashed before writing the marker.
@@ -154,10 +208,14 @@ def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None
        at that PID has a different command line than the marker recorded. The
        OS reused the PID for an unrelated process — the actual lock holder
        cannot be identified from the marker. ``is_pid_reuse=True``.
+
+    Callers decide whether to raise or attempt auto-recovery. The previous
+    ``_raise_locked_error`` function is preserved below as a thin wrapper
+    that raises for legacy callers.
     """
     marker = _read_marker(marker_path)
     if marker is None:
-        raise StoreLockedError(
+        return StoreLockedError(
             f"Graph DB at {path} is locked, but no marker file found.",
             holder_pid=None,
             holder_cmdline=None,
@@ -171,7 +229,7 @@ def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None
     # Detect the unreadable-marker case: _read_marker returns a sentinel dict
     # with _unreadable=True when the file exists but can't be read.
     if marker.get("_unreadable"):
-        raise StoreLockedError(
+        return StoreLockedError(
             f"Graph DB at {path} is locked, AND the marker file at "
             f"{marker_path} exists but is unreadable. Check its permissions.",
             holder_pid=None,
@@ -208,7 +266,7 @@ def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None
             ):
                 is_pid_reuse = True
 
-    raise StoreLockedError(
+    return StoreLockedError(
         f"Graph DB at {path} is locked by another process.",
         holder_pid=holder_pid,
         holder_cmdline=holder_cmdline,
@@ -219,6 +277,16 @@ def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None
         context={"path": str(path)},
         cause=oserror,
     )
+
+
+def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None:
+    """Legacy wrapper: build and raise a ``StoreLockedError``.
+
+    Preserved so existing tests and callers that expect this signature
+    keep working. New code should prefer ``_build_locked_error`` so it
+    can inspect the error before deciding whether to auto-recover.
+    """
+    raise _build_locked_error(path, marker_path, oserror)
 
 
 # Track open GraphStore instances so atexit can clean up their markers.
@@ -274,14 +342,42 @@ class GraphStore:
                     or "no locks available" in error_msg
                     or "resource temporarily unavailable" in error_msg
                 )
-                if is_lock_error:
-                    _raise_locked_error(path, marker_path, e)
-                else:
+                if not is_lock_error:
                     raise StoreError(
                         f"Failed to open graph DB at {path}: {e}",
                         context={"path": str(path)},
                         cause=e,
                     )
+
+                # Build the candidate error so we can decide whether to
+                # attempt auto-recovery. High-confidence case: stale marker
+                # with a dead holder PID and no PID-reuse indication.
+                locked_err = _build_locked_error(path, marker_path, e)
+                recoverable = (
+                    locked_err.is_stale
+                    and locked_err.holder_pid is not None
+                    and not locked_err.is_pid_reuse
+                )
+                if not recoverable:
+                    raise locked_err
+
+                if not _auto_recover_stale_lock(
+                    path, marker_path, locked_err.holder_pid
+                ):
+                    # The re-check showed the PID came back alive — treat
+                    # the lock as legitimately held and raise the original
+                    # error unchanged.
+                    raise locked_err
+
+                # Retry the open now that we've cleaned up.
+                try:
+                    self._store = ox.Store(str(path))
+                except OSError as retry_err:
+                    # Auto-recovery didn't solve it — raise the original
+                    # error with a context flag so downstream callers can
+                    # tell the cleanup already ran.
+                    locked_err.context["auto_recovery_attempted"] = True
+                    raise locked_err from retry_err
             # Lock acquired — write the marker (best-effort).
             self._marker_path = marker_path
             self._marker_owned = _write_marker(marker_path)

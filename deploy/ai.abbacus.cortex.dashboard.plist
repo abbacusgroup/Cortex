@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Cortex dashboard LaunchAgent (macOS).
+
+  Companion to ai.abbacus.cortex.mcp.plist. Installs the web dashboard as
+  a background service that auto-starts on login and auto-restarts on
+  crash.
+
+  NOTE: The dashboard requires the MCP HTTP server to be reachable. At
+  login, both LaunchAgents load at once — launchd does not guarantee
+  ordering. The dashboard's probe retries briefly, and if the MCP server
+  isn't up yet, the dashboard exits. KeepAlive=true then triggers a
+  restart, and the probe succeeds on the next attempt. Expect one or two
+  "Cannot reach MCP server" entries in dashboard.err at cold boot.
+
+  Install:
+    sed 's|YOURUSER|'"$USER"'|g' deploy/ai.abbacus.cortex.dashboard.plist \
+      > ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
+    launchctl load ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
+    rm ~/Library/LaunchAgents/ai.abbacus.cortex.dashboard.plist
+
+  Access the dashboard at http://127.0.0.1:1315/ after login.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.abbacus.cortex.dashboard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOURUSER/Lab/cortex/.venv/bin/cortex</string>
+        <string>dashboard</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>1315</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSER/Lab/cortex</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/YOURUSER/Lab/cortex/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/YOURUSER</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOURUSER/.cortex/dashboard.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/YOURUSER/.cortex/dashboard.err</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

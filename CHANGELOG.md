@@ -7,7 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Added — Bundle 8 (quality-of-life hardening)
+
+- **Auto-recovery of stale locks in `GraphStore.__init__`**: when a lock
+  error is hit and the marker file records a PID that is verified dead
+  (and not a PID-reuse case), `GraphStore` now removes the stale marker
+  and the RocksDB `LOCK` file and retries the open automatically. Users
+  no longer need to `rm -rf graph.db/LOCK` by hand after a crash. A
+  single `INFO` line ("Auto-recovered stale lock") captures the action.
+- **`cortex doctor` subcommand** with `unlock`: guided recovery for
+  cases where auto-recovery can't act (e.g. cross-user
+  `PermissionError`, or pre-emptive cleanup before starting the
+  LaunchAgent). Supports `--dry-run` to inspect and `--force` to bypass
+  the live-holder check. Refuses to unlock a running holder by default.
+- **`cortex dashboard --spawn-mcp`**: opt-in flag that spawns a
+  `cortex serve --transport mcp-http` subprocess when the initial
+  probe fails, waits for it to become ready, and terminates the child
+  on dashboard exit via an `atexit` handler. Log files at
+  `~/.cortex/mcp-http.{log,err}` (same paths the LaunchAgent uses).
+- **Shipped LaunchAgent templates**: `deploy/ai.abbacus.cortex.mcp.plist`
+  and `deploy/ai.abbacus.cortex.dashboard.plist`, both with `YOURUSER`
+  placeholders and install-time `sed` substitution. Covered by a
+  `plistlib`-based smoke test in `tests/deploy/test_plist_templates.py`
+  that catches XML syntax errors before they land.
+
+### Changed — Bundle 8
+
+- **`StoreLockedError._cleanup_hint`** now points at `cortex doctor
+  unlock` as the preferred recovery path, with the raw `rm` commands
+  kept as a fallback. When auto-recovery has already been attempted
+  and failed, the error message surfaces an explicit
+  "Auto-recovery was already attempted and failed" line so users know
+  manual intervention is needed.
+- **`_raise_locked_error` split into `_build_locked_error` (returns)
+  + legacy `_raise_locked_error` (raises)**: the returning variant
+  lets `GraphStore.__init__` inspect the candidate error before
+  deciding whether to attempt auto-recovery. The raising variant is
+  preserved as a thin wrapper for any remaining callers.
+- **README.md**: replaced the inline MCP LaunchAgent XML with a
+  pointer to `deploy/` and added the dashboard LaunchAgent install +
+  startup-race note. New "Recovering from a crashed MCP server"
+  section documents auto-recovery and the `doctor unlock` command.
+  Removed the stale "REST API still opens graph.db directly"
+  limitation — that was resolved by Phase 4.
+- **RESUME_INSTRUCTIONS.md**: updated both troubleshooting and
+  follow-up sections to use the shipped `deploy/` templates and the
+  new `cortex doctor unlock` command.
+
+### Added — earlier phases
 
 - **HTTP MCP transport**: `cortex serve --transport mcp-http` runs the MCP
   server on streamable-http so multiple clients (Claude Code, dashboard,
@@ -112,6 +159,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | After Bundle 3 (unreadable marker UX)               |   742 |
 | After Bundle 4 (deprecation fix + small gaps)       |   757 |
 | After Bundle 5 (validation closure)                 |   783 |
+| After Phase 4 (Bundle 7, REST API as MCP client)    |   796 |
+| After Bundle 8 (doctor unlock + spawn-mcp + plists) |   833 |
 
 ### Migration guide
 
@@ -143,8 +192,8 @@ If you're upgrading from a pre-2026-04-07 install:
 - **`cortex pipeline --batch`** requires raw SQL access and therefore
   bypasses MCP routing. Run it with `cortex --direct pipeline --batch`,
   or temporarily stop the MCP server.
-- **REST API still opens `graph.db` directly**: `cortex serve
-  --transport http` (the REST API on `transport/api/server.py`) is the
-  third entry point and has not yet been converged to the MCP-routed
-  pattern. Running it simultaneously with the LaunchAgent MCP server
-  will fail with the lock error. Will be addressed in a future Phase 4.
+
+> **Note**: the previous "REST API still opens graph.db directly"
+> limitation is resolved by Phase 4 (Bundle 7). All three transports
+> (MCP, dashboard, REST API) plus the CLI now route through the
+> canonical MCP HTTP server.

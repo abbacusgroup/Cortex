@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Cortex MCP HTTP server LaunchAgent (macOS).
+
+  Installs into ~/Library/LaunchAgents/ after substituting YOURUSER and
+  the repo path. This makes the canonical MCP HTTP server auto-start on
+  login and auto-restart on crash, so the dashboard, CLI, REST API, and
+  Claude Code can all connect without manual intervention.
+
+  Install:
+    sed 's|YOURUSER|'"$USER"'|g' deploy/ai.abbacus.cortex.mcp.plist \
+      > ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+    launchctl load ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+    rm ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
+
+  See CHANGELOG.md and RESUME_INSTRUCTIONS.md for background and for the
+  companion dashboard LaunchAgent (ai.abbacus.cortex.dashboard.plist).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.abbacus.cortex.mcp</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOURUSER/Lab/cortex/.venv/bin/cortex</string>
+        <string>serve</string>
+        <string>--transport</string>
+        <string>mcp-http</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>1314</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSER/Lab/cortex</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/YOURUSER/Lab/cortex/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/YOURUSER</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOURUSER/.cortex/mcp-http.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/YOURUSER/.cortex/mcp-http.err</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>
