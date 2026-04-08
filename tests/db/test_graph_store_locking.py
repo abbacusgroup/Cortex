@@ -438,6 +438,182 @@ class TestPidReuseRaceProtection:
 # ─── Bundle 1.3 — Atomicity test for mid-capture failure ──────────────────
 
 
+class TestMarkerEdgeCases:
+    """Phase 1.B intended-failure tests that catch silent regressions in the
+    PID marker mechanism: bad paths, hostile filesystems, concurrent same-process
+    opens, regression guard against accidental os.kill() calls.
+    """
+
+    def test_marker_NOT_written_if_open_fails_for_non_lock_reason(
+        self, tmp_path: Path
+    ):
+        """If ``ox.Store(path)`` raises for a non-lock reason (e.g. permission
+        denied on the parent directory), no marker file should be created
+        AND the error must be reported as a generic StoreError (not a
+        misleading StoreLockedError).
+        """
+        from cortex.core.errors import StoreError, StoreLockedError
+
+        # Create an unwritable parent directory so RocksDB's mkdir fails
+        bad_parent = tmp_path / "readonly"
+        bad_parent.mkdir()
+        bad_parent.chmod(0o555)  # r-x, no write
+        try:
+            db = bad_parent / "g.db"
+            with pytest.raises(StoreError) as exc_info:
+                GraphStore(db)
+            # Critical: this is NOT a StoreLockedError. The user must see
+            # the real failure (permission denied), not a confusing
+            # "graph DB is locked" message.
+            assert not isinstance(exc_info.value, StoreLockedError), (
+                "permission errors must NOT be reported as lock errors"
+            )
+            # The underlying OSError is preserved as the cause
+            assert exc_info.value.__cause__ is not None
+            assert "permission" in str(exc_info.value).lower()
+
+            # No marker file should exist on disk
+            marker = _marker_path_for(db)
+            assert not marker.exists(), (
+                "marker file should NOT be created when open fails for a "
+                "non-lock reason"
+            )
+        finally:
+            bad_parent.chmod(0o755)  # restore so cleanup can remove it
+
+    def test_marker_cleanup_does_not_delete_other_files(self, tmp_path: Path):
+        """``close()`` must only remove the specific graph.db.lock marker.
+        Unrelated files in the same directory must be untouched.
+        """
+        # Sprinkle some unrelated files alongside what will become the marker
+        (tmp_path / "unrelated_1.txt").write_text("keep me")
+        (tmp_path / "unrelated_2.json").write_text('{"keep": true}')
+        (tmp_path / "another.lock").write_text("not the cortex lock")
+
+        db = tmp_path / "g.db"
+        store = GraphStore(db)
+        assert _marker_path_for(db).exists()
+        store.close()
+
+        # The graph.db.lock marker is gone
+        assert not _marker_path_for(db).exists()
+        # All unrelated files are still there
+        assert (tmp_path / "unrelated_1.txt").read_text() == "keep me"
+        assert (tmp_path / "unrelated_2.json").exists()
+        assert (tmp_path / "another.lock").read_text() == "not the cortex lock"
+
+    def test_marker_write_failure_does_not_break_open(self, tmp_path: Path):
+        """If the marker directory is read-only at the time of the marker
+        write, the GraphStore should still open successfully (the marker is
+        best-effort, not load-bearing) and log a warning.
+        """
+        # Create the DB dir, then make the parent read-only AFTER ox.Store can
+        # create the DB but BEFORE the marker write. Easiest: monkeypatch
+        # _write_marker to return False, simulating a write failure.
+        import cortex.db.graph_store as gs_mod
+
+        def fake_write_marker(marker_path: Path) -> bool:
+            return False  # Simulate marker write failure
+
+        original = gs_mod._write_marker
+        gs_mod._write_marker = fake_write_marker  # type: ignore[assignment]
+        try:
+            db = tmp_path / "g.db"
+            # Should still succeed despite marker write failure
+            store = GraphStore(db)
+            try:
+                # The store object is functional
+                assert store.triple_count >= 0
+                # The marker file does NOT exist (write was simulated as failed)
+                assert not _marker_path_for(db).exists()
+            finally:
+                store.close()
+        finally:
+            gs_mod._write_marker = original  # type: ignore[assignment]
+
+    def test_pid_marker_cleaned_up_on_subprocess_clean_exit(
+        self, tmp_path: Path
+    ):
+        """Subprocess opens GraphStore and exits cleanly via sys.exit (which
+        triggers atexit cleanup). Parent verifies marker is removed.
+        """
+        db = tmp_path / "g.db"
+        code = (
+            "import sys; sys.path.insert(0, 'src');"
+            "from pathlib import Path;"
+            "from cortex.db.graph_store import GraphStore;"
+            f"s = GraphStore(Path({str(db)!r}));"
+            "sys.exit(0)"  # clean exit triggers atexit
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, (
+            f"subprocess failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        # After clean exit, the marker should be gone (atexit ran)
+        marker = _marker_path_for(db)
+        assert not marker.exists(), (
+            f"marker should be removed after subprocess clean exit, found: {marker}"
+        )
+
+    def test_concurrent_open_in_same_process_raises_locked_error(
+        self, tmp_path: Path
+    ):
+        """Opening the same GraphStore path twice in the same Python process
+        without closing the first instance should raise StoreLockedError.
+
+        Note: GraphStore.close() drops the pyoxigraph reference and forces gc,
+        which releases the RocksDB lock. So this test must hold a strong
+        reference to the first instance for the duration of the second open.
+        """
+        db = tmp_path / "g.db"
+        first = GraphStore(db)
+        try:
+            with pytest.raises(StoreLockedError) as exc_info:
+                GraphStore(db)
+            err = exc_info.value
+            assert err.holder_pid == os.getpid()
+            assert err.holder_cmdline is not None
+        finally:
+            first.close()
+
+    def test_lock_detection_never_calls_os_kill(self):
+        """Regression guard: the lock-detection code path must NEVER call
+        ``os.kill(pid, ...)`` to verify a holder, even when checking PID
+        liveness. We use ``os.kill(pid, 0)`` which is the *signal-zero*
+        liveness probe (sends NO signal), but never any non-zero signal.
+
+        Verified by grepping the source for any non-zero kill() calls.
+        """
+        from pathlib import Path
+
+        gs_source = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "cortex"
+            / "db"
+            / "graph_store.py"
+        ).read_text()
+        # The only allowed os.kill call is the signal-0 liveness probe
+        # inside _pid_alive. Find every os.kill( occurrence and verify it
+        # uses signal 0.
+        import re
+
+        # Match os.kill(<anything>, <signal>)
+        kill_calls = re.findall(r"os\.kill\([^,]+,\s*([^)]+)\)", gs_source)
+        for sig in kill_calls:
+            assert sig.strip() == "0", (
+                f"graph_store.py contains os.kill(..., {sig.strip()}) — only "
+                f"os.kill(pid, 0) is allowed for liveness checks. Lock "
+                f"detection must NEVER send signals to other processes."
+            )
+
+
 class TestStoreCreateAtomicity:
     """``Store.create()`` does a dual-write to graph + SQLite. If the SQLite
     write fails AFTER the graph write succeeds, the graph write must be

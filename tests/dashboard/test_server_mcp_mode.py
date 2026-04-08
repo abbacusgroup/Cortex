@@ -352,3 +352,68 @@ class TestAuthStillEnforced:
         resp = tc.get("/api/graph-data")
         # API endpoints return 401 JSON instead of redirecting
         assert resp.status_code == 401
+
+
+class TestDashboardDoesNotDoubleCountAccess:
+    """Phase 2.F regression guard: viewing a document via the dashboard must
+    record exactly ONE access (the server-side cortex_read tool does it).
+    The dashboard's old direct learner.record_access call was removed in
+    Phase 2.D — this test ensures we don't accidentally re-add it.
+    """
+
+    def test_get_document_calls_read_exactly_once(
+        self, app_with_recorder, call_recorder
+    ):
+        client = TestClient(app_with_recorder)
+        client.get("/documents/some-obj-id")
+        # Filter to just the 'read' calls
+        read_calls = [c for c in call_recorder.calls if c[0] == "read"]
+        assert len(read_calls) == 1, (
+            f"expected exactly one read call, got {len(read_calls)}: {read_calls}"
+        )
+
+    def test_three_views_produce_three_read_calls(
+        self, app_with_recorder, call_recorder
+    ):
+        """Sanity: three GET /documents/{id} requests → three read calls.
+        Catches a future regression where someone batches/dedupes accesses.
+        """
+        client = TestClient(app_with_recorder)
+        client.get("/documents/id-1")
+        client.get("/documents/id-2")
+        client.get("/documents/id-3")
+        read_calls = [c for c in call_recorder.calls if c[0] == "read"]
+        assert len(read_calls) == 3
+        ids_seen = [c[1]["obj_id"] for c in read_calls]
+        assert ids_seen == ["id-1", "id-2", "id-3"]
+
+
+class TestPostCreateInputValidation:
+    """Phase 2.D: POST /create with missing required fields should reject the
+    request without making any MCP call.
+    """
+
+    def test_post_create_missing_title_returns_422(
+        self, app_with_recorder, call_recorder
+    ):
+        """``title`` is a required form field; omitting it must return 422
+        from FastAPI's form validation, NOT call MCP, NOT crash.
+        """
+        client = TestClient(app_with_recorder)
+        # POST /create without the required `title` field
+        resp = client.post("/create", data={"content": "no title"})
+        assert resp.status_code == 422
+        # No MCP capture call should have been made
+        assert not any(c[0] == "capture" for c in call_recorder.calls)
+
+    def test_post_create_with_only_title_succeeds(
+        self, app_with_recorder, call_recorder
+    ):
+        """Sanity: title alone is enough; the other Form fields default."""
+        client = TestClient(app_with_recorder)
+        resp = client.post(
+            "/create", data={"title": "T"}, follow_redirects=False
+        )
+        assert resp.status_code == 302  # redirect to /documents/<id>
+        # MCP capture WAS called
+        assert any(c[0] == "capture" for c in call_recorder.calls)
