@@ -138,15 +138,29 @@ def _write_marker(marker_path: Path) -> bool:
 
 
 def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None:
-    """Read the marker (if any), determine staleness, and raise StoreLockedError."""
+    """Read the marker (if any), determine staleness, and raise StoreLockedError.
+
+    Three cases the caller cares about (set as flags on the raised error):
+
+    1. **No marker**: lock is held but the marker file is missing. Could be a
+       leftover RocksDB lock or a process that crashed before writing the marker.
+       ``holder_pid=None``, no flags set.
+    2. **Stale marker**: marker exists, but the recorded PID is no longer running.
+       The marker is left over from a crashed process. ``is_stale=True``.
+    3. **PID reuse**: marker exists, the recorded PID IS alive, but the process
+       at that PID has a different command line than the marker recorded. The
+       OS reused the PID for an unrelated process — the actual lock holder
+       cannot be identified from the marker. ``is_pid_reuse=True``.
+    """
     marker = _read_marker(marker_path)
     if marker is None:
-        # Lock held but no marker file — Oxigraph itself has the lock for some reason.
         raise StoreLockedError(
             f"Graph DB at {path} is locked, but no marker file found.",
             holder_pid=None,
             holder_cmdline=None,
             is_stale=False,
+            db_path=str(path),
+            marker_path=str(marker_path),
             context={"path": str(path)},
             cause=oserror,
         )
@@ -158,14 +172,32 @@ def _raise_locked_error(path: Path, marker_path: Path, oserror: OSError) -> None
         holder_cmdline = None
 
     is_stale = False
-    if holder_pid is not None and not _pid_alive(holder_pid):
-        is_stale = True
+    is_pid_reuse = False
+
+    if holder_pid is not None:
+        if not _pid_alive(holder_pid):
+            is_stale = True
+        else:
+            # PID is alive — verify its current cmdline matches the marker.
+            # If they differ, the OS has reused the PID for an unrelated
+            # process and the marker is misleading. We never trust the PID
+            # alone — see Weak Point #2 in the plan.
+            live_cmdline = _process_cmdline(holder_pid)
+            if (
+                live_cmdline is not None
+                and holder_cmdline is not None
+                and live_cmdline != holder_cmdline
+            ):
+                is_pid_reuse = True
 
     raise StoreLockedError(
         f"Graph DB at {path} is locked by another process.",
         holder_pid=holder_pid,
         holder_cmdline=holder_cmdline,
         is_stale=is_stale,
+        is_pid_reuse=is_pid_reuse,
+        db_path=str(path),
+        marker_path=str(marker_path),
         context={"path": str(path)},
         cause=oserror,
     )

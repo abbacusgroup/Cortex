@@ -311,3 +311,181 @@ class TestNoLockFilesLeakBetweenTests:
         with GraphStore(db):
             pass
         assert list(tmp_path.rglob("*.lock")) == []
+
+
+# ─── Bundle 1.1 — PID reuse race protection ────────────────────────────────
+
+
+class TestPidReuseRaceProtection:
+    """When the marker's PID is alive but the live process has a DIFFERENT
+    cmdline than the marker recorded, the lock holder is ambiguous: either the
+    OS reused the PID for an unrelated process, OR the original process did
+    something weird like exec into a different binary. Either way, we should
+    NOT report it as a normal lock — we should warn that the marker is stale.
+    """
+
+    def test_pid_reuse_detected_when_cmdline_mismatch(self, tmp_path: Path):
+        """Simulate PID reuse: a real subprocess holds the lock, but we
+        manually overwrite the marker with a fake cmdline. The next open
+        should detect that the live cmdline differs from the marker's recorded
+        cmdline and set ``is_pid_reuse=True``.
+        """
+        db = tmp_path / "g.db"
+        sentinel = tmp_path / "ready"
+        proc = _spawn_holder_subprocess(db, sentinel)
+        try:
+            _wait_for_sentinel(sentinel)
+            # Overwrite the marker with the SAME PID but a fabricated cmdline
+            marker = _marker_path_for(db)
+            marker.write_text(
+                json.dumps(
+                    {
+                        "pid": proc.pid,
+                        "cmdline": "totally different fake cmdline that no live process has",
+                        "acquired_at": "2026-01-01T00:00:00Z",
+                    }
+                )
+            )
+
+            with pytest.raises(StoreLockedError) as exc_info:
+                GraphStore(db)
+            err = exc_info.value
+            assert err.holder_pid == proc.pid
+            assert err.is_pid_reuse is True, (
+                "expected is_pid_reuse=True when marker cmdline differs from live cmdline"
+            )
+            assert err.is_stale is False
+            s = str(err)
+            assert "reused the PID" in s or "does NOT match" in s
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    def test_no_pid_reuse_flag_when_cmdline_matches(self, tmp_path: Path):
+        """Sanity: when the marker's cmdline DOES match the live process,
+        is_pid_reuse must be False (this is the normal lock-conflict case).
+        """
+        db = tmp_path / "g.db"
+        sentinel = tmp_path / "ready"
+        proc = _spawn_holder_subprocess(db, sentinel)
+        try:
+            _wait_for_sentinel(sentinel)
+            # Don't touch the marker — the subprocess wrote it correctly
+            with pytest.raises(StoreLockedError) as exc_info:
+                GraphStore(db)
+            err = exc_info.value
+            assert err.is_pid_reuse is False
+            assert err.is_stale is False
+            # Normal "stop the conflicting process" message
+            assert "Stop the conflicting process" in str(err)
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    def test_stale_marker_with_dead_pid_takes_precedence_over_reuse(
+        self, tmp_path: Path
+    ):
+        """When the marker's PID is dead, is_stale=True (PID reuse check is
+        skipped because there's no live cmdline to compare).
+        """
+        # Write a marker for a definitely-dead PID
+        db = tmp_path / "g.db"
+        marker = _marker_path_for(db)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {"pid": 999997, "cmdline": "ghost cmdline", "acquired_at": "2026-01-01"}
+            )
+        )
+
+        # Open should succeed (no actual lock conflict — we only have a stale
+        # marker), and overwrite the marker with the current PID
+        store = GraphStore(db)
+        try:
+            data = json.loads(marker.read_text())
+            assert data["pid"] == os.getpid()
+        finally:
+            store.close()
+
+    def test_stale_error_includes_cleanup_hint(self, tmp_path: Path):
+        """When we DO surface a StoreLockedError with is_stale=True, the
+        message should include the manual cleanup command for both files.
+        This is verified by raising the error directly via the helper.
+        """
+        from cortex.db.graph_store import _raise_locked_error
+
+        # Write a stale marker (PID 999996 is definitely dead on macOS)
+        db = tmp_path / "g.db"
+        marker = _marker_path_for(db)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {"pid": 999996, "cmdline": "ghost", "acquired_at": "2026-01-01"}
+            )
+        )
+
+        with pytest.raises(StoreLockedError) as exc_info:
+            _raise_locked_error(db, marker, OSError("lock hold by current process"))
+        err = exc_info.value
+        assert err.is_stale is True
+        s = str(err)
+        # Cleanup hint mentions BOTH the marker file AND the RocksDB LOCK
+        assert str(marker) in s
+        assert f"{db}/LOCK" in s
+        assert "rm" in s
+
+
+# ─── Bundle 1.3 — Atomicity test for mid-capture failure ──────────────────
+
+
+class TestStoreCreateAtomicity:
+    """``Store.create()`` does a dual-write to graph + SQLite. If the SQLite
+    write fails AFTER the graph write succeeds, the graph write must be
+    rolled back so we don't leak orphan triples.
+    """
+
+    def test_sqlite_failure_rolls_back_graph(self, tmp_path: Path):
+        from cortex.core.config import CortexConfig
+        from cortex.db.store import Store
+
+        config = CortexConfig(data_dir=tmp_path)
+        store = Store(config)
+        store.initialize()
+        try:
+            # Get the graph triple count before
+            triples_before = store.graph.triple_count
+            objects_before = len(store.list_objects(limit=1000))
+
+            # Monkey-patch ContentStore.insert to raise mid-write
+            original_insert = store.content.insert
+
+            def failing_insert(*args, **kwargs):
+                raise RuntimeError("simulated SQLite failure")
+
+            store.content.insert = failing_insert  # type: ignore[method-assign]
+
+            # Attempt to create — should fail with SyncError
+            from cortex.core.errors import SyncError
+
+            with pytest.raises(SyncError):
+                store.create(
+                    obj_type="fix",
+                    title="test fix that should not leak",
+                    content="this should be rolled back",
+                )
+
+            # Restore the original insert
+            store.content.insert = original_insert  # type: ignore[method-assign]
+
+            # Verify NO partial state leaked into either store
+            triples_after = store.graph.triple_count
+            objects_after = len(store.list_objects(limit=1000))
+
+            assert triples_after == triples_before, (
+                f"graph triples leaked: before={triples_before}, after={triples_after}"
+            )
+            assert objects_after == objects_before, (
+                f"SQLite objects leaked: before={objects_before}, after={objects_after}"
+            )
+        finally:
+            store.close()
