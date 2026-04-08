@@ -305,3 +305,23 @@ class TestCortexMCPClientErrors:
         assert issubclass(MCPTimeoutError, MCPClientError)
         assert issubclass(MCPServerError, MCPClientError)
         assert issubclass(MCPToolError, MCPClientError)
+
+    @pytest.mark.asyncio
+    async def test_invalid_tool_name_surfaces_as_tool_error(
+        self, fake_client_session
+    ):
+        """Phase 2.C: when an MCP method calls a tool that doesn't exist on
+        the server (renamed, removed, version mismatch), the server returns
+        an error result and the client surfaces it as MCPToolError, not as
+        a generic exception or silent None.
+        """
+        fake_client_session.call_tool.return_value = _FakeCallToolResult(
+            text="Unknown tool: cortex_nonexistent",
+            is_error=True,
+        )
+        client = CortexMCPClient("http://localhost:1314/mcp")
+        with pytest.raises(MCPToolError) as exc_info:
+            # Call any method — the underlying call_tool returns an error
+            # result which _unwrap_call_tool_result surfaces as MCPToolError
+            await client.search("anything")
+        assert "Unknown tool" in str(exc_info.value)

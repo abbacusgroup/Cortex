@@ -240,7 +240,30 @@ class GraphStore:
             try:
                 self._store = ox.Store(str(path))
             except OSError as e:
-                _raise_locked_error(path, marker_path, e)
+                # Distinguish lock errors from other OSErrors. RocksDB's lock
+                # error messages on macOS take a few different shapes:
+                #   - "lock hold by current process ... /LOCK: No locks available"
+                #     (in-process double-open)
+                #   - "While lock file: /LOCK: Resource temporarily unavailable"
+                #     (cross-process lock conflict)
+                # Permission errors during DB directory creation look different
+                # ("While mkdir if missing: ... Permission denied") and must
+                # NOT be reported as lock errors — that would mislead the user.
+                error_msg = str(e).lower()
+                is_lock_error = (
+                    "lock hold by current process" in error_msg
+                    or "while lock file" in error_msg
+                    or "no locks available" in error_msg
+                    or "resource temporarily unavailable" in error_msg
+                )
+                if is_lock_error:
+                    _raise_locked_error(path, marker_path, e)
+                else:
+                    raise StoreError(
+                        f"Failed to open graph DB at {path}: {e}",
+                        context={"path": str(path)},
+                        cause=e,
+                    )
             # Lock acquired — write the marker (best-effort).
             self._marker_path = marker_path
             self._marker_owned = _write_marker(marker_path)

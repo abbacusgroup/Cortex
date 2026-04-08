@@ -254,6 +254,99 @@ class TestCliConflictBehavior:
 
 class TestMcpHttpServerCrashRecovery:
     @pytest.mark.asyncio
+    async def test_capture_from_mcp_visible_in_dashboard(
+        self, mcp_http_server, tmp_path: Path
+    ):
+        """Phase 2.I: write via the MCP HTTP client, then start the dashboard
+        as a subprocess pointing at the same MCP server, and verify the
+        captured object appears in the dashboard's /api/graph-data response.
+
+        This is the cross-client visibility check the original plan called
+        for. We already have the dashboard-to-MCP and MCP-to-MCP variants;
+        this fills in the MCP-to-dashboard direction.
+        """
+        import os
+
+        url, _proc = mcp_http_server
+
+        # Capture via direct MCP client
+        client = CortexMCPClient(url, timeout_seconds=5.0)
+        result = await client.capture(
+            title="Phase 2.I cross-client test",
+            content="visible from dashboard via MCP HTTP server",
+            obj_type="lesson",
+        )
+        new_id = result["id"]
+
+        # Spawn the dashboard pointing at the same MCP server. Use an
+        # ephemeral port to avoid conflicts. Pass CORTEX_MCP_SERVER_URL via
+        # env so the dashboard's startup probe finds the right server.
+        dash_port = _free_port()
+        env = os.environ.copy()
+        env["CORTEX_DATA_DIR"] = str(tmp_path)
+        env["CORTEX_MCP_SERVER_URL"] = url
+
+        dash_proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-u",
+                "-m",
+                "cortex.cli.main",
+                "dashboard",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(dash_port),
+            ],
+            env=env,
+            cwd=Path(__file__).resolve().parents[2],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            # Wait for the dashboard to come up
+            import urllib.error
+            import urllib.request
+
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                try:
+                    urllib.request.urlopen(
+                        f"http://127.0.0.1:{dash_port}/", timeout=1
+                    )
+                    break
+                except (urllib.error.URLError, OSError):
+                    time.sleep(0.2)
+            else:
+                stdout = dash_proc.stdout.read() if dash_proc.stdout else ""
+                stderr = dash_proc.stderr.read() if dash_proc.stderr else ""
+                raise TimeoutError(
+                    f"Dashboard did not start.\n"
+                    f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                )
+
+            # Hit /api/graph-data and verify the new object is in the result
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{dash_port}/api/graph-data", timeout=5
+            ) as resp:
+                import json as _json
+
+                data = _json.loads(resp.read())
+            node_ids = [n["data"]["id"] for n in data["nodes"]]
+            assert new_id in node_ids, (
+                f"new object {new_id} captured via MCP not visible in dashboard graph "
+                f"data; nodes={node_ids[:5]}..."
+            )
+        finally:
+            dash_proc.terminate()
+            try:
+                dash_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                dash_proc.kill()
+                dash_proc.wait()
+
+    @pytest.mark.asyncio
     async def test_client_gets_clean_error_after_server_killed(
         self, tmp_path: Path
     ):
