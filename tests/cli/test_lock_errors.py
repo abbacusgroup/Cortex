@@ -367,37 +367,40 @@ class TestDashboardStartupProbe:
         assert "Traceback" not in combined
 
 
-class TestApiServerLockError:
-    """Bundle 1.4: ``cortex serve --transport http`` (the REST API path)
-    must catch StoreLockedError from create_api() and exit cleanly.
+class TestApiServerDoesNotOpenStore:
+    """After Phase 4 (Bundle 7), the REST API is a thin MCP HTTP client.
+    It no longer calls ``Store(config)`` directly, so it cannot produce
+    a ``StoreLockedError`` — the lock concept simply doesn't apply to
+    this process anymore.
 
-    The CLI catches the error before uvicorn starts. There's no live HTTP
-    request handling needed because the lock is acquired at startup, not
-    per-request.
+    The Bundle 1 tests that exercised ``create_api()`` against a held
+    lock are obsolete. They've been replaced by
+    :class:`TestRestApiAndMcpHttpCoexist` in
+    ``tests/integration/test_phase4_rest_api_concurrency.py`` which
+    verifies the new architectural contract:
+    1. The REST API can run simultaneously with the MCP HTTP server.
+    2. ``lsof`` confirms the REST API PID never holds ``graph.db``.
+    3. ``cortex serve --transport http`` fails fast with an MCP-unreachable
+       error when the MCP server isn't running.
     """
 
-    def test_create_api_raises_store_locked_error_when_locked(self, held_lock):
-        """``create_api()`` should propagate StoreLockedError unchanged."""
-        from cortex.core.errors import StoreLockedError
-        from cortex.transport.api.server import create_api
+    def test_create_api_does_not_import_store(self):
+        """``create_api()`` must not import the Store layer at all.
 
-        with pytest.raises(StoreLockedError) as exc_info:
-            create_api()
-        err = exc_info.value
-        assert err.holder_pid == held_lock.pid
-        assert err.holder_cmdline is not None
-
-    def test_serve_http_cli_exits_cleanly_when_locked(self, held_lock):
-        """``cortex serve --transport http`` should exit 1 with a clean
-        error when the graph DB is locked, no Python traceback.
+        If this assertion ever fails, someone has re-introduced a
+        direct-store dependency and resurrected the lock-conflict
+        problem Phase 4 fixed.
         """
-        result = runner.invoke(app, ["serve", "--transport", "http"])
-        assert result.exit_code == 1
-        combined = result.output + (result.stderr or "")
-        assert "locked" in combined.lower()
-        assert str(held_lock.pid) in combined
-        # No traceback in user-facing output
-        assert "Traceback" not in combined
+        import cortex.transport.api.server as api_mod
+
+        # Inspect the module's actual imports (not docstrings) by
+        # looking at the compiled module globals.
+        assert not hasattr(api_mod, "Store"), (
+            "api.server imports Store — Phase 4 contract violated"
+        )
+        assert not hasattr(api_mod, "PipelineOrchestrator")
+        assert not hasattr(api_mod, "RetrievalEngine")
+        assert not hasattr(api_mod, "LearningLoop")
 
 
 class TestCreateMcpServerLockError:

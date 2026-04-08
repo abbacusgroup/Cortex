@@ -1,12 +1,23 @@
-"""Cortex REST API — FastAPI server mirroring MCP tools.
+"""Cortex REST API — FastAPI server backed by the MCP HTTP client.
 
-Provides HTTP endpoints with API key authentication, rate limiting,
-and auto-generated OpenAPI docs.
+Post-Phase-4 (2026-04-08): the REST API is now a thin client of the MCP
+HTTP server. It does NOT open ``graph.db`` directly. This was the third
+and final entry point (after the dashboard and CLI) to be migrated off
+the direct ``Store(config)`` pattern so multiple entry points can
+coexist under a single-writer MCP server without lock conflicts.
+
+Authentication keys are read from the ``CORTEX_API_KEYS`` environment
+variable (comma-separated) at startup. If the env var is empty the API
+runs in dev mode and accepts any non-empty key (matching legacy
+behavior). The previous SQLite-backed key storage has been removed —
+there is no API-level admin UI for managing keys, and the env-var
+approach is both simpler and keeps the REST API out of the store
+entirely.
 """
 
 from __future__ import annotations
 
-import json
+import os
 import time
 from collections import defaultdict
 from typing import Any
@@ -16,20 +27,13 @@ from fastapi.security import APIKeyHeader
 
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.logging import get_logger, setup_logging
-from cortex.db.store import Store
-from cortex.ontology.resolver import find_ontology
-from cortex.pipeline.orchestrator import PipelineOrchestrator
-from cortex.retrieval.engine import RetrievalEngine
-from cortex.retrieval.graph import GraphQueries
-from cortex.retrieval.learner import LearningLoop
-from cortex.retrieval.presenters import (
-    AlertPresenter,
-    BriefingPresenter,
-    DocumentPresenter,
-    DossierPresenter,
-    SynthesisPresenter,
+from cortex.transport.mcp.client import (
+    CortexMCPClient,
+    MCPConnectionError,
+    MCPServerError,
+    MCPTimeoutError,
+    MCPToolError,
 )
-from cortex.services.llm import LLMClient
 
 logger = get_logger("transport.api")
 
@@ -41,11 +45,31 @@ RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX = 100  # requests per window
 
 
-def create_api(config: CortexConfig | None = None) -> FastAPI:
-    """Create the FastAPI application.
+def _load_api_keys_from_env() -> set[str]:
+    """Parse ``CORTEX_API_KEYS`` (comma-separated) into a set.
+
+    Empty or unset returns an empty set (dev mode — any non-empty key
+    is accepted).
+    """
+    raw = os.environ.get("CORTEX_API_KEYS", "").strip()
+    if not raw:
+        return set()
+    return {k.strip() for k in raw.split(",") if k.strip()}
+
+
+def create_api(
+    config: CortexConfig | None = None,
+    *,
+    mcp_client: Any | None = None,
+) -> FastAPI:
+    """Create the Cortex REST API.
 
     Args:
         config: Cortex configuration. If None, loads from env.
+        mcp_client: MCP client instance. If None, a fresh
+            :class:`CortexMCPClient` is constructed from
+            ``config.mcp_server_url``. Tests inject
+            :class:`tests.conftest.FakeMCPClient` here.
 
     Returns:
         Configured FastAPI app.
@@ -55,53 +79,68 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
 
     setup_logging(level=config.log_level, json_output=config.log_json)
 
-    store = Store(config)
-    try:
-        ontology_path = find_ontology()
-        store.initialize(ontology_path)
-    except FileNotFoundError:
-        pass
-
-    llm = LLMClient(config)
-    pipeline = PipelineOrchestrator(store, config)
-    engine = RetrievalEngine(store)
-    graph_queries = GraphQueries(store)
-    learner = LearningLoop(store)
+    if mcp_client is None:
+        mcp_client = CortexMCPClient(
+            config.mcp_server_url, timeout_seconds=10.0
+        )
 
     app = FastAPI(
         title="Cortex API",
-        description="Cognitive knowledge system with formal ontology and reasoning.",
-        version="0.1.0",
+        description=(
+            "Cognitive knowledge system — REST surface over the canonical "
+            "MCP HTTP server."
+        ),
+        version="0.2.0",
     )
 
-    # Store config on app state for dependency injection
     app.state.config = config
-    app.state.store = store
+    app.state.mcp_client = mcp_client
+
+    # ─── MCP error handlers — translate typed client errors to HTTP ──
+
+    @app.exception_handler(MCPConnectionError)
+    async def _mcp_conn_handler(
+        request: Request, exc: MCPConnectionError
+    ):
+        return _error_response(503, f"MCP server unreachable: {exc}")
+
+    @app.exception_handler(MCPTimeoutError)
+    async def _mcp_timeout_handler(
+        request: Request, exc: MCPTimeoutError
+    ):
+        return _error_response(504, f"MCP server timed out: {exc}")
+
+    @app.exception_handler(MCPServerError)
+    async def _mcp_server_handler(
+        request: Request, exc: MCPServerError
+    ):
+        return _error_response(502, f"MCP server error: {exc}")
+
+    @app.exception_handler(MCPToolError)
+    async def _mcp_tool_handler(request: Request, exc: MCPToolError):
+        return _error_response(502, f"MCP tool error: {exc}")
 
     # ─── Auth ──────────────────────────────────────────────────────
 
     def _get_api_keys() -> set[str]:
-        """Get valid API keys from config."""
-        stored = store.content.get_config("api_keys", "")
-        keys = set()
-        if stored:
-            keys.update(k.strip() for k in stored.split(",") if k.strip())
-        # Always allow a configured key
-        master = store.content.get_config("master_api_key", "")
-        if master:
-            keys.add(master)
-        return keys
+        """Return valid API keys from the CORTEX_API_KEYS env var."""
+        return _load_api_keys_from_env()
 
     async def verify_api_key(
         api_key: str | None = Security(api_key_header),
     ) -> str:
-        """Verify the API key from the X-API-Key header."""
+        """Verify the API key from the X-API-Key header.
+
+        Dev mode: if no keys are configured via ``CORTEX_API_KEYS``, any
+        non-empty key is accepted. This matches pre-Phase-4 behavior and
+        keeps existing tests working without extra env setup.
+        """
         if api_key is None:
             raise HTTPException(status_code=401, detail="Missing API key")
 
         valid_keys = _get_api_keys()
         if not valid_keys:
-            # No keys configured — allow all (dev mode)
+            # Dev mode — any non-empty key passes
             return api_key
 
         if api_key not in valid_keys:
@@ -115,7 +154,6 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         client = request.client.host if request.client else "unknown"
         now = time.monotonic()
 
-        # Clean old entries
         _rate_limits[client] = [
             t for t in _rate_limits[client] if now - t < RATE_LIMIT_WINDOW
         ]
@@ -146,11 +184,8 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> list[dict[str, Any]]:
         """Hybrid search for knowledge objects."""
-        return engine.search(
-            query,
-            doc_type=doc_type or None,
-            project=project or None,
-            limit=limit,
+        return await mcp_client.search(
+            query, doc_type=doc_type, project=project, limit=limit
         )
 
     @app.post("/context", dependencies=[Depends(rate_limit)])
@@ -160,8 +195,7 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> list[dict[str, Any]]:
         """Get briefing (summaries) for a topic."""
-        results = engine.search(topic, limit=limit)
-        return BriefingPresenter().render(results)
+        return await mcp_client.context(topic, limit=limit)
 
     @app.post("/dossier", dependencies=[Depends(rate_limit)])
     async def dossier(
@@ -169,7 +203,7 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Build entity/topic dossier."""
-        return DossierPresenter(store, llm).render(topic)
+        return await mcp_client.dossier(topic)
 
     @app.get("/read/{obj_id}", dependencies=[Depends(rate_limit)])
     async def read(
@@ -177,10 +211,19 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Read a knowledge object in full."""
-        result = DocumentPresenter(store).render(obj_id)
+        result = await mcp_client.read(obj_id)
+        # cortex_read returns the string ``f"Not found: {obj_id}"`` for
+        # missing objects, or a dict for hits. Normalize to 404 here.
         if result is None:
-            raise HTTPException(status_code=404, detail=f"Not found: {obj_id}")
-        learner.record_access(obj_id)
+            raise HTTPException(
+                status_code=404, detail=f"Not found: {obj_id}"
+            )
+        if isinstance(result, str):
+            raise HTTPException(status_code=404, detail=result)
+        if isinstance(result, dict) and result.get("error"):
+            raise HTTPException(
+                status_code=404, detail=str(result.get("error"))
+            )
         return result
 
     @app.post("/capture", dependencies=[Depends(rate_limit)])
@@ -198,33 +241,17 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Capture a knowledge object with optional pre-classification."""
-        parsed_entities = None
-        if entities:
-            try:
-                parsed_entities = json.loads(entities)
-            except json.JSONDecodeError:
-                parsed_entities = None
-
-        parsed_properties = None
-        if properties:
-            try:
-                parsed_properties = json.loads(properties)
-            except json.JSONDecodeError:
-                parsed_properties = None
-
-        return pipeline.capture(
+        return await mcp_client.capture(
             title=title,
             content=content,
             obj_type=obj_type,
             project=project,
             tags=tags,
-            template=template or None,
-            captured_by="api",
+            template=template,
             run_pipeline=run_pipeline,
             summary=summary,
-            entities=parsed_entities,
-            extra_properties=parsed_properties,
-            confidence=0.9 if summary else 0.0,
+            entities=entities,
+            properties=properties,
         )
 
     @app.post("/link", dependencies=[Depends(rate_limit)])
@@ -235,13 +262,15 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Create a relationship."""
-        try:
-            store.create_relationship(
-                from_id=from_id, rel_type=rel_type, to_id=to_id
+        result = await mcp_client.link(
+            from_id=from_id, rel_type=rel_type, to_id=to_id
+        )
+        if isinstance(result, dict) and result.get("status") == "error":
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("message", "link failed"),
             )
-            return {"status": "created"}
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        return result
 
     @app.post("/feedback", dependencies=[Depends(rate_limit)])
     async def feedback(
@@ -250,9 +279,7 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Provide relevance feedback."""
-        if relevant:
-            learner.record_access(obj_id)
-        return {"status": "recorded", "obj_id": obj_id}
+        return await mcp_client.feedback(obj_id, relevant=relevant)
 
     @app.post("/classify/{obj_id}", dependencies=[Depends(rate_limit)])
     async def classify(
@@ -264,22 +291,19 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Classify or reclassify an existing knowledge object."""
-        doc = store.read(obj_id)
-        if doc is None:
-            raise HTTPException(status_code=404, detail=f"Not found: {obj_id}")
-
-        updates: dict[str, Any] = {"confidence": 0.9}
-        if summary:
-            updates["summary"] = summary
-        if obj_type:
-            updates["type"] = obj_type
-        if tags:
-            updates["tags"] = tags
-        if project:
-            updates["project"] = project
-
-        store.content.update(obj_id, **updates)
-        return {"status": "classified", "obj_id": obj_id, "updates": updates}
+        result = await mcp_client.classify(
+            obj_id=obj_id,
+            summary=summary,
+            obj_type=obj_type,
+            tags=tags,
+            project=project,
+        )
+        if isinstance(result, dict) and result.get("status") == "error":
+            msg = result.get("message", "")
+            if "Not found" in msg or "not found" in msg:
+                raise HTTPException(status_code=404, detail=msg)
+            raise HTTPException(status_code=400, detail=msg)
+        return result
 
     @app.get("/graph/{obj_id}", dependencies=[Depends(rate_limit)])
     async def graph_obj(
@@ -287,19 +311,17 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Get graph around an object."""
-        return {
-            "causal_chain": graph_queries.causal_chain(obj_id),
-            "evolution": graph_queries.evolution_timeline(obj_id),
-            "relationships": store.get_relationships(obj_id),
-        }
+        return await mcp_client.graph(obj_id=obj_id)
 
-    @app.get("/graph/entity/{entity_name}", dependencies=[Depends(rate_limit)])
+    @app.get(
+        "/graph/entity/{entity_name}", dependencies=[Depends(rate_limit)]
+    )
     async def graph_entity(
         entity_name: str,
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Get graph around an entity."""
-        return graph_queries.entity_neighborhood(entity_name)
+        return await mcp_client.graph(entity=entity_name)
 
     @app.get("/list", dependencies=[Depends(rate_limit)])
     async def list_objects(
@@ -309,33 +331,31 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> list[dict[str, Any]]:
         """List knowledge objects."""
-        return store.list_objects(
-            obj_type=doc_type or None,
-            project=project or None,
-            limit=limit,
+        return await mcp_client.list_objects(
+            doc_type=doc_type, project=project, limit=limit
         )
 
     # ─── Pipeline & Reasoning ─────────────────────────────────────
 
     @app.post("/pipeline/{obj_id}", dependencies=[Depends(rate_limit)])
-    async def run_pipeline(
+    async def run_pipeline_endpoint(
         obj_id: str,
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Re-run the intelligence pipeline on an existing object."""
-        doc = store.read(obj_id)
-        if doc is None:
-            raise HTTPException(status_code=404, detail=f"Not found: {obj_id}")
-        return pipeline.run_pipeline(obj_id)
+        result = await mcp_client.pipeline(obj_id)
+        if isinstance(result, dict) and result.get("error"):
+            raise HTTPException(
+                status_code=404, detail=result.get("error")
+            )
+        return result
 
     @app.post("/reason", dependencies=[Depends(rate_limit)])
     async def run_reason(
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Run advanced reasoning checks."""
-        from cortex.pipeline.advanced_reason import AdvancedReasoner
-        reasoner = AdvancedReasoner(store, llm)
-        return reasoner.run_all()
+        return await mcp_client.reason()
 
     # ─── Admin Endpoints ───────────────────────────────────────────
 
@@ -344,9 +364,7 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Get Cortex status and health."""
-        stats = store.status()
-        stats["alerts"] = AlertPresenter(store).render()
-        return stats
+        return await mcp_client.status()
 
     @app.post("/synthesize", dependencies=[Depends(rate_limit)])
     async def synthesize(
@@ -355,8 +373,8 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Generate synthesis."""
-        return SynthesisPresenter(store, llm).render(
-            period_days=period_days, project=project or None
+        return await mcp_client.synthesize(
+            period_days=period_days, project=project
         )
 
     @app.delete("/delete/{obj_id}", dependencies=[Depends(rate_limit)])
@@ -365,9 +383,23 @@ def create_api(config: CortexConfig | None = None) -> FastAPI:
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Delete a knowledge object."""
-        deleted = store.delete(obj_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail=f"Not found: {obj_id}")
-        return {"status": "deleted", "obj_id": obj_id}
+        result = await mcp_client.delete(obj_id)
+        if isinstance(result, dict):
+            status_val = result.get("status")
+            if status_val == "not_found" or (
+                status_val == "error"
+                and "not found" in result.get("message", "").lower()
+            ):
+                raise HTTPException(
+                    status_code=404, detail=f"Not found: {obj_id}"
+                )
+        return result
 
     return app
+
+
+def _error_response(status_code: int, detail: str):
+    """Build a plain JSON response for the MCP error handlers."""
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=status_code, content={"detail": detail})

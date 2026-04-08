@@ -1,4 +1,11 @@
-"""Tests for cortex.transport.api.server (REST API)."""
+"""Tests for cortex.transport.api.server (REST API).
+
+Post-Phase-4 (Bundle 7): the REST API is now a thin MCP HTTP client. The
+tests inject :class:`tests.conftest.FakeMCPClient` — an in-process
+MCP-server proxy wired to a real ``Store`` — so the existing behavioral
+assertions (capture-then-read, list filters, etc.) continue to work
+without spinning up a real MCP HTTP server.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +17,9 @@ from starlette.testclient import TestClient
 from cortex.core.config import CortexConfig
 from cortex.ontology.resolver import find_ontology
 from cortex.transport.api.server import create_api
+from cortex.transport.mcp.server import create_mcp_server
+
+from tests.conftest import FakeMCPClient
 
 ONTOLOGY_PATH = find_ontology()
 
@@ -19,9 +29,16 @@ AUTH = {"X-API-Key": API_KEY}
 
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
-    """TestClient wired to a fresh Cortex API backed by tmp_path."""
+    """TestClient wired to a fresh Cortex API backed by tmp_path.
+
+    Uses ``FakeMCPClient`` to route every endpoint through the same MCP
+    tool functions the real deployment would hit, without spinning up a
+    real HTTP MCP server.
+    """
     config = CortexConfig(data_dir=tmp_path)
-    app = create_api(config)
+    mcp = create_mcp_server(config, include_admin=True)
+    fake_client = FakeMCPClient(mcp)
+    app = create_api(config, mcp_client=fake_client)
     return TestClient(app)
 
 
@@ -433,3 +450,173 @@ class TestClassifyEndpoint:
             headers=AUTH,
         )
         assert resp.status_code == 404
+
+
+# -- Phase 4 / Bundle 7 contracts -----------------------------------------
+
+
+class TestRestApiDoesNotImportStore:
+    """Bundle 7 / Phase 4 regression guard: ``transport/api/server.py``
+    must not import the Store layer after Phase 4.
+
+    The REST API is now a thin MCP HTTP client. Re-introducing any
+    direct-store dependency would resurrect the lock-fight problem that
+    Phase 4 just fixed.
+    """
+
+    def test_server_module_does_not_import_store(self):
+        import inspect
+
+        import cortex.transport.api.server as api_mod
+
+        src = inspect.getsource(api_mod)
+        forbidden = [
+            "from cortex.db.store import Store",
+            "from cortex.pipeline.orchestrator import PipelineOrchestrator",
+            "from cortex.retrieval.engine import RetrievalEngine",
+            "from cortex.retrieval.graph import GraphQueries",
+            "from cortex.retrieval.learner import LearningLoop",
+            "from cortex.retrieval.presenters import",
+            "from cortex.services.llm import LLMClient",
+            "from cortex.ontology.resolver import find_ontology",
+        ]
+        for line in forbidden:
+            assert line not in src, (
+                f"REST API must not import {line!r} after Phase 4"
+            )
+
+    def test_server_module_imports_mcp_client(self):
+        import inspect
+
+        import cortex.transport.api.server as api_mod
+
+        src = inspect.getsource(api_mod)
+        assert "from cortex.transport.mcp.client import" in src
+        # The exception classes we need for HTTP error mapping
+        assert "MCPConnectionError" in src
+        assert "MCPTimeoutError" in src
+        assert "MCPServerError" in src
+        assert "MCPToolError" in src
+
+
+class TestRestApiMcpErrorMapping:
+    """MCP client errors map to the expected HTTP status codes."""
+
+    def _failing_client(self, exc_type, exc_args=None):
+        """Build a minimal fake client where every tool call raises."""
+
+        class FailingClient:
+            async def search(self, *a, **kw):
+                raise exc_type(*(exc_args or ()))
+
+            async def list_objects(self, *a, **kw):
+                raise exc_type(*(exc_args or ()))
+
+            async def read(self, *a, **kw):
+                raise exc_type(*(exc_args or ()))
+
+            async def capture(self, *a, **kw):
+                raise exc_type(*(exc_args or ()))
+
+            async def status(self, *a, **kw):
+                raise exc_type(*(exc_args or ()))
+
+            async def list_tools(self):
+                raise exc_type(*(exc_args or ()))
+
+        return FailingClient()
+
+    def _make_app(self, tmp_path: Path, failing_client):
+        config = CortexConfig(data_dir=tmp_path)
+        return create_api(config, mcp_client=failing_client)
+
+    def test_connection_error_maps_to_503(self, tmp_path: Path):
+        from cortex.transport.mcp.client import MCPConnectionError
+
+        client = self._failing_client(
+            MCPConnectionError, ("server down",)
+        )
+        app = self._make_app(tmp_path, client)
+        tc = TestClient(app)
+        resp = tc.post(
+            "/search", params={"query": "x"}, headers=AUTH
+        )
+        assert resp.status_code == 503
+        assert "unreachable" in resp.json()["detail"].lower()
+
+    def test_timeout_error_maps_to_504(self, tmp_path: Path):
+        from cortex.transport.mcp.client import MCPTimeoutError
+
+        client = self._failing_client(
+            MCPTimeoutError, ("timed out",)
+        )
+        app = self._make_app(tmp_path, client)
+        tc = TestClient(app)
+        resp = tc.post(
+            "/search", params={"query": "x"}, headers=AUTH
+        )
+        assert resp.status_code == 504
+        assert "timed out" in resp.json()["detail"].lower()
+
+    def test_server_error_maps_to_502(self, tmp_path: Path):
+        from cortex.transport.mcp.client import MCPServerError
+
+        client = self._failing_client(
+            MCPServerError, ("500 from upstream",)
+        )
+        app = self._make_app(tmp_path, client)
+        tc = TestClient(app)
+        resp = tc.post(
+            "/search", params={"query": "x"}, headers=AUTH
+        )
+        assert resp.status_code == 502
+        assert "server error" in resp.json()["detail"].lower()
+
+    def test_tool_error_maps_to_502(self, tmp_path: Path):
+        from cortex.transport.mcp.client import MCPToolError
+
+        client = self._failing_client(MCPToolError, ("boom",))
+        app = self._make_app(tmp_path, client)
+        tc = TestClient(app)
+        resp = tc.post(
+            "/search", params={"query": "x"}, headers=AUTH
+        )
+        assert resp.status_code == 502
+        assert "tool error" in resp.json()["detail"].lower()
+
+
+class TestRestApiKeyFromEnvVar:
+    """Bundle 7: auth keys now come from ``CORTEX_API_KEYS`` env var.
+    Legacy SQLite-backed key storage was removed.
+    """
+
+    def test_no_env_var_is_dev_mode(self, client: TestClient, monkeypatch):
+        monkeypatch.delenv("CORTEX_API_KEYS", raising=False)
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "anything-goes"},
+        )
+        assert resp.status_code == 200
+
+    def test_configured_keys_accept_matching(
+        self, client: TestClient, monkeypatch
+    ):
+        monkeypatch.setenv("CORTEX_API_KEYS", "good-key,another")
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "good-key"},
+        )
+        assert resp.status_code == 200
+
+    def test_configured_keys_reject_nonmatching(
+        self, client: TestClient, monkeypatch
+    ):
+        monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "bad-key"},
+        )
+        assert resp.status_code == 401
