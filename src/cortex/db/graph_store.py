@@ -84,7 +84,7 @@ def _current_cmdline() -> str:
     if cmdline:
         return cmdline
     try:
-        return " ".join([sys.executable] + sys.argv)
+        return " ".join([sys.executable, *sys.argv])
     except Exception:
         return "<unknown>"
 

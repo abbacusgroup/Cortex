@@ -264,16 +264,9 @@ class TestDashboardStartupProbe:
         from cortex.transport.mcp.client import MCPConnectionError
 
         def fake_probe(url, **kw):
-            raise MCPConnectionError(
-                f"Cannot reach MCP server at {url}",
-                holder_pid=None if False else None,  # not actually a lock error
-            )
-
-        # MCPConnectionError doesn't take holder_pid kwarg — fix
-        def real_fake_probe(url, **kw):
             raise MCPConnectionError(f"Cannot reach MCP server at {url}")
 
-        monkeypatch.setattr("cortex.cli.main._probe_mcp_server", real_fake_probe)
+        monkeypatch.setattr("cortex.cli.main._probe_mcp_server", fake_probe)
         result = runner.invoke(app, ["dashboard"])
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")

@@ -836,7 +836,7 @@ class TestAutoRecoverStaleLock:
 
         import cortex.db.graph_store as gs_mod
 
-        db, marker, rocksdb_lock = self._simulate_crashed_holder(tmp_path)
+        db, marker, _rocksdb_lock = self._simulate_crashed_holder(tmp_path)
 
         # Make the FIRST ox.Store call raise a lock-shaped OSError, then let
         # the retry go through normally.
@@ -873,7 +873,7 @@ class TestAutoRecoverStaleLock:
 
         import cortex.db.graph_store as gs_mod
 
-        db, marker, rocksdb_lock = self._simulate_crashed_holder(tmp_path)
+        db, _marker, rocksdb_lock = self._simulate_crashed_holder(tmp_path)
         assert rocksdb_lock.exists()
 
         original_store_cls = ox_mod.Store
@@ -1096,7 +1096,7 @@ class TestAutoRecoverStaleLock:
 
         import cortex.db.graph_store as gs_mod
 
-        db, marker, rocksdb_lock = self._simulate_crashed_holder(tmp_path)
+        db, _marker, _rocksdb_lock = self._simulate_crashed_holder(tmp_path)
 
         original_store_cls = ox_mod.Store
         call_count = {"n": 0}

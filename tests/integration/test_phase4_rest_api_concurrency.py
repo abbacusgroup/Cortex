@@ -207,7 +207,7 @@ class TestRestApiAndMcpHttpCoexist:
     """
 
     def test_both_servers_start_successfully(self, mcp_plus_rest_api):
-        mcp_url, rest_url, mcp_proc, rest_proc = mcp_plus_rest_api
+        _mcp_url, rest_url, mcp_proc, rest_proc = mcp_plus_rest_api
         # Both alive
         assert mcp_proc.poll() is None
         assert rest_proc.poll() is None
@@ -218,7 +218,7 @@ class TestRestApiAndMcpHttpCoexist:
             assert resp.status == 200
 
     def test_rest_api_search_forwards_to_mcp(self, mcp_plus_rest_api):
-        mcp_url, rest_url, _mcp, _rest = mcp_plus_rest_api
+        _mcp_url, rest_url, _mcp, _rest = mcp_plus_rest_api
         req = urllib.request.Request(
             f"{rest_url}/search?query=test",
             method="POST",
