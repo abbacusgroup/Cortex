@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).parent.parent
 
 
@@ -64,6 +66,26 @@ class TestPyprojectToml:
         content = (PROJECT_ROOT / "pyproject.toml").read_text()
         for dep in ("typer", "fastapi", "pyoxigraph", "litellm"):
             assert dep in content, f"Missing dependency: {dep}"
+
+    def test_embeddings_are_optional(self):
+        content = (PROJECT_ROOT / "pyproject.toml").read_text()
+        assert 'embeddings = ["sentence-transformers' in content
+
+    def test_version_consistency(self):
+        """pyproject.toml version must match cortex.__version__."""
+        import cortex
+
+        toml_content = (PROJECT_ROOT / "pyproject.toml").read_text()
+        # Extract version = "X.Y.Z" from pyproject.toml
+        for line in toml_content.splitlines():
+            if line.startswith("version = "):
+                toml_version = line.split('"')[1]
+                break
+        else:
+            pytest.fail("No version found in pyproject.toml")
+        assert toml_version == cortex.__version__, (
+            f"pyproject.toml has {toml_version!r} but cortex.__version__ is {cortex.__version__!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

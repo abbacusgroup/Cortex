@@ -1,0 +1,59 @@
+name: release
+
+# Triggered by pushing a version tag (e.g. v0.2.0).
+# 1. Re-runs the full test suite via the reusable test workflow.
+# 2. Builds wheel + sdist with uv.
+# 3. Creates a GitHub Release with the build artifacts attached.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  build:
+    name: Build wheel + sdist
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Build
+        run: uv build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  github-release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create release
+        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

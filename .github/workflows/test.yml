@@ -19,6 +19,7 @@ on:
     # Daily at 06:00 UTC — runs the macOS job for the macOS-only suite.
     - cron: "0 6 * * *"
   workflow_dispatch: {}
+  workflow_call: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
