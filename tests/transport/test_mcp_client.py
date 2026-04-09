@@ -660,6 +660,158 @@ class TestCortexMCPClientCancellation:
         assert transport_cm.__aexit__.called
 
 
+class TestCortexMCPClientExceptionGroupUnwrap:
+    """Bundle 10.8: BaseExceptionGroup unwrapping in CortexMCPClient.
+
+    anyio's TaskGroup wraps transport errors in BaseExceptionGroup. Without
+    the Bundle 10.8 handler, the generic ``except Exception`` misclassifies
+    them as ``MCPConnectionError("...unhandled errors in a TaskGroup...")``.
+    These tests verify the new handler correctly unwraps groups, classifies
+    by priority, and propagates cancellation cleanly.
+    """
+
+    def _make_raising_cm(self, exc: BaseException):
+        """Return a mock async CM that raises ``exc`` on ``__aenter__``."""
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(side_effect=exc)
+        cm.__aexit__ = AsyncMock(return_value=None)
+        return cm
+
+    @pytest.mark.asyncio
+    async def test_timeout_in_exception_group_becomes_mcp_timeout(self):
+        eg = ExceptionGroup(
+            "unhandled errors in a TaskGroup (1 sub-exception)",
+            [httpx.ReadTimeout("read timed out")],
+        )
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=self._make_raising_cm(eg),
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp", timeout_seconds=5)
+            with pytest.raises(MCPTimeoutError) as exc_info:
+                await client.search("anything")
+            assert "timed out" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_connect_error_in_exception_group_becomes_mcp_connection(self):
+        eg = ExceptionGroup(
+            "1 sub-exception",
+            [httpx.ConnectError("Connection refused")],
+        )
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=self._make_raising_cm(eg),
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp")
+            with pytest.raises(MCPConnectionError) as exc_info:
+                await client.search("anything")
+            assert "Cannot reach" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_http_status_in_exception_group_becomes_server_error(self):
+        response = MagicMock()
+        response.status_code = 502
+        eg = ExceptionGroup(
+            "1 sub-exception",
+            [httpx.HTTPStatusError("Bad Gateway", request=MagicMock(), response=response)],
+        )
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=self._make_raising_cm(eg),
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp")
+            with pytest.raises(MCPServerError) as exc_info:
+                await client.search("anything")
+            assert "502" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_multi_exception_group_prioritizes_timeout(self):
+        eg = ExceptionGroup(
+            "2 sub-exceptions",
+            [
+                httpx.ConnectError("refused"),
+                httpx.ReadTimeout("timed out"),
+            ],
+        )
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=self._make_raising_cm(eg),
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp", timeout_seconds=5)
+            with pytest.raises(MCPTimeoutError):
+                await client.search("anything")
+
+    @pytest.mark.asyncio
+    async def test_exception_group_with_mcp_tool_error_passes_through(self):
+        eg = ExceptionGroup(
+            "1 sub-exception",
+            [MCPToolError("tool failed", context={"tool": "x"})],
+        )
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=self._make_raising_cm(eg),
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp")
+            with pytest.raises(MCPToolError):
+                await client.search("anything")
+
+    @pytest.mark.asyncio
+    async def test_nested_exception_group_unwraps_recursively(self):
+        inner = ExceptionGroup("inner", [httpx.ReadTimeout("timeout")])
+        outer = ExceptionGroup("outer", [inner])
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=self._make_raising_cm(outer),
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp", timeout_seconds=5)
+            with pytest.raises(MCPTimeoutError):
+                await client.search("anything")
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_in_group_propagates_as_cancelled(self):
+        import asyncio
+
+        eg = BaseExceptionGroup(
+            "1 sub-exception",
+            [asyncio.CancelledError()],
+        )
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=self._make_raising_cm(eg),
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp")
+            with pytest.raises(asyncio.CancelledError):
+                await client.search("anything")
+
+    @pytest.mark.asyncio
+    async def test_bare_exceptions_still_work_after_refactor(self):
+        """Regression: bare httpx.ReadTimeout (not in a group) must still
+        produce MCPTimeoutError, not fall through to the generic handler.
+        """
+        cm = self._make_raising_cm(httpx.ReadTimeout("read timed out"))
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=cm,
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp", timeout_seconds=5)
+            with pytest.raises(MCPTimeoutError):
+                await client.search("anything")
+
+    @pytest.mark.asyncio
+    async def test_list_tools_also_unwraps_exception_groups(self):
+        eg = ExceptionGroup(
+            "1 sub-exception",
+            [httpx.ReadTimeout("timed out")],
+        )
+        with patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=self._make_raising_cm(eg),
+        ):
+            client = CortexMCPClient("http://localhost:1314/mcp", timeout_seconds=5)
+            with pytest.raises(MCPTimeoutError):
+                await client.list_tools()
+
+
 class TestCortexMCPClientTypedSignatures:
     """Bundle 5 / A7: Phase 2.C — regression guard that every public method
     on CortexMCPClient has a return type annotation. The wrapper is a typed

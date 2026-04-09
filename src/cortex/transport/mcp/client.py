@@ -12,6 +12,7 @@ endpoints can map them to the right HTTP status code.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -76,9 +77,92 @@ async def _http_client_session(url: str, timeout_seconds: float):
     with the timeout configured on it. This helper hides the boilerplate so
     call sites can stay as ``async with _http_client_session(url, t) as (r, w, sid):``.
     """
-    async with httpx.AsyncClient(timeout=timeout_seconds) as http_client:
-        async with streamable_http_client(url, http_client=http_client) as result:
-            yield result
+    async with (
+        httpx.AsyncClient(timeout=timeout_seconds) as http_client,
+        streamable_http_client(url, http_client=http_client) as result,
+    ):
+        yield result
+
+
+# ─── Bundle 10.8: BaseExceptionGroup unwrap helpers ───────────────────────
+
+
+def _flatten_exception_group(eg: BaseExceptionGroup) -> list[BaseException]:
+    """Recursively flatten an exception group to its leaf (non-group) exceptions."""
+    leaves: list[BaseException] = []
+
+    def _collect(e: BaseException) -> None:
+        if isinstance(e, BaseExceptionGroup):
+            for sub in e.exceptions:
+                _collect(sub)
+        else:
+            leaves.append(e)
+
+    _collect(eg)
+    return leaves
+
+
+def _pick_significant_leaf(leaves: list[BaseException]) -> BaseException:
+    """Pick the most significant leaf from a flattened exception group.
+
+    Priority: already-classified ``MCPClientError`` > timeout > HTTP status >
+    connection error > first leaf as fallback.
+    """
+    if not leaves:
+        return RuntimeError("empty exception group")
+    for leaf in leaves:
+        if isinstance(leaf, MCPClientError):
+            return leaf
+    for leaf in leaves:
+        if isinstance(leaf, (httpx.TimeoutException, TimeoutError)):
+            return leaf
+    for leaf in leaves:
+        if isinstance(leaf, httpx.HTTPStatusError):
+            return leaf
+    for leaf in leaves:
+        if isinstance(leaf, (httpx.ConnectError, ConnectionError)):
+            return leaf
+    return leaves[0]
+
+
+def _classify_transport_exception(
+    exc: BaseException,
+    *,
+    url: str,
+    timeout: float,
+) -> MCPClientError:
+    """Map a single transport-layer exception to a typed MCP client error.
+
+    Used for both bare exceptions (from the normal ``except Exception`` path)
+    and for the representative leaf of a ``BaseExceptionGroup``. Cancellation
+    is NOT handled here — callers must check for ``asyncio.CancelledError``
+    before calling this helper.
+    """
+    if isinstance(exc, MCPClientError):
+        return exc
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return MCPTimeoutError(
+            f"MCP server at {url} timed out after {timeout}s",
+            context={"url": url, "timeout": timeout},
+            cause=exc,
+        )
+    if isinstance(exc, httpx.HTTPStatusError):
+        return MCPServerError(
+            f"MCP server at {url} returned {exc.response.status_code}",
+            context={"url": url, "status": exc.response.status_code},
+            cause=exc,
+        )
+    if isinstance(exc, (httpx.ConnectError, ConnectionError)):
+        return MCPConnectionError(
+            f"Cannot reach MCP server at {url}",
+            context={"url": url},
+            cause=exc,
+        )
+    return MCPConnectionError(
+        f"MCP transport error talking to {url}: {exc}",
+        context={"url": url},
+        cause=exc,
+    )
 
 
 def _unwrap_call_tool_result(name: str, result: Any) -> Any:
@@ -149,43 +233,42 @@ class CortexMCPClient:
         # surface a clean MCPConnectionError instead.
         result: Any = _UNSET
         try:
-            async with _http_client_session(
-                self.url, self._timeout_seconds
-            ) as (read_stream, write_stream, _get_session_id):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    result = await session.call_tool(
-                        name,
-                        arguments=arguments or {},
-                        read_timeout_seconds=self.timeout,
-                    )
-        except httpx.ConnectError as e:
-            raise MCPConnectionError(
-                f"Cannot reach MCP server at {self.url}",
-                context={"url": self.url},
-                cause=e,
-            ) from e
-        except httpx.TimeoutException as e:
-            raise MCPTimeoutError(
-                f"MCP server at {self.url} timed out after {self._timeout_seconds}s",
-                context={"url": self.url, "timeout": self._timeout_seconds},
-                cause=e,
-            ) from e
-        except httpx.HTTPStatusError as e:
-            raise MCPServerError(
-                f"MCP server at {self.url} returned {e.response.status_code}",
-                context={"url": self.url, "status": e.response.status_code},
-                cause=e,
-            ) from e
+            async with (
+                _http_client_session(self.url, self._timeout_seconds) as (
+                    read_stream,
+                    write_stream,
+                    _get_session_id,
+                ),
+                ClientSession(read_stream, write_stream) as session,
+            ):
+                await session.initialize()
+                result = await session.call_tool(
+                    name,
+                    arguments=arguments or {},
+                    read_timeout_seconds=self.timeout,
+                )
         except MCPClientError:
             raise
+        except BaseExceptionGroup as eg:
+            # Bundle 10.8: anyio wraps transport errors in
+            # BaseExceptionGroup when they fire inside ClientSession's
+            # internal TaskGroup. Without this handler, timeouts surface
+            # as "unhandled errors in a TaskGroup (1 sub-exception)".
+            leaves = _flatten_exception_group(eg)
+            cancelled = next(
+                (e for e in leaves if isinstance(e, asyncio.CancelledError)),
+                None,
+            )
+            if cancelled is not None:
+                raise cancelled from None
+            raise _classify_transport_exception(
+                _pick_significant_leaf(leaves),
+                url=self.url,
+                timeout=self._timeout_seconds,
+            ) from eg
         except Exception as e:
-            # Wrap any other transport-level error so callers don't have to
-            # know about anyio/httpx internals.
-            raise MCPConnectionError(
-                f"MCP transport error talking to {self.url}: {e}",
-                context={"url": self.url},
-                cause=e,
+            raise _classify_transport_exception(
+                e, url=self.url, timeout=self._timeout_seconds
             ) from e
         if result is _UNSET:
             raise MCPConnectionError(
@@ -202,31 +285,34 @@ class CortexMCPClient:
         """
         result: Any = _UNSET
         try:
-            async with _http_client_session(
-                self.url, self._timeout_seconds
-            ) as (read_stream, write_stream, _):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    result = await session.list_tools()
-        except httpx.ConnectError as e:
-            raise MCPConnectionError(
-                f"Cannot reach MCP server at {self.url}",
-                context={"url": self.url},
-                cause=e,
-            ) from e
-        except httpx.TimeoutException as e:
-            raise MCPTimeoutError(
-                f"MCP server at {self.url} timed out",
-                context={"url": self.url},
-                cause=e,
-            ) from e
+            async with (
+                _http_client_session(self.url, self._timeout_seconds) as (
+                    read_stream,
+                    write_stream,
+                    _,
+                ),
+                ClientSession(read_stream, write_stream) as session,
+            ):
+                await session.initialize()
+                result = await session.list_tools()
         except MCPClientError:
             raise
+        except BaseExceptionGroup as eg:
+            leaves = _flatten_exception_group(eg)
+            cancelled = next(
+                (e for e in leaves if isinstance(e, asyncio.CancelledError)),
+                None,
+            )
+            if cancelled is not None:
+                raise cancelled from None
+            raise _classify_transport_exception(
+                _pick_significant_leaf(leaves),
+                url=self.url,
+                timeout=self._timeout_seconds,
+            ) from eg
         except Exception as e:
-            raise MCPConnectionError(
-                f"MCP transport error: {e}",
-                context={"url": self.url},
-                cause=e,
+            raise _classify_transport_exception(
+                e, url=self.url, timeout=self._timeout_seconds
             ) from e
         if result is _UNSET:
             raise MCPConnectionError(
