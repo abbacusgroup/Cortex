@@ -1,5 +1,5 @@
 [project]
-name = "cortex"
+name = "abbacus-cortex"
 version = "0.1.0"
 description = "Cognitive knowledge system with formal ontology, reasoning, and intelligence serving"
 readme = "README.md"

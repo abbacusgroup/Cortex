@@ -8,10 +8,10 @@ Cortex captures knowledge objects (decisions, lessons, fixes, sessions, research
 
 ```bash
 # Full install (semantic + keyword search)
-pip install cortex[embeddings]
+pip install abbacus-cortex[embeddings]
 
 # Lightweight (keyword search only, no PyTorch)
-pip install cortex
+pip install abbacus-cortex
 
 # From source
 git clone https://github.com/abbacusgroup/Cortex.git
