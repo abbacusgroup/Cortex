@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — Bundle 10.8 (BaseExceptionGroup unwrapping in CortexMCPClient)
+
+- **"Unhandled errors in a TaskGroup" misclassification** in
+  `transport/mcp/client.py`: when anyio's `TaskGroup` wraps a
+  transport error (e.g. `httpx.ReadTimeout`) in a
+  `BaseExceptionGroup`, the new `except BaseExceptionGroup` handler
+  in both `_call` and `list_tools` unwraps the group via
+  `_flatten_exception_group`, picks the most significant leaf via
+  `_pick_significant_leaf` (priority: timeout > HTTP status >
+  connection > first), and classifies it using a shared
+  `_classify_transport_exception` helper. Timeouts that previously
+  surfaced as `MCPConnectionError("...unhandled errors in a
+  TaskGroup (1 sub-exception)")` now produce a clean
+  `MCPTimeoutError("MCP server at ... timed out after 30.0s")`.
+  `asyncio.CancelledError` inside a group is detected and re-raised
+  to preserve clean cancellation semantics. 9 new tests in
+  `tests/transport/test_mcp_client.py`.
+
+### Changed — Bundle 10.8
+
+- **SIM117 refactor** in `transport/mcp/client.py`: combined the
+  three nested `async with` pairs in `_http_client_session`, `_call`,
+  and `list_tools` into single parenthesized `async with` statements.
+  Semantically equivalent per PEP 617. These were the three sites
+  that blocked the SIM family from enabling in Bundle 10.5c; now
+  `ruff --select SIM117` passes clean on `client.py`.
+- **Unified exception classification** in `transport/mcp/client.py`:
+  the per-exception-type `except` ladders in `_call` and `list_tools`
+  (4 clauses each, duplicated) are replaced by a shared helper
+  `_classify_transport_exception` that maps any single transport
+  exception to the correct typed error class. The `BaseExceptionGroup`
+  handler calls the same helper after unwrapping. Reduces duplication
+  and ensures bare and grouped exceptions are classified identically.
+
 ### Added — Bundle 10 (SPARQL + templates + ruff expansion)
 
 - **SPARQL string-literal escape helper** (`_sparql_escape_string`) in
