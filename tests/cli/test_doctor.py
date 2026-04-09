@@ -208,3 +208,136 @@ class TestDoctorUnlock:
         combined = result.output + (result.stderr or "")
         assert "does NOT match" in combined or "reuse" in combined.lower()
         assert "--force" in combined
+
+
+class TestDoctorLogs:
+    """Bundle 10.7 / F.4: ``cortex doctor logs`` inspects and rotates the
+    LaunchAgent log files under ``~/.cortex/`` (or ``CORTEX_DATA_DIR``).
+    """
+
+    def _write_log(self, tmp_path: Path, name: str, content: str) -> Path:
+        path = tmp_path / name
+        path.write_text(content)
+        return path
+
+    def test_logs_summary_reports_sizes_and_counts(self, tmp_path: Path):
+        """Default view shows size, line count, mtime, and status badge
+        for each existing log file, and reports missing ones.
+        """
+        self._write_log(
+            tmp_path, "mcp-http.log", "line1\nline2\nline3\n"
+        )
+        self._write_log(tmp_path, "mcp-http.err", "error1\nerror2\n")
+        # dashboard.log and dashboard.err intentionally missing
+
+        result = runner.invoke(app, ["doctor", "logs"])
+        assert result.exit_code == 0, (
+            f"unexpected exit: {result.output} {result.stderr}"
+        )
+        out = result.output
+        # Both present files are listed with a status and line count
+        assert "mcp-http.log" in out
+        assert "mcp-http.err" in out
+        assert "3 lines" in out
+        assert "2 lines" in out
+        assert "GREEN" in out  # small files → green badge
+        # Missing files reported as not present
+        assert "dashboard.log" in out
+        assert "dashboard.err" in out
+        assert "(not present)" in out
+
+    def test_logs_tail_shows_last_n_lines(self, tmp_path: Path):
+        """``--tail N`` shows the last N lines of each existing file,
+        skipping missing files without error.
+        """
+        content = "".join(f"line{i}\n" for i in range(1, 11))  # 10 lines
+        self._write_log(tmp_path, "mcp-http.log", content)
+
+        result = runner.invoke(app, ["doctor", "logs", "--tail", "3"])
+        assert result.exit_code == 0, (
+            f"unexpected exit: {result.output} {result.stderr}"
+        )
+        out = result.output
+        # Header with the tailed path
+        assert "mcp-http.log" in out
+        # Last 3 lines present
+        assert "line8" in out
+        assert "line9" in out
+        assert "line10" in out
+        # Earlier lines absent
+        assert "line1\n" not in out
+        assert "line7" not in out
+
+    def test_logs_rotate_creates_old_and_truncates(self, tmp_path: Path):
+        """``--rotate`` copies each non-empty log to ``<file>.old`` and
+        truncates the live file to zero length.
+        """
+        original = "original content\nwith two lines\n"
+        log = self._write_log(tmp_path, "mcp-http.log", original)
+        assert log.stat().st_size > 0
+
+        result = runner.invoke(app, ["doctor", "logs", "--rotate"])
+        assert result.exit_code == 0, (
+            f"unexpected exit: {result.output} {result.stderr}"
+        )
+        # Live file is empty
+        assert log.exists()
+        assert log.stat().st_size == 0
+        # Backup exists and contains the original content
+        backup = tmp_path / "mcp-http.log.old"
+        assert backup.exists()
+        assert backup.read_text() == original
+        # Output mentions rotation
+        assert "Rotated" in result.output
+
+    def test_logs_rotate_overwrites_previous_old(self, tmp_path: Path):
+        """Running ``--rotate`` twice overwrites the previous ``.old``
+        with the most recent rotation; no stacking of ``.old.old``.
+        """
+        log = self._write_log(tmp_path, "mcp-http.log", "first\n")
+        # First rotation
+        r1 = runner.invoke(app, ["doctor", "logs", "--rotate"])
+        assert r1.exit_code == 0
+        assert (tmp_path / "mcp-http.log.old").read_text() == "first\n"
+        assert log.stat().st_size == 0
+
+        # Write new content and rotate again
+        log.write_text("second\n")
+        r2 = runner.invoke(app, ["doctor", "logs", "--rotate"])
+        assert r2.exit_code == 0
+        assert (tmp_path / "mcp-http.log.old").read_text() == "second\n"
+        assert log.stat().st_size == 0
+        # No .old.old stacking
+        assert not (tmp_path / "mcp-http.log.old.old").exists()
+
+    def test_logs_missing_files_graceful(self, tmp_path: Path):
+        """With no log files present, all three views exit cleanly
+        without raising.
+        """
+        result = runner.invoke(app, ["doctor", "logs"])
+        assert result.exit_code == 0, (
+            f"summary failed: {result.output} {result.stderr}"
+        )
+        assert "(not present)" in result.output
+
+        result = runner.invoke(app, ["doctor", "logs", "--tail", "10"])
+        assert result.exit_code == 0, (
+            f"tail failed: {result.output} {result.stderr}"
+        )
+
+        result = runner.invoke(app, ["doctor", "logs", "--rotate"])
+        assert result.exit_code == 0, (
+            f"rotate failed: {result.output} {result.stderr}"
+        )
+        # Rotate with nothing to do should report so
+        assert "not present" in result.output or "Skipped" in result.output
+
+    def test_logs_rotate_skips_empty_files(self, tmp_path: Path):
+        """An empty live log should not produce a ``.old`` backup."""
+        log = self._write_log(tmp_path, "mcp-http.log", "")
+        assert log.stat().st_size == 0
+
+        result = runner.invoke(app, ["doctor", "logs", "--rotate"])
+        assert result.exit_code == 0
+        assert not (tmp_path / "mcp-http.log.old").exists()
+        assert "already empty" in result.output or "Skipped" in result.output

@@ -1669,6 +1669,216 @@ def doctor_unlock(
     )
 
 
+# --------------------------------------------------------------------------- #
+# Bundle 10.7 / F.4 — ``cortex doctor logs``                                  #
+# --------------------------------------------------------------------------- #
+
+# Log files written by the LaunchAgents (see deploy/*.plist) and by
+# ``cortex dashboard --spawn-mcp`` via ``_spawn_mcp_subprocess``.
+_LAUNCHAGENT_LOG_FILENAMES = (
+    "mcp-http.log",
+    "mcp-http.err",
+    "dashboard.log",
+    "dashboard.err",
+)
+
+# Size thresholds for the summary status badge.
+_LOG_SIZE_GREEN_MAX = 10 * 1024 * 1024   # 10 MB
+_LOG_SIZE_YELLOW_MAX = 100 * 1024 * 1024  # 100 MB
+
+
+def _format_bytes(n: int) -> str:
+    """Return a compact human-readable byte string (e.g. ``17.4 MB``)."""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    if n < 1024 * 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    return f"{n / (1024 * 1024 * 1024):.2f} GB"
+
+
+def _log_status_color(size_bytes: int) -> str:
+    if size_bytes < _LOG_SIZE_GREEN_MAX:
+        return typer.colors.GREEN
+    if size_bytes < _LOG_SIZE_YELLOW_MAX:
+        return typer.colors.YELLOW
+    return typer.colors.RED
+
+
+def _log_status_label(size_bytes: int) -> str:
+    if size_bytes < _LOG_SIZE_GREEN_MAX:
+        return "GREEN"
+    if size_bytes < _LOG_SIZE_YELLOW_MAX:
+        return "YELLOW"
+    return "RED"
+
+
+def _count_lines(path: Path) -> int:
+    """Count newlines in a file without loading it into memory."""
+    count = 0
+    with path.open("rb") as f:
+        while chunk := f.read(65536):
+            count += chunk.count(b"\n")
+    return count
+
+
+def _tail_lines(path: Path, n: int) -> list[str]:
+    """Return the last ``n`` lines of ``path`` using a bounded deque."""
+    from collections import deque
+
+    with path.open("r", errors="replace") as f:
+        return list(deque(f, maxlen=n))
+
+
+def _summarize_logs(log_paths: list[Path]) -> None:
+    """Default view for ``cortex doctor logs`` — show per-file size,
+    line count, mtime, and a status badge.
+    """
+    import datetime
+
+    any_present = False
+    for path in log_paths:
+        if not path.exists():
+            typer.echo(f"  {path.name:<20}  (not present)")
+            continue
+        any_present = True
+        stat = path.stat()
+        size_bytes = stat.st_size
+        lines = _count_lines(path)
+        mtime = datetime.datetime.fromtimestamp(stat.st_mtime).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        color = _log_status_color(size_bytes)
+        label = _log_status_label(size_bytes)
+        typer.echo(
+            f"  {path.name:<20}  {_format_bytes(size_bytes):>10}  "
+            f"{lines:>10} lines  last modified {mtime}  ",
+            nl=False,
+        )
+        typer.secho(f"[{label}]", fg=color)
+    if not any_present:
+        typer.secho(
+            "  No log files found under the current data dir.",
+            fg=typer.colors.GREEN,
+        )
+
+
+def _tail_logs(log_paths: list[Path], n: int) -> None:
+    """``--tail N`` view: show the last ``n`` lines of each existing
+    log file.
+    """
+    for path in log_paths:
+        if not path.exists():
+            continue
+        typer.secho(f"==> {path} (last {n} lines) <==", fg=typer.colors.CYAN)
+        lines = _tail_lines(path, n)
+        if not lines:
+            typer.echo("  (empty)")
+            continue
+        for line in lines:
+            # Preserve existing newlines, strip only the trailing one.
+            typer.echo(line.rstrip("\n"))
+        typer.echo("")
+
+
+def _rotate_logs(log_paths: list[Path]) -> None:
+    """``--rotate``: back up each non-empty log to ``<file>.old`` and
+    truncate the live file to zero length.
+
+    Safe while ``launchd`` is running the LaunchAgent because
+    ``StandardOutPath`` / ``StandardErrorPath`` are opened with
+    ``O_APPEND``: every subsequent ``write()`` in the server process
+    atomically seeks to EOF first, so after ``os.truncate(path, 0)`` the
+    next write lands at offset 0. No restart needed.
+    """
+    import os as _os
+    import shutil
+
+    total_freed = 0
+    rotated: list[tuple[str, int]] = []
+    skipped: list[str] = []
+
+    for path in log_paths:
+        if not path.exists():
+            skipped.append(f"{path.name} (not present)")
+            continue
+        size_before = path.stat().st_size
+        if size_before == 0:
+            skipped.append(f"{path.name} (already empty)")
+            continue
+
+        backup = path.with_name(path.name + ".old")
+        try:
+            if backup.exists():
+                backup.unlink()
+            shutil.copyfile(path, backup)
+            _os.truncate(path, 0)
+        except OSError as e:
+            typer.secho(
+                f"  Failed to rotate {path}: {e}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1) from e
+
+        rotated.append((path.name, size_before))
+        total_freed += size_before
+
+    if rotated:
+        typer.secho("Rotated:", fg=typer.colors.GREEN)
+        for name, size in rotated:
+            typer.echo(f"  {name:<20}  {_format_bytes(size):>10}  → {name}.old")
+        typer.secho(
+            f"Total freed: {_format_bytes(total_freed)}",
+            fg=typer.colors.GREEN,
+        )
+    if skipped:
+        typer.echo("Skipped:")
+        for label in skipped:
+            typer.echo(f"  {label}")
+
+
+@doctor_app.command("logs")
+def doctor_logs(
+    tail: int = typer.Option(
+        0,
+        "--tail",
+        "-n",
+        help="Show the last N lines of each log file (0 = summary view).",
+    ),
+    rotate: bool = typer.Option(
+        False,
+        "--rotate",
+        help=(
+            "Back up current log files to <file>.old and truncate them to "
+            "zero length. Safe while the LaunchAgent is running — launchd "
+            "opens stdout/stderr with O_APPEND, so the server's next "
+            "write lands at offset 0 without needing a restart."
+        ),
+    ),
+) -> None:
+    """Inspect or rotate the Cortex LaunchAgent log files.
+
+    Default: show size, line count, last-modified time, and a traffic-light
+    status badge for each of ``mcp-http.log``, ``mcp-http.err``,
+    ``dashboard.log``, ``dashboard.err`` under the current data dir.
+    """
+    config = load_config()
+    log_paths = [config.data_dir / name for name in _LAUNCHAGENT_LOG_FILENAMES]
+
+    if rotate:
+        _rotate_logs(log_paths)
+        raise typer.Exit(0)
+
+    if tail > 0:
+        _tail_logs(log_paths, tail)
+        raise typer.Exit(0)
+
+    typer.secho(f"Log files under {config.data_dir}:", fg=typer.colors.CYAN)
+    _summarize_logs(log_paths)
+
+
 # Allow `python -m cortex.cli.main ...` invocation alongside the `cortex`
 # console_scripts entry point. Used by the integration test suite.
 if __name__ == "__main__":
