@@ -204,18 +204,18 @@ class GraphQueries:
                         self._traverse_supersedes(
                             rel["other_id"], chain, visited, direction
                         )
-            elif direction == "forward":
-                if (
-                    rel["rel_type"] == "supersedes"
-                    and rel["direction"] == "incoming"
-                    and rel["other_id"] not in visited
-                ):
-                    other = self.store.content.get(rel["other_id"])
-                    if other:
-                        chain.append(self._summarize(other))
-                        self._traverse_supersedes(
-                            rel["other_id"], chain, visited, direction
-                        )
+            elif (
+                direction == "forward"
+                and rel["rel_type"] == "supersedes"
+                and rel["direction"] == "incoming"
+                and rel["other_id"] not in visited
+            ):
+                other = self.store.content.get(rel["other_id"])
+                if other:
+                    chain.append(self._summarize(other))
+                    self._traverse_supersedes(
+                        rel["other_id"], chain, visited, direction
+                    )
 
     def project_overview(self, project: str) -> dict[str, Any]:
         """Get all objects, entities, and relationships for a project.

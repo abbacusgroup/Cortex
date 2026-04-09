@@ -388,13 +388,15 @@ class TestHttpClientSession:
             side_effect=httpx.ConnectError("Connection refused")
         )
         inner_cm.__aexit__ = AsyncMock(return_value=None)
-        with patch(
-            "cortex.transport.mcp.client.streamable_http_client",
-            return_value=inner_cm,
+        with (
+            patch(
+                "cortex.transport.mcp.client.streamable_http_client",
+                return_value=inner_cm,
+            ),
+            pytest.raises(httpx.ConnectError),
         ):
-            with pytest.raises(httpx.ConnectError):
-                async with _http_client_session("http://test/mcp", 5.0):
-                    pass
+            async with _http_client_session("http://test/mcp", 5.0):
+                pass
 
     @pytest.mark.asyncio
     async def test_50_concurrent_helper_invocations_no_leak(self):

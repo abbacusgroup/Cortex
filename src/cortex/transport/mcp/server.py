@@ -7,7 +7,9 @@ only exposed on stdio, not HTTP.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import sys
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -43,6 +45,8 @@ ADMIN_TOOLS = frozenset({
     "cortex_query_trail",
     "cortex_graph_data",
     "cortex_list_entities",
+    "cortex_debug_sessions",
+    "cortex_debug_memory",
 })
 
 # Maximum result size caps for the new dashboard-aggregation tools.
@@ -375,10 +379,8 @@ def create_mcp_server(
             except json.JSONDecodeError:
                 pass
         if graph_updates:
-            try:
+            with contextlib.suppress(Exception):
                 store.graph.update_object(obj_id, **graph_updates)
-            except Exception:
-                pass
 
         # Resolve entities
         resolved = []
@@ -607,6 +609,127 @@ def create_mcp_server(
                 "total": store.content.total_count(),
                 "limit": capped_limit,
                 "offset": max(offset, 0),
+            }
+
+        # ─── A.2 Diagnostic Tools ─────────────────────────────────────
+
+        @mcp.tool()
+        def cortex_debug_sessions() -> dict[str, Any]:
+            """Return MCP session table diagnostics (admin, localhost only).
+
+            Reports the number of sessions tracked by FastMCP's
+            StreamableHTTPSessionManager. Terminated sessions that remain
+            in the table are zombie entries (the A.2 leak hypothesis).
+            """
+            import os
+            import resource
+
+            session_count = 0
+            terminated_count = 0
+
+            sm = getattr(mcp, "_session_manager", None)
+            if sm is not None:
+                instances = getattr(sm, "_server_instances", {})
+                session_count = len(instances)
+                terminated_count = sum(
+                    1
+                    for t in instances.values()
+                    if getattr(t, "is_terminated", False)
+                )
+
+            ru = resource.getrusage(resource.RUSAGE_SELF)
+            # macOS reports ru_maxrss in bytes; Linux in KB.
+            rss_bytes = ru.ru_maxrss
+            if sys.platform == "darwin":
+                rss_mb = rss_bytes / (1024 * 1024)
+            else:
+                rss_mb = rss_bytes / 1024
+
+            return {
+                "session_count": session_count,
+                "terminated_count": terminated_count,
+                "active_count": session_count - terminated_count,
+                "rss_mb": round(rss_mb, 2),
+                "pid": os.getpid(),
+            }
+
+        # Module-level state for tracemalloc snapshots (only populated
+        # when cortex_debug_memory is called with action="start").
+        _tracemalloc_state: dict[str, Any] = {"prev_snapshot": None}
+
+        @mcp.tool()
+        def cortex_debug_memory(action: str = "snapshot") -> dict[str, Any]:
+            """Take tracemalloc memory snapshots for leak diagnosis.
+
+            Args:
+                action: "start" to begin tracing, "snapshot" to take a
+                    snapshot and diff against the previous one, "stop" to
+                    stop tracing and clear state.
+            """
+            import os
+            import resource
+            import tracemalloc
+
+            if action == "start":
+                if not tracemalloc.is_tracing():
+                    tracemalloc.start(10)
+                _tracemalloc_state["prev_snapshot"] = None
+                return {"status": "tracing_started", "nframe": 10}
+
+            if action == "stop":
+                tracemalloc.stop()
+                _tracemalloc_state["prev_snapshot"] = None
+                return {"status": "tracing_stopped"}
+
+            if action != "snapshot":
+                return {"error": f"Unknown action: {action!r}. Use start/snapshot/stop."}
+
+            if not tracemalloc.is_tracing():
+                return {"error": "Tracing not started. Call with action='start' first."}
+
+            snapshot = tracemalloc.take_snapshot()
+            prev = _tracemalloc_state.get("prev_snapshot")
+
+            if prev is not None:
+                stats = snapshot.compare_to(prev, "lineno")
+                top = [
+                    {
+                        "file": str(s.traceback),
+                        "size_diff_kb": round(s.size_diff / 1024, 2),
+                        "size_kb": round(s.size / 1024, 2),
+                        "count_diff": s.count_diff,
+                    }
+                    for s in stats[:20]
+                ]
+            else:
+                stats = snapshot.statistics("lineno")
+                top = [
+                    {
+                        "file": str(s.traceback),
+                        "size_kb": round(s.size / 1024, 2),
+                        "count": s.count,
+                    }
+                    for s in stats[:20]
+                ]
+
+            _tracemalloc_state["prev_snapshot"] = snapshot
+
+            ru = resource.getrusage(resource.RUSAGE_SELF)
+            rss_bytes = ru.ru_maxrss
+            if sys.platform == "darwin":
+                rss_mb = rss_bytes / (1024 * 1024)
+            else:
+                rss_mb = rss_bytes / 1024
+
+            current, peak = tracemalloc.get_traced_memory()
+            return {
+                "status": "snapshot_taken",
+                "mode": "diff" if prev is not None else "baseline",
+                "traced_current_mb": round(current / (1024 * 1024), 2),
+                "traced_peak_mb": round(peak / (1024 * 1024), 2),
+                "rss_mb": round(rss_mb, 2),
+                "pid": os.getpid(),
+                "top_allocations": top,
             }
 
     return mcp
