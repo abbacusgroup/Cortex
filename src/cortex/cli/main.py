@@ -366,6 +366,23 @@ def _get_learner() -> LearningLoop:
     return _learner
 
 
+def _warmup_embeddings(config: CortexConfig) -> None:
+    """Download and cache the embedding model if sentence-transformers is installed."""
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        typer.echo("  Embeddings: not installed (install cortex[embeddings] for semantic search)")
+        return
+
+    model_name = config.embedding_model
+    typer.echo(f"  Embeddings: loading {model_name}...")
+    try:
+        SentenceTransformer(model_name)
+        typer.echo(f"  Embeddings: {model_name} ready")
+    except Exception as e:
+        typer.echo(f"  Embeddings: warm-up failed ({e}) — will retry on first search")
+
+
 @app.command()
 def init(
     data_dir: str | None = typer.Option(None, "--data-dir", "-d", help="Data directory path"),
@@ -388,6 +405,7 @@ def init(
     typer.echo(f"  Ontology: {triples} triples loaded")
     typer.echo(f"  Graph DB: {config.graph_db_path}")
     typer.echo(f"  SQLite:   {config.sqlite_db_path}")
+    _warmup_embeddings(config)
 
     global _store
     _store = store
@@ -1014,6 +1032,8 @@ def setup(
         typer.echo("  Ontology loaded")
     except FileNotFoundError:
         typer.echo("  Ontology not found — skipping")
+
+    _warmup_embeddings(config)
 
     # 3. Dashboard password
     if not auto:

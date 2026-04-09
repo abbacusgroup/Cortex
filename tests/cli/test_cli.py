@@ -71,11 +71,35 @@ class TestInit:
     def test_init_idempotent(self):
         first = runner.invoke(app, ["init"])
         assert first.exit_code == 0
-        # Reset store so second init creates a fresh one
+        # Close and reset store so second init can acquire the graph lock
+        if cli_mod._store is not None:
+            cli_mod._store.close()
         cli_mod._store = None
         second = runner.invoke(app, ["init"])
         assert second.exit_code == 0
         assert "initialized" in second.output.lower()
+
+    def test_init_shows_embeddings_status(self):
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code == 0
+        # Should mention embeddings — either "ready" or "not installed"
+        assert "Embeddings:" in result.output
+
+    def test_init_warmup_reports_not_installed(self, monkeypatch):
+        """When sentence-transformers is absent, init reports it gracefully."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _block_st(name, *args, **kwargs):
+            if name == "sentence_transformers":
+                raise ImportError("mocked")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _block_st)
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code == 0
+        assert "not installed" in result.output
 
 
 # ---------------------------------------------------------------------------
