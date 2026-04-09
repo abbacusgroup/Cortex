@@ -668,3 +668,90 @@ class TestRestApiKeyFromEnvVar:
             headers={"X-API-Key": "   "},
         )
         assert resp.status_code == 401
+
+
+# -- E.2 security probe: API key bypass edge cases --------------------------
+
+
+class TestApiKeyBypassEdgeCases:
+    """E.2: additional edge cases beyond the Bundle 9 whitespace tests.
+
+    The auth path uses hmac.compare_digest (constant-time) and strips
+    whitespace. These tests exercise further bypass vectors.
+    """
+
+    def test_empty_string_key_is_rejected(
+        self, client: TestClient, monkeypatch
+    ):
+        monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": ""},
+        )
+        assert resp.status_code == 401
+
+    def test_case_sensitivity(self, client: TestClient, monkeypatch):
+        """Keys must be case-sensitive — 'Good-Key' != 'good-key'."""
+        monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "Good-Key"},
+        )
+        assert resp.status_code == 401
+
+    def test_null_byte_in_key_is_rejected(
+        self, client: TestClient, monkeypatch
+    ):
+        monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "good-key\x00extra"},
+        )
+        assert resp.status_code == 401
+
+    def test_comma_separated_empty_entries_ignored(
+        self, client: TestClient, monkeypatch
+    ):
+        """'key1,,key2' should not create an empty-string key."""
+        monkeypatch.setenv("CORTEX_API_KEYS", "key1,,key2")
+        # Empty key should still be rejected
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": ""},
+        )
+        assert resp.status_code == 401
+        # Valid key should work
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "key2"},
+        )
+        assert resp.status_code == 200
+
+    def test_very_long_key_is_rejected(
+        self, client: TestClient, monkeypatch
+    ):
+        monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": "x" * 100_000},
+        )
+        assert resp.status_code == 401
+
+    def test_key_with_special_characters(
+        self, client: TestClient, monkeypatch
+    ):
+        """Keys containing special chars should match exactly."""
+        special_key = "k3y-w1th_$pecial.chars!@#"
+        monkeypatch.setenv("CORTEX_API_KEYS", special_key)
+        resp = client.post(
+            "/search",
+            params={"query": "x"},
+            headers={"X-API-Key": special_key},
+        )
+        assert resp.status_code == 200

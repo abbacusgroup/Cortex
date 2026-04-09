@@ -532,6 +532,47 @@ class TestCortexGraphData:
 # -- A.2 diagnostic tools ---------------------------------------------------
 
 
+# -- E.3 security probe: cortex_read with hostile obj_ids -------------------
+
+
+class TestCortexReadPathTraversal:
+    """E.3: cortex_read must safely handle hostile object IDs.
+
+    The obj_id flows through parameterized SQLite queries and RDF API calls
+    (not string interpolation), so injection is not possible at the data
+    layer. These tests prove that contract and catch regressions if the
+    implementation ever changes.
+    """
+
+    @pytest.mark.parametrize(
+        "hostile_id",
+        [
+            "../../../etc/passwd",
+            "..%2F..%2F..%2Fetc%2Fpasswd",
+            "/etc/shadow",
+            "....//....//etc/passwd",
+            "obj_id\x00.txt",
+            "'; DROP TABLE documents; --",
+            '" OR 1=1 --',
+            "SELECT * FROM documents",
+            "<script>alert(1)</script>",
+            "${7*7}",
+            "{{7*7}}",
+            "",
+            " ",
+            "a" * 10_000,
+        ],
+    )
+    def test_hostile_obj_id_returns_not_found(
+        self, config: CortexConfig, hostile_id: str
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(mcp, "cortex_read", obj_id=hostile_id)
+        # Should return "Not found: ..." string, never raise or leak data
+        assert isinstance(result, str)
+        assert "Not found" in result
+
+
 class TestCortexDebugSessions:
     def test_returns_session_diagnostics(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=True)
