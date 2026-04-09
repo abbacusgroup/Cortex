@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Distribution Bundle
+
+- **Optional `sentence-transformers` dependency**: moved from core
+  `dependencies` to `[project.optional-dependencies] embeddings`.
+  `pip install abbacus-cortex` drops from ~2.5 GB to ~200 MB.
+  `pip install abbacus-cortex[embeddings]` for semantic search.
+- **Embedding model warm-up in `cortex init`**: downloads and caches the
+  embedding model during initialization instead of surprising users on
+  first search. Reports status: loading, ready, not installed, or failed.
+- **`RetrievalEngine._get_embedder()` caching**: was creating a new
+  `SentenceTransformer` (~400 MB) on every search call. Now cached with
+  instance reuse (same pattern as `NormalizeStage._get_embedder()`).
+- **`cortex install` / `cortex uninstall`** — platform-aware background
+  service setup. macOS: renders LaunchAgent plist, `launchctl load`.
+  Linux: renders systemd user unit, `systemctl --user enable --now`.
+  Templates embedded in `install.py` (not read from `deploy/`) because
+  `deploy/` is outside `src/cortex/` and not in the pip wheel.
+- **Linux systemd user unit templates** in `deploy/cortex-mcp.service`
+  and `deploy/cortex-dashboard.service` for manual reference.
+- **GitHub Release workflow** (`.github/workflows/release.yml`): triggered
+  on `v*` tag push. Reuses `test.yml` as a gate, builds wheel + sdist
+  with `uv build`, creates GitHub Release with artifacts attached.
+- **README rewritten** for end-user install flow: lead with `pip install`,
+  3-step quickstart (init → install → register → use), updated MCP tool
+  count from 17 to 22, added service management and troubleshooting
+  sections.
+
+### Added — Bundle 10.9
+
+- **SIM ruff family enabled** (10th lint family): 12 sites refactored
+  from `try/except/pass` to `contextlib.suppress()`. All in non-critical
+  paths (shutdown cleanup, best-effort enrichment). Semantically identical.
+- **A.2 diagnostic admin tools**: `cortex_debug_sessions` (session table
+  snapshot) and `cortex_debug_memory` (tracemalloc top-10 allocations).
+  Opt-in, admin-only, localhost-gated.
+- **Security probe tests**: E.3 path traversal (10 tests covering
+  `../`, URL-encoded, and nested traversal payloads) and E.2 REST API
+  auth bypass (10 tests covering missing key, wrong key, empty key,
+  whitespace key, timing-safe comparison). All pure test additions —
+  no production code changes.
+
+### Fixed — Bundle 10.9
+
+- **A.2 session-table leak**: enabled stateless HTTP mode
+  (`stateless_http=True` in FastMCP). Zombie session count dropped from
+  44 after 20 calls to 0. Root cause: upstream MCP SDK never evicts
+  terminated sessions from `_server_instances` in stateful mode.
+- **CI macOS probe timeout flake**: widened the probe timeout band in
+  the test fixture to accommodate slow cold starts on GitHub Actions
+  macOS runner.
+
 ### Fixed — Bundle 10.8 (BaseExceptionGroup unwrapping in CortexMCPClient)
 
 - **"Unhandled errors in a TaskGroup" misclassification** in
@@ -396,6 +447,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | After Phase 4 (Bundle 7, REST API as MCP client)    |   796 |
 | After Bundle 8 (doctor unlock + spawn-mcp + plists) |   833 |
 | After Bundle 9 (bug-hunt fixes + CI)                |   841 |
+| After Bundle 10 (SPARQL + templates + ruff)          |   897 |
+| After Bundle 10.8 (BaseExceptionGroup)               |   907 |
+| After Bundle 10.9 + security probes                  |   927 |
+| After Distribution bundle                            |   952 |
 
 ### Migration guide
 
