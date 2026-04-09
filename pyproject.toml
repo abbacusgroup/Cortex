@@ -17,8 +17,6 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     # CLI
     "typer>=0.15",
-    # Embeddings
-    "sentence-transformers>=3.4",
     # Templates
     "jinja2>=3.1",
     # Config
@@ -32,6 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+embeddings = ["sentence-transformers>=3.4"]
 llm = ["litellm>=1.60"]
 
 [project.scripts]

@@ -397,12 +397,14 @@ dependencies = [
     { name = "mcp" },
     { name = "pyoxigraph" },
     { name = "python-dotenv" },
-    { name = "sentence-transformers" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
+embeddings = [
+    { name = "sentence-transformers" },
+]
 llm = [
     { name = "litellm" },
 ]
@@ -428,11 +430,11 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.6" },
     { name = "pyoxigraph", specifier = ">=0.4" },
     { name = "python-dotenv", specifier = ">=1.1" },
-    { name = "sentence-transformers", specifier = ">=3.4" },
+    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=3.4" },
     { name = "typer", specifier = ">=0.15" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
 ]
-provides-extras = ["llm"]
+provides-extras = ["embeddings", "llm"]
 
 [package.metadata.requires-dev]
 dev = [
