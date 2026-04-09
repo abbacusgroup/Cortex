@@ -209,6 +209,47 @@ class TestDoctorUnlock:
         assert "does NOT match" in combined or "reuse" in combined.lower()
         assert "--force" in combined
 
+    def test_unlock_cmdline_unknown_refuses_with_clear_message(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Bundle 10.7 / B.2: when ``_process_cmdline`` returns None for a
+        live holder PID, ``doctor unlock`` must refuse and clearly say
+        the cmdline could not be verified (not a generic "still running"
+        message).
+        """
+        # Marker claims this process is the holder, with a valid cmdline
+        db = tmp_path / "graph.db"
+        db.mkdir(parents=True, exist_ok=True)
+        marker = _marker_path_for(db)
+        marker.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "cmdline": "cortex serve --transport mcp-http",
+                    "acquired_at": "2020-01-01T00:00:00+00:00",
+                }
+            )
+        )
+        rocksdb_lock = db / "LOCK"
+        rocksdb_lock.write_text("")
+
+        # Force _process_cmdline to return None from inside the doctor
+        # command path (which imports from cortex.db.graph_store lazily)
+        import cortex.db.graph_store as gs
+
+        monkeypatch.setattr(gs, "_process_cmdline", lambda pid: None)
+
+        result = runner.invoke(app, ["doctor", "unlock"])
+        assert result.exit_code == 1
+        combined = result.output + (result.stderr or "")
+        assert "cmdline could NOT be read" in combined or (
+            "cannot verify" in combined.lower()
+        )
+        assert "--force" in combined
+        # Marker must NOT have been removed
+        assert marker.exists()
+        assert rocksdb_lock.exists()
+
 
 class TestDoctorLogs:
     """Bundle 10.7 / F.4: ``cortex doctor logs`` inspects and rotates the

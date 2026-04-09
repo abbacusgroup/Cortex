@@ -272,6 +272,7 @@ def _build_locked_error(
 
     is_stale = False
     is_pid_reuse = False
+    cmdline_unknown = False
 
     if holder_pid is not None:
         if not _pid_alive(holder_pid):
@@ -282,9 +283,19 @@ def _build_locked_error(
             # process and the marker is misleading. We never trust the PID
             # alone — see Weak Point #2 in the plan.
             live_cmdline = _process_cmdline(holder_pid)
-            if (
-                live_cmdline is not None
-                and holder_cmdline is not None
+            if live_cmdline is None:
+                # Bundle 10.7 / B.2 (closes Bundle 8 handoff hypothesis):
+                # ps returned nothing for the live PID. Could be a /proc
+                # race, ps timeout, or missing permissions. We can't
+                # confirm the PID-match either way, so flag the uncertainty
+                # so the error message is honest and auto-recovery stays
+                # disabled (is_stale=False, is_pid_reuse=False keeps the
+                # caller's recoverable check False — see __init__'s
+                # locked_err.is_stale gate).
+                if holder_cmdline is not None:
+                    cmdline_unknown = True
+            elif (
+                holder_cmdline is not None
                 and live_cmdline != holder_cmdline
             ):
                 is_pid_reuse = True
@@ -295,6 +306,7 @@ def _build_locked_error(
         holder_cmdline=holder_cmdline,
         is_stale=is_stale,
         is_pid_reuse=is_pid_reuse,
+        cmdline_unknown=cmdline_unknown,
         db_path=str(path),
         marker_path=str(marker_path),
         context={"path": str(path)},

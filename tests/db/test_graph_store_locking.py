@@ -374,11 +374,124 @@ class TestPidReuseRaceProtection:
             err = exc_info.value
             assert err.is_pid_reuse is False
             assert err.is_stale is False
+            assert err.cmdline_unknown is False
             # Normal "stop the conflicting process" message
             assert "Stop the conflicting process" in str(err)
         finally:
             proc.terminate()
             proc.wait(timeout=5)
+
+    def test_cmdline_unknown_flag_set_when_process_cmdline_returns_none(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Bundle 10.7 / B.2: when ``_process_cmdline`` returns None for a
+        live PID (ps timeout, /proc race, missing permissions), we cannot
+        verify the PID-match. Flag ``cmdline_unknown=True``, keep
+        ``is_stale=False`` and ``is_pid_reuse=False`` so auto-recovery
+        stays disabled, and the error message must say so.
+        """
+        db = tmp_path / "g.db"
+        sentinel = tmp_path / "ready"
+        proc = _spawn_holder_subprocess(db, sentinel)
+        try:
+            _wait_for_sentinel(sentinel)
+            # Force _process_cmdline to return None for the live PID
+            import cortex.db.graph_store as gs
+
+            monkeypatch.setattr(gs, "_process_cmdline", lambda pid: None)
+
+            with pytest.raises(StoreLockedError) as exc_info:
+                GraphStore(db)
+            err = exc_info.value
+            assert err.holder_pid == proc.pid
+            assert err.is_stale is False, (
+                "PID is alive, so is_stale must be False"
+            )
+            assert err.is_pid_reuse is False, (
+                "cmdline is unknown, so we cannot claim reuse"
+            )
+            assert err.cmdline_unknown is True, (
+                "expected cmdline_unknown=True when _process_cmdline returns None"
+            )
+            s = str(err)
+            assert "could NOT be read" in s or "cmdline" in s.lower()
+            assert "--force" in s
+            # context propagation
+            assert err.context.get("cmdline_unknown") is True
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    def test_cmdline_unknown_does_not_trigger_auto_recovery(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Bundle 10.7 / B.2: the auto-recovery path in ``GraphStore.__init__``
+        gates on ``is_stale`` — with ``cmdline_unknown=True`` and PID alive,
+        ``is_stale`` must remain False so auto-recovery does NOT fire. The
+        marker file must still exist after the failed open.
+        """
+        db = tmp_path / "g.db"
+        sentinel = tmp_path / "ready"
+        proc = _spawn_holder_subprocess(db, sentinel)
+        try:
+            _wait_for_sentinel(sentinel)
+            import cortex.db.graph_store as gs
+
+            monkeypatch.setattr(gs, "_process_cmdline", lambda pid: None)
+
+            marker = _marker_path_for(db)
+            assert marker.exists()  # sanity — subprocess wrote it
+
+            with pytest.raises(StoreLockedError):
+                GraphStore(db)
+
+            # Marker must still be present — auto-recovery must NOT have
+            # fired. If it had, the marker would be gone.
+            assert marker.exists(), (
+                "marker was removed — auto-recovery fired despite "
+                "cmdline_unknown (regression)"
+            )
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    def test_cmdline_unknown_false_when_marker_has_no_cmdline(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """When the marker itself records no cmdline, there's nothing to
+        verify against — ``cmdline_unknown`` must stay False even if
+        ``_process_cmdline`` also returns None. Otherwise every legacy
+        marker without a cmdline field would be flagged as uncertain.
+        """
+        db = tmp_path / "g.db"
+        db.mkdir(parents=True, exist_ok=True)
+        marker = _marker_path_for(db)
+        marker.write_text(
+            json.dumps({"pid": os.getpid(), "acquired_at": "2026-01-01"})
+        )
+        # Create a dummy LOCK file so the OSError path fires
+        (db / "LOCK").write_text("")
+
+        import cortex.db.graph_store as gs
+
+        monkeypatch.setattr(gs, "_process_cmdline", lambda pid: None)
+        # Force the open to fail with a lock-style OSError
+        real_store = gs.ox.Store
+
+        def fake_store(path):
+            raise OSError(f"While lock file: {path}/LOCK: Resource temporarily unavailable")
+
+        monkeypatch.setattr(gs.ox, "Store", fake_store)
+        try:
+            with pytest.raises(StoreLockedError) as exc_info:
+                GraphStore(db)
+            err = exc_info.value
+            assert err.cmdline_unknown is False, (
+                "cmdline_unknown must stay False when marker has no cmdline "
+                "recorded — there's nothing to verify against"
+            )
+        finally:
+            monkeypatch.setattr(gs.ox, "Store", real_store)
 
     def test_stale_marker_with_dead_pid_takes_precedence_over_reuse(
         self, tmp_path: Path

@@ -99,6 +99,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   two escape hatches are independent — setting one does NOT re-enable
   the other.
 
+### Fixed — Bundle 10.7
+
+- **B.2 `_process_cmdline` returning None race** (closes the Bundle 8
+  handoff hypothesis): when `_build_locked_error` is called with an
+  alive holder PID but `_process_cmdline` returns None (ps timeout,
+  /proc race, or missing permissions), the code now sets a new
+  `cmdline_unknown=True` flag on `StoreLockedError` and refuses to
+  auto-recover. The previous code kept `is_pid_reuse=False` silently
+  and the error message claimed the live process was the legitimate
+  holder — which was unverifiable. `cortex doctor unlock` now reports
+  "cmdline could NOT be read — cannot verify this is the same process
+  that holds the lock. Refusing to unlock without --force". 4 new
+  tests (3 in `test_graph_store_locking.py` for the library path, 1
+  in `test_doctor.py` for the CLI path).
+
 ### Changed — Bundle 10.7
 
 - **`_quiet_noisy_loggers()`** in `core/logging.py` extended with a

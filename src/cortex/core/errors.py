@@ -83,7 +83,7 @@ class StoreLockedError(StoreError):
     Carries the holder's PID and command line (when available) so the user can identify
     and stop the conflicting process.
 
-    Three failure modes are distinguished:
+    Four failure modes are distinguished:
     - Normal: another process is holding the lock; user stops it.
     - Stale (``is_stale=True``): the marker's PID is no longer running. Manual
       cleanup of both the marker file AND RocksDB's internal LOCK file may be
@@ -93,6 +93,12 @@ class StoreLockedError(StoreError):
       The marker is probably stale and the OS reused the PID for an unrelated
       process. The actual lock holder cannot be identified — manual cleanup is
       the only path forward.
+    - Cmdline unverified (``cmdline_unknown=True``): the marker's PID is alive,
+      but ``_process_cmdline`` could not read the live cmdline (e.g. ``ps``
+      timeout, transient ``/proc`` race, or missing permissions) so we cannot
+      confirm whether this is the same process that recorded the marker. The
+      error is raised conservatively (auto-recovery does NOT fire) and the
+      user is told that the PID-match is unverified. Closes Bundle 8 / B.2.
     """
 
     code = "CORTEX_STORE_LOCKED"
@@ -105,6 +111,7 @@ class StoreLockedError(StoreError):
         holder_cmdline: str | None = None,
         is_stale: bool = False,
         is_pid_reuse: bool = False,
+        cmdline_unknown: bool = False,
         db_path: str | None = None,
         marker_path: str | None = None,
         context: dict[str, Any] | None = None,
@@ -116,6 +123,7 @@ class StoreLockedError(StoreError):
         self.holder_cmdline = holder_cmdline
         self.is_stale = is_stale
         self.is_pid_reuse = is_pid_reuse
+        self.cmdline_unknown = cmdline_unknown
         self.db_path = db_path
         self.marker_path = marker_path
         merged_context = dict(context or {})
@@ -123,6 +131,7 @@ class StoreLockedError(StoreError):
         merged_context.setdefault("holder_cmdline", holder_cmdline)
         merged_context.setdefault("is_stale", is_stale)
         merged_context.setdefault("is_pid_reuse", is_pid_reuse)
+        merged_context.setdefault("cmdline_unknown", cmdline_unknown)
         if db_path is not None:
             merged_context.setdefault("db_path", db_path)
         super().__init__(message, context=merged_context, cause=cause)
@@ -172,6 +181,15 @@ class StoreLockedError(StoreError):
                     f"line does NOT match the marker's recorded cmdline. The marker is "
                     f"probably stale and the OS reused the PID for an unrelated process. "
                     f"The actual graph DB lock holder cannot be identified from the marker."
+                )
+                parts.append(self._cleanup_hint())
+            elif self.cmdline_unknown:
+                parts.append(
+                    f"NOTE: PID {self.holder_pid} is alive, but its current command "
+                    f"line could NOT be read (ps/procfs returned no output). We cannot "
+                    f"confirm this is the same process that recorded the marker. "
+                    f"Auto-recovery was skipped for safety. If you are sure the marker "
+                    f"is stale, use: cortex doctor unlock --force"
                 )
                 parts.append(self._cleanup_hint())
             else:
