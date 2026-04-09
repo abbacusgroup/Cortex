@@ -764,4 +764,11 @@ def run_http(host: str = "127.0.0.1", port: int = 1314) -> None:
     # as ``run()`` kwargs in this version of the SDK.
     mcp.settings.host = host
     mcp.settings.port = port
+    # A.2 fix: stateless mode avoids the session-table leak in
+    # StreamableHTTPSessionManager._server_instances. Every Cortex HTTP
+    # interaction is single request-response (CLI, dashboard, tool calls),
+    # so stateful session tracking is unnecessary overhead that leaks
+    # ~4 KB per call. Stateless mode cleans up each transport immediately
+    # after the response.
+    mcp.settings.stateless_http = True
     mcp.run(transport="streamable-http")
