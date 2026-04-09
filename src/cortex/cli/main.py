@@ -1629,12 +1629,32 @@ def doctor_unlock(
             and holder_cmdline is not None
             and live_cmdline != holder_cmdline
         )
+        cmdline_unknown = (
+            live_cmdline is None and holder_cmdline is not None
+        )
         if is_reuse:
             typer.secho(
                 f"PID {holder_pid} is alive but its cmdline does NOT match "
                 f"the marker. The OS has reused the PID for an unrelated "
                 f"process. Pass --force to unlock anyway.",
                 fg=typer.colors.RED,
+                err=True,
+            )
+        elif cmdline_unknown:
+            # Bundle 10.7 / B.2: ps returned nothing for the live PID, so
+            # we can't confirm this is the same process. Stay conservative
+            # and refuse without --force, but tell the user exactly why.
+            typer.secho(
+                f"PID {holder_pid} is alive, but its cmdline could NOT be "
+                f"read (ps/procfs returned nothing). We cannot verify this "
+                f"is the same process that holds the lock. Refusing to "
+                f"unlock without --force.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.echo(
+                "  If you are sure the marker is stale, run: "
+                "cortex doctor unlock --force",
                 err=True,
             )
         else:
