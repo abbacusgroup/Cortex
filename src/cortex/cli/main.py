@@ -879,6 +879,30 @@ def uninstall(
     do_uninstall(config, service=service)
 
 
+@app.command()
+def backup(
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Output directory for the backup archive"
+    ),
+) -> None:
+    """Create a backup of Cortex data (cortex.db + graph.db)."""
+    from cortex.cli.backup import do_backup
+
+    config = load_config()
+    do_backup(config, output=Path(output) if output else None)
+
+
+@app.command()
+def restore(
+    archive: str = typer.Argument(..., help="Path to backup archive (.tar.gz)"),
+) -> None:
+    """Restore Cortex data from a backup archive."""
+    from cortex.cli.backup import do_restore
+
+    config = load_config()
+    do_restore(config, archive=Path(archive))
+
+
 def _start_parent_watchdog() -> None:
     """Spawn a daemon thread that exits the process when the parent dies.
 
