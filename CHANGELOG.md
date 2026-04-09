@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Bundle 10 (SPARQL + templates + ruff expansion)
+
+- **SPARQL string-literal escape helper** (`_sparql_escape_string`) in
+  `db/graph_store.py`, Bundle 10.1: implements SPARQL 1.1 §5.4 ECHAR
+  rules (backslash first, then `"`, `\n`, `\r`, `\t`). Applied at the
+  one user-reachable interpolation site — the `project` filter in
+  `list_objects`. Private helper (`_` prefix). Covered by 9 new tests
+  in `tests/db/test_graph_store.py` (`TestSparqlEscape` unit tests +
+  `TestSparqlInjectionListObjects` adversarial tests with quote,
+  backslash, newline, and classic UNION-injection payloads). The other
+  4 SPARQL interpolation sites in `graph_store.py` are whitelisted
+  (`obj_type` via `CLASS_MAP`, `limit`/`offset` typed `int`) and left
+  for a future defense-in-depth pass.
+- **Direct Jinja2 template render tests** (`tests/dashboard/test_templates_direct.py`,
+  19 tests, Bundle 10.2): closes Weak Point #6 from the original A+D
+  plan. Each of the 10 data-bearing dashboard templates gets at least
+  one direct render test against a hand-built dict fixture that
+  mirrors the MCP client return shape. Covers edge cases —
+  `created_at=None`, empty `alerts`/`recent`/`logs`, missing
+  `content`/`relationships`. `settings.html` deliberately tested
+  against a real `CortexConfig` object to match production.
+  `TestStaticTemplates` sanity-compiles `create.html` and `graph.html`.
+- **`CORTEX_MCP_CLIENT_TIMEOUT_SECONDS` env var** in `cli/main.py`'s
+  `_get_mcp_client()` (Bundle 10.6): mirrors the `_get_probe_client`
+  pattern from Bundle 9.4. Defaults to 30s for local use; the CI
+  workflow now sets it to 60s alongside `CORTEX_PROBE_TIMEOUT_SECONDS`
+  so the slow GitHub Actions macOS runner has enough headroom for
+  cold-start `cortex capture` calls (which load the sentence-
+  transformers embedding model server-side).
+- **Test stderr diagnostic helpers** in
+  `tests/integration/test_phase3_cli_concurrency.py` (Bundle 10.6):
+  `_drain_pipe_nonblocking()` and `_assert_cli_ok()` do a bounded
+  non-blocking `os.read` of the MCP server subprocess's stdout+stderr
+  via `O_NONBLOCK` on test failure and include the output in
+  `pytest.fail()`'s message. Wired into
+  `test_capture_then_read_then_list_round_trip`. Next CI failure of
+  that shape will surface the actual server-side exception instead of
+  the wrapped client view.
+
+### Changed — Bundle 10
+
+- **Ruff lint families expanded** from `["E","F","I","N","W","UP"]` to
+  `["B","C4","E","F","I","N","RUF","W","UP"]` — three new families
+  enabled across three commits (Bundle 10.5a/b/c):
+  - **`B` (flake8-bugbear)**, 45 violations resolved: 41 × B904
+    (`raise ... from ...` in except blocks) applied mechanically across
+    10 files via a general-purpose agent; `from err` where the except
+    had an `as` binding and `from None` otherwise. 2 × B013 (length-one
+    tuple literals in `except (X,):`) auto-fixed. 1 × B905
+    (`zip(a, b, strict=True)` in cosine similarity). 1 × B007 (unused
+    loop variable renamed to `_doc_id`). Zero logic changes, zero
+    renamed public symbols.
+  - **`C4` (flake8-comprehensions)**, zero violations — config-only
+    commit, codebase was already clean.
+  - **`RUF`**, 21 violations resolved: 1 × RUF100 (unused
+    `noqa: BLE001`), 1 × RUF003 (MULTIPLICATION SIGN `×` → ASCII `x`
+    in a comment), 2 × RUF005 (list concatenation → spread unpacking),
+    1 × RUF034 (dead `holder_pid=None if False else None` removed),
+    16 × RUF059 (unused unpacked variables in test fixtures renamed to
+    underscore-prefixed form, targeted not global).
+  - **`SIM` attempted and reverted**: 3 × SIM117 sites in
+    `transport/mcp/client.py` sit inside the per-call session pattern
+    just stabilized in Bundle 9, too risky for a ruff sweep. Deferred
+    to a dedicated Bundle 10.7 refactor.
+- **`tasks/` added to `.gitignore`** (Bundle 10.4): enforces the
+  workspace rule that all session artifacts live in `~/Lab/` rather
+  than the cortex repo. Removed the stray
+  `~/Lab/cortex/tasks/bug_hunt_2026-04-08_findings.md` that was
+  byte-identical to `~/Lab/bug_hunt_2026-04-08.md`.
+- **CHANGELOG backfill** (Bundle 10.3 then this entry): Bundle 10.3
+  added a Bundle 9 block; this entry backfills the Bundle 10.1–10.6
+  changes that were missing at Bundle 10.6 ship time.
+
 ### Added — Bundle 10.7 (log growth mitigation, F.4)
 
 - **`cortex doctor logs`** subcommand in `cli/main.py`: inspects and
