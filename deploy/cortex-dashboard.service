@@ -1,0 +1,33 @@
+# Cortex Web Dashboard — systemd user unit (Linux).
+#
+# Companion to cortex-mcp.service. The dashboard connects to the MCP
+# HTTP server — install the MCP service first.
+#
+# Use `cortex install` to generate and install with correct paths.
+#
+# Manual install:
+#   cp deploy/cortex-dashboard.service ~/.config/systemd/user/ai-abbacus-cortex-dashboard.service
+#   # Edit ExecStart path to match your cortex binary location
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ai-abbacus-cortex-dashboard
+#
+# Manual uninstall:
+#   systemctl --user disable --now ai-abbacus-cortex-dashboard
+#   rm ~/.config/systemd/user/ai-abbacus-cortex-dashboard.service
+#   systemctl --user daemon-reload
+
+[Unit]
+Description=Cortex Web Dashboard
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cortex dashboard --host 127.0.0.1 --port 1315
+Environment=CORTEX_DATA_DIR=%h/.cortex
+Restart=always
+RestartSec=5
+StandardOutput=append:%h/.cortex/dashboard.log
+StandardError=append:%h/.cortex/dashboard.err
+
+[Install]
+WantedBy=default.target
