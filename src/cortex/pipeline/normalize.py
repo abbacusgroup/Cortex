@@ -9,6 +9,7 @@ Takes a raw capture and produces a structured knowledge object with:
 
 from __future__ import annotations
 
+import contextlib
 import struct
 from typing import Any
 
@@ -102,10 +103,8 @@ class NormalizeStage:
             graph_updates.update(
                 {k: v for k, v in classification["properties"].items() if isinstance(v, str)}
             )
-        try:
+        with contextlib.suppress(Exception):
             self.store.graph.update_object(obj_id, **graph_updates)
-        except Exception:
-            pass  # Graph may not have all fields
 
         # Step 3: Generate embedding
         self._generate_embedding(obj_id, title, content)

@@ -5,6 +5,7 @@ Commands: init, capture, search, read, list, status, context, dossier, graph, sy
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -860,11 +861,9 @@ def _start_parent_watchdog() -> None:
     import threading
 
     def _watch() -> None:
-        try:
+        with contextlib.suppress(Exception):
             # Blocks until the pipe is closed (parent died) or EOF.
             _sys.stdin.read()
-        except Exception:
-            pass
         # Parent is gone — exit hard so the lock is released immediately.
         _os._exit(0)
 
@@ -1118,8 +1117,15 @@ def _probe_mcp_server(url: str, *, retries: int = 3, retry_delay: float = 1.0) -
     Returns the set of tool names exposed. Raises ``MCPConnectionError`` /
     ``MCPTimeoutError`` after exhausting retries. Used by ``cortex dashboard``
     to fail fast with a clear error if the MCP server isn't running.
+
+    Bundle 10.9: the per-attempt timeout is now overridable via the
+    ``CORTEX_PROBE_TIMEOUT_SECONDS`` env var (same knob that
+    ``_get_probe_client`` honours), defaulting to 3s for fast local
+    fail-detection. CI and integration tests set this higher to
+    accommodate slow cold starts on macOS runners.
     """
     import asyncio
+    import os
     import time
 
     from cortex.transport.mcp.client import (
@@ -1127,7 +1133,12 @@ def _probe_mcp_server(url: str, *, retries: int = 3, retry_delay: float = 1.0) -
         MCPClientError,
     )
 
-    client = CortexMCPClient(url, timeout_seconds=3.0)
+    timeout_str = os.environ.get("CORTEX_PROBE_TIMEOUT_SECONDS", "").strip()
+    try:
+        timeout = float(timeout_str) if timeout_str else 3.0
+    except ValueError:
+        timeout = 3.0
+    client = CortexMCPClient(url, timeout_seconds=timeout)
     last_error: Exception | None = None
     for attempt in range(retries):
         try:
@@ -1214,10 +1225,8 @@ def _spawn_mcp_subprocess(url: str, data_dir: Path):
             stdout_f.close()
             stderr_f.close()
             log_tail = ""
-            try:
+            with contextlib.suppress(OSError):
                 log_tail = stderr_path.read_text()[-500:]
-            except OSError:
-                pass
             raise RuntimeError(
                 f"Spawned MCP subprocess exited with code {proc.returncode} "
                 f"before becoming ready. See {stderr_path} for details.\n"

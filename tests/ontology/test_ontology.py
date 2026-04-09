@@ -289,9 +289,8 @@ class TestAdversarialOntologyLoading:
         with tempfile.NamedTemporaryFile(suffix=".ttl") as f:
             f.write(malformed)
             f.flush()
-            with pytest.raises(SyntaxError):
-                with open(f.name, "rb") as fp:
-                    s.load(fp, ox.RdfFormat.TURTLE)
+            with pytest.raises(SyntaxError), open(f.name, "rb") as fp:
+                s.load(fp, ox.RdfFormat.TURTLE)
 
     def test_empty_turtle_loads_zero_triples(self) -> None:
         """An empty Turtle file loads without error but adds nothing."""

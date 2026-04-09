@@ -136,6 +136,10 @@ def _spawn_rest_api(
     env = os.environ.copy()
     env["CORTEX_DATA_DIR"] = str(tmp_path)
     env["CORTEX_MCP_SERVER_URL"] = mcp_url
+    # Give the REST API's startup probe generous headroom on slow CI
+    # runners where the MCP server cold start can exceed the default 3s
+    # per-attempt timeout.
+    env.setdefault("CORTEX_PROBE_TIMEOUT_SECONDS", "15")
     proc = subprocess.Popen(
         [
             sys.executable,

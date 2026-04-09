@@ -43,6 +43,8 @@ EXPECTED_ADMIN_TOOLS = frozenset(
         "cortex_query_trail",
         "cortex_graph_data",
         "cortex_list_entities",
+        "cortex_debug_sessions",
+        "cortex_debug_memory",
     }
 )
 
@@ -67,20 +69,20 @@ class TestToolCounts:
 
     def test_all_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=True)
-        assert len(_tool_names(mcp)) == 20
+        assert len(_tool_names(mcp)) == 22
 
     def test_public_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=False)
         assert len(_tool_names(mcp)) == 11
 
-    def test_admin_exclusion_removes_exactly_nine(self, config: CortexConfig):
+    def test_admin_exclusion_removes_exactly_eleven(self, config: CortexConfig):
         all_mcp = create_mcp_server(config, include_admin=True)
         pub_mcp = create_mcp_server(
             CortexConfig(data_dir=config.data_dir / "pub"),
             include_admin=False,
         )
         diff = _tool_names(all_mcp) - _tool_names(pub_mcp)
-        assert len(diff) == 9
+        assert len(diff) == 11
         assert diff == EXPECTED_ADMIN_TOOLS
 
 
@@ -279,7 +281,7 @@ class TestRunHttpAdminGating:
 
     def test_localhost_set_contents(self):
         """Belt-and-suspenders: the localhost set has exactly the expected entries."""
-        assert _LOCALHOST_HOSTS == frozenset({"127.0.0.1", "localhost", "::1"})
+        assert frozenset({"127.0.0.1", "localhost", "::1"}) == _LOCALHOST_HOSTS
 
 
 # -- New aggregation tools (Phase 2.E) ----------------------------------------
@@ -525,3 +527,80 @@ class TestCortexGraphData:
             assert "edges" in result
             assert isinstance(result["nodes"], list)
             assert isinstance(result["edges"], list)
+
+
+# -- A.2 diagnostic tools ---------------------------------------------------
+
+
+class TestCortexDebugSessions:
+    def test_returns_session_diagnostics(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(mcp, "cortex_debug_sessions")
+        assert "session_count" in result
+        assert "terminated_count" in result
+        assert "active_count" in result
+        assert "rss_mb" in result
+        assert "pid" in result
+        assert isinstance(result["session_count"], int)
+        assert result["session_count"] >= 0
+
+    def test_not_exposed_without_admin(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=False)
+        assert "cortex_debug_sessions" not in mcp._tool_manager._tools
+
+
+class TestCortexDebugMemory:
+    def test_snapshot_without_start_returns_error(self, config: CortexConfig):
+        import tracemalloc
+
+        was_tracing = tracemalloc.is_tracing()
+        if was_tracing:
+            tracemalloc.stop()
+        try:
+            mcp = create_mcp_server(config, include_admin=True)
+            result = _call_tool(mcp, "cortex_debug_memory", action="snapshot")
+            assert "error" in result
+        finally:
+            if was_tracing:
+                tracemalloc.start()
+
+    def test_start_snapshot_stop_lifecycle(self, config: CortexConfig):
+        import tracemalloc
+
+        was_tracing = tracemalloc.is_tracing()
+        if was_tracing:
+            tracemalloc.stop()
+        try:
+            mcp = create_mcp_server(config, include_admin=True)
+
+            # Start tracing
+            result = _call_tool(mcp, "cortex_debug_memory", action="start")
+            assert result["status"] == "tracing_started"
+
+            # Baseline snapshot
+            result = _call_tool(mcp, "cortex_debug_memory", action="snapshot")
+            assert result["status"] == "snapshot_taken"
+            assert result["mode"] == "baseline"
+            assert "top_allocations" in result
+            assert "rss_mb" in result
+
+            # Diff snapshot
+            result = _call_tool(mcp, "cortex_debug_memory", action="snapshot")
+            assert result["status"] == "snapshot_taken"
+            assert result["mode"] == "diff"
+
+            # Stop tracing
+            result = _call_tool(mcp, "cortex_debug_memory", action="stop")
+            assert result["status"] == "tracing_stopped"
+        finally:
+            if was_tracing:
+                tracemalloc.start()
+
+    def test_unknown_action_returns_error(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(mcp, "cortex_debug_memory", action="bogus")
+        assert "error" in result
+
+    def test_not_exposed_without_admin(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=False)
+        assert "cortex_debug_memory" not in mcp._tool_manager._tools

@@ -7,6 +7,7 @@ Persistence via Oxigraph's built-in storage to ~/.cortex/graph.db.
 from __future__ import annotations
 
 import atexit
+import contextlib
 import json
 import os
 import subprocess
@@ -330,10 +331,8 @@ _open_markers: weakref.WeakSet[GraphStore] = weakref.WeakSet()
 
 def _atexit_cleanup_markers() -> None:
     for store in list(_open_markers):
-        try:
+        with contextlib.suppress(Exception):
             store.close()
-        except Exception:
-            pass
 
 
 atexit.register(_atexit_cleanup_markers)
@@ -442,10 +441,8 @@ class GraphStore:
         # later, especially in test contexts where references linger).
         store = getattr(self, "_store", None)
         if store is not None:
-            try:
+            with contextlib.suppress(AttributeError):
                 del self._store
-            except AttributeError:
-                pass
             del store
             import gc
             gc.collect()
@@ -457,10 +454,8 @@ class GraphStore:
         self.close()
 
     def __del__(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.close()
-        except Exception:
-            pass
 
     def load_ontology(self, ontology_path: Path | None = None) -> int:
         """Load the Cortex OWL ontology into the store.

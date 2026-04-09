@@ -5,6 +5,7 @@ Takes normalized entities and discovers connections to the knowledge graph.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from cortex.core.constants import RELATIONSHIP_TYPES
@@ -43,10 +44,8 @@ class LinkStage:
         relationships = self._discover_relationships(obj_id)
 
         # Step 3: Update pipeline stage
-        try:
+        with contextlib.suppress(Exception):
             self.store.content.update(obj_id, pipeline_stage="linked")
-        except Exception:
-            pass
 
         return {
             "status": "linked",
