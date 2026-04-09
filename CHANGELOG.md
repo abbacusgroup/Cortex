@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-04-09
+
+### Added — Release
+
+- **`cortex backup` / `cortex restore`** — data protection before upgrades.
+  `cortex backup` checkpoints SQLite WAL, archives `cortex.db` + `graph.db/`
+  to a timestamped tar.gz (excludes locks, logs, .env). `cortex restore`
+  validates the archive, refuses if server is running, moves current stores
+  to `.pre-restore/` for rollback safety, extracts, and cleans lock files.
+- **PyPI package name**: `abbacus-cortex` (the name `cortex` is taken on
+  PyPI). Python import stays `import cortex`, CLI stays `cortex`.
+
 ### Added — Distribution Bundle
 
 - **Optional `sentence-transformers` dependency**: moved from core
@@ -451,6 +463,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | After Bundle 10.8 (BaseExceptionGroup)               |   907 |
 | After Bundle 10.9 + security probes                  |   927 |
 | After Distribution bundle                            |   952 |
+| After v0.2.0 (backup/restore)                        |   993 |
 
 ### Migration guide
 
