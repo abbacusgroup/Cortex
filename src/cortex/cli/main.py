@@ -857,6 +857,28 @@ def register(
     typer.echo("  Restart Claude Code to activate.")
 
 
+@app.command()
+def install(
+    service: str = typer.Option("all", "--service", help="mcp, dashboard, or all"),
+) -> None:
+    """Install Cortex as a background service (auto-start on login)."""
+    from cortex.cli.install import do_install
+
+    config = load_config()
+    do_install(config, service=service)
+
+
+@app.command()
+def uninstall(
+    service: str = typer.Option("all", "--service", help="mcp, dashboard, or all"),
+) -> None:
+    """Remove Cortex background services."""
+    from cortex.cli.install import do_uninstall
+
+    config = load_config()
+    do_uninstall(config, service=service)
+
+
 def _start_parent_watchdog() -> None:
     """Spawn a daemon thread that exits the process when the parent dies.
 

@@ -1,0 +1,31 @@
+# Cortex MCP HTTP Server — systemd user unit (Linux).
+#
+# This is a reference template. Use `cortex install` to generate and
+# install a unit file with correct paths for your system.
+#
+# Manual install:
+#   cp deploy/cortex-mcp.service ~/.config/systemd/user/ai-abbacus-cortex-mcp.service
+#   # Edit ExecStart path to match your cortex binary location
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ai-abbacus-cortex-mcp
+#
+# Manual uninstall:
+#   systemctl --user disable --now ai-abbacus-cortex-mcp
+#   rm ~/.config/systemd/user/ai-abbacus-cortex-mcp.service
+#   systemctl --user daemon-reload
+
+[Unit]
+Description=Cortex MCP HTTP Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cortex serve --transport mcp-http --host 127.0.0.1 --port 1314
+Environment=CORTEX_DATA_DIR=%h/.cortex
+Restart=always
+RestartSec=5
+StandardOutput=append:%h/.cortex/mcp-http.log
+StandardError=append:%h/.cortex/mcp-http.err
+
+[Install]
+WantedBy=default.target
