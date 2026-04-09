@@ -123,12 +123,14 @@ class TestQuietNoisyLoggers:
 
     def test_noisy_loggers_are_quieted_by_default(self, monkeypatch):
         monkeypatch.delenv("CORTEX_DEBUG_MCP_SDK", raising=False)
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
         setup_logging()
         for name in self.NOISY:
             assert logging.getLogger(name).level == logging.WARNING, name
 
     def test_debug_env_var_disables_quieting(self, monkeypatch):
         monkeypatch.setenv("CORTEX_DEBUG_MCP_SDK", "1")
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
         for name in self.NOISY:
             logging.getLogger(name).setLevel(logging.NOTSET)
         setup_logging()
@@ -139,6 +141,7 @@ class TestQuietNoisyLoggers:
 
     def test_quieting_is_idempotent(self, monkeypatch):
         monkeypatch.delenv("CORTEX_DEBUG_MCP_SDK", raising=False)
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
         setup_logging()
         # Manually drop the level to verify the second call re-applies.
         logging.getLogger("mcp.server.streamable_http").setLevel(logging.DEBUG)
@@ -147,3 +150,201 @@ class TestQuietNoisyLoggers:
             logging.getLogger("mcp.server.streamable_http").level
             == logging.WARNING
         )
+
+
+class TestQuietHttpLoggers:
+    """Bundle 10.7 / F.4: HTTP-layer loggers (uvicorn.access, httpx,
+    httpcore) should be set to WARNING after ``setup_logging`` runs,
+    unless ``CORTEX_DEBUG_HTTP`` is set. Independent from the MCP SDK
+    escape hatch.
+    """
+
+    HTTP_NOISY = (
+        "uvicorn",
+        "uvicorn.access",
+        "httpx",
+        "httpcore",
+        "httpcore.http11",
+        "httpcore.connection",
+    )
+    MCP_NOISY = (
+        "mcp.server.streamable_http",
+        "mcp.client.streamable_http",
+        "mcp.server.streamable_http_manager",
+        "mcp.client.streamable_http_manager",
+        "mcp.server.lowlevel.server",
+    )
+
+    def setup_method(self):
+        logging.getLogger("cortex").handlers.clear()
+        for name in self.HTTP_NOISY + self.MCP_NOISY:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+
+    def test_http_loggers_are_quieted_by_default(self, monkeypatch):
+        monkeypatch.delenv("CORTEX_DEBUG_MCP_SDK", raising=False)
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
+        setup_logging()
+        for name in self.HTTP_NOISY:
+            assert logging.getLogger(name).level == logging.WARNING, name
+
+    def test_uvicorn_error_is_not_quieted(self, monkeypatch):
+        """``uvicorn.error`` is intentionally left at its default so
+        server-side error signal keeps flowing to stderr.
+        """
+        monkeypatch.delenv("CORTEX_DEBUG_MCP_SDK", raising=False)
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
+        logging.getLogger("uvicorn.error").setLevel(logging.NOTSET)
+        setup_logging()
+        assert logging.getLogger("uvicorn.error").level == logging.NOTSET
+
+    def test_debug_http_env_var_disables_http_quieting(self, monkeypatch):
+        monkeypatch.setenv("CORTEX_DEBUG_HTTP", "1")
+        monkeypatch.delenv("CORTEX_DEBUG_MCP_SDK", raising=False)
+        for name in self.HTTP_NOISY:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+        setup_logging()
+        for name in self.HTTP_NOISY:
+            # Untouched — left at NOTSET so uvicorn/httpx default levels
+            # (or the root logger's INFO) are honored.
+            assert logging.getLogger(name).level == logging.NOTSET, name
+
+    def test_escape_hatches_are_independent(self, monkeypatch):
+        """Setting ``CORTEX_DEBUG_HTTP`` must NOT re-enable the MCP SDK
+        loggers, and vice versa.
+        """
+        # Case 1: HTTP hatch set, MCP hatch unset — HTTP loggers free,
+        # MCP loggers quieted.
+        monkeypatch.setenv("CORTEX_DEBUG_HTTP", "1")
+        monkeypatch.delenv("CORTEX_DEBUG_MCP_SDK", raising=False)
+        for name in self.HTTP_NOISY + self.MCP_NOISY:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+        logging.getLogger("cortex").handlers.clear()
+        setup_logging()
+        for name in self.HTTP_NOISY:
+            assert logging.getLogger(name).level == logging.NOTSET, name
+        for name in self.MCP_NOISY:
+            assert logging.getLogger(name).level == logging.WARNING, name
+
+        # Case 2: MCP hatch set, HTTP hatch unset — inverse.
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
+        monkeypatch.setenv("CORTEX_DEBUG_MCP_SDK", "1")
+        for name in self.HTTP_NOISY + self.MCP_NOISY:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+        logging.getLogger("cortex").handlers.clear()
+        setup_logging()
+        for name in self.HTTP_NOISY:
+            assert logging.getLogger(name).level == logging.WARNING, name
+        for name in self.MCP_NOISY:
+            assert logging.getLogger(name).level == logging.NOTSET, name
+
+    def test_http_quieting_is_idempotent(self, monkeypatch):
+        monkeypatch.delenv("CORTEX_DEBUG_MCP_SDK", raising=False)
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
+        setup_logging()
+        # Manually drop the level to verify the second call re-applies.
+        logging.getLogger("uvicorn.access").setLevel(logging.DEBUG)
+        setup_logging()  # second call — should re-quiet the logger
+        assert (
+            logging.getLogger("uvicorn.access").level == logging.WARNING
+        )
+
+    def test_uvicorn_access_has_min_level_filter(self, monkeypatch):
+        """``setup_logging`` must attach a ``_MinLevelFilter`` to the
+        ``uvicorn`` and ``uvicorn.access`` loggers. Plain ``setLevel``
+        doesn't survive uvicorn's own ``configure_logging`` pass, but a
+        filter on the logger instance does.
+        """
+        from cortex.core.logging import _MinLevelFilter
+
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
+        # Clear any pre-existing filters to simulate a fresh process
+        for name in ("uvicorn", "uvicorn.access"):
+            logger = logging.getLogger(name)
+            for f in list(logger.filters):
+                logger.removeFilter(f)
+
+        setup_logging()
+
+        for name in ("uvicorn", "uvicorn.access"):
+            logger = logging.getLogger(name)
+            filters = [
+                f for f in logger.filters if isinstance(f, _MinLevelFilter)
+            ]
+            assert len(filters) == 1, f"{name} should have exactly 1 filter"
+            assert filters[0]._min_level == logging.WARNING
+
+    def test_uvicorn_filter_drops_info_records(self, monkeypatch):
+        """End-to-end: an INFO record sent to ``uvicorn.access`` must be
+        rejected by the attached filter (regardless of the logger's
+        own level, which uvicorn may reset later).
+        """
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
+        for name in ("uvicorn", "uvicorn.access"):
+            logger = logging.getLogger(name)
+            for f in list(logger.filters):
+                logger.removeFilter(f)
+
+        setup_logging()
+
+        access_logger = logging.getLogger("uvicorn.access")
+        # Simulate uvicorn resetting the level back to INFO after
+        # dictConfig — the filter should still drop INFO records.
+        access_logger.setLevel(logging.INFO)
+        info_record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname="x.py",
+            lineno=1,
+            msg='127.0.0.1:0 - "POST /mcp" 200 OK',
+            args=(),
+            exc_info=None,
+        )
+        warning_record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.WARNING,
+            pathname="x.py",
+            lineno=1,
+            msg="slow request",
+            args=(),
+            exc_info=None,
+        )
+        # Our filters are attached to the logger, so walk and apply them.
+        assert all(f.filter(warning_record) for f in access_logger.filters)
+        assert any(not f.filter(info_record) for f in access_logger.filters)
+
+    def test_uvicorn_filter_idempotent(self, monkeypatch):
+        """Repeat ``setup_logging`` calls must not stack filters."""
+        from cortex.core.logging import _MinLevelFilter
+
+        monkeypatch.delenv("CORTEX_DEBUG_HTTP", raising=False)
+        access_logger = logging.getLogger("uvicorn.access")
+        for f in list(access_logger.filters):
+            access_logger.removeFilter(f)
+
+        setup_logging()
+        setup_logging()
+        setup_logging()
+
+        cortex_filters = [
+            f for f in access_logger.filters
+            if isinstance(f, _MinLevelFilter)
+        ]
+        assert len(cortex_filters) == 1
+
+    def test_uvicorn_filter_respects_debug_http(self, monkeypatch):
+        """With ``CORTEX_DEBUG_HTTP=1`` set, no filter is attached."""
+        from cortex.core.logging import _MinLevelFilter
+
+        monkeypatch.setenv("CORTEX_DEBUG_HTTP", "1")
+        for name in ("uvicorn", "uvicorn.access"):
+            logger = logging.getLogger(name)
+            for f in list(logger.filters):
+                logger.removeFilter(f)
+
+        setup_logging()
+
+        for name in ("uvicorn", "uvicorn.access"):
+            logger = logging.getLogger(name)
+            assert not any(
+                isinstance(f, _MinLevelFilter) for f in logger.filters
+            )

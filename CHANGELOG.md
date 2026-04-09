@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Bundle 10.7 (log growth mitigation, F.4)
+
+- **`cortex doctor logs`** subcommand in `cli/main.py`: inspects and
+  rotates the LaunchAgent log files under `~/.cortex/`. Default view
+  shows size, line count, last-modified time, and a GREEN / YELLOW /
+  RED status badge for each of `mcp-http.log`, `mcp-http.err`,
+  `dashboard.log`, `dashboard.err`. `--tail N` shows the last N lines
+  of each existing file. `--rotate` copies each non-empty log to
+  `<file>.old` and truncates the live file to zero length — safe while
+  the LaunchAgent is running because launchd opens stdout/stderr with
+  `O_APPEND`, so the server's next write lands at offset 0 without
+  needing a restart.
+- **`CORTEX_DEBUG_HTTP` env var** in `core/logging.py`: escape hatch
+  symmetric with the existing `CORTEX_DEBUG_MCP_SDK`. When set to any
+  non-empty value, leaves the uvicorn / httpx / httpcore loggers at
+  their default INFO level instead of silencing them to WARNING. The
+  two escape hatches are independent — setting one does NOT re-enable
+  the other.
+
+### Changed — Bundle 10.7
+
+- **`_quiet_noisy_loggers()`** in `core/logging.py` extended with a
+  second silence group `_NOISY_HTTP_LOGGERS` covering `uvicorn`,
+  `uvicorn.access`, `httpx`, `httpcore`, `httpcore.http11`, and
+  `httpcore.connection`. `uvicorn.error` is intentionally NOT quieted
+  so server-side error signal keeps flowing. On a production
+  LaunchAgent install these were driving ~33 MB/day of combined log
+  growth in `~/.cortex/mcp-http.{log,err}` — dominated by uvicorn's
+  per-request access log (one INFO line per MCP HTTP call, from the
+  uvicorn that FastMCP starts internally for the streamable-http
+  transport) and httpx's outbound INFO lines during sentence-
+  transformers embedding model warmup. Empirically verified post-fix:
+  `mcp-http.log` is 0 bytes after a burst of CLI traffic (down from
+  ~170 lines/minute), and `mcp-http.err` only accumulates the one-time
+  sentence-transformers model-load output at server startup.
+- **`_MinLevelFilter`** logger-attached filter in `core/logging.py`:
+  required because plain `setLevel` on `uvicorn.access` does not stick.
+  `uvicorn.Server.configure_logging` unconditionally re-applies the
+  config-supplied `log_level` to `uvicorn.access` AFTER `dictConfig`,
+  which would overwrite any level we set. A `logging.Filter` on the
+  logger instance survives both (a) `dictConfig` with
+  `disable_existing_loggers=False` and (b) the explicit `setLevel`,
+  so records with `levelno < WARNING` are dropped before reaching
+  uvicorn's stream handler.
+
 ### Added — Bundle 9 (bug-hunt fixes + CI)
 
 - **GitHub Actions CI** (`.github/workflows/test.yml`): Linux job runs
