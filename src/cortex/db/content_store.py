@@ -396,3 +396,57 @@ class ContentStore:
             "SELECT * FROM query_log ORDER BY timestamp DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -------------------------------------------------------------------------
+    # FTS5 Integrity
+    # -------------------------------------------------------------------------
+
+    def fts_integrity_check(self) -> dict[str, Any]:
+        """Check FTS5 index consistency with the documents table.
+
+        Uses FTS5's built-in ``integrity-check`` command which verifies that
+        the inverted index matches the content of the documents table.
+        Read-only — safe to run while the server is active.
+
+        Returns a dict with ok, documents_count, and error detail if any.
+        """
+        doc_count = self._db.execute(
+            "SELECT COUNT(*) AS c FROM documents"
+        ).fetchone()["c"]
+
+        try:
+            # FTS5 integrity-check: verifies the index matches the content table.
+            # Rank=1 means check a hash of the indexed content against the table.
+            # Raises sqlite3.DatabaseError if inconsistent.
+            self._db.execute(
+                "INSERT INTO documents_fts(documents_fts, rank) "
+                "VALUES('integrity-check', 1)"
+            )
+            return {
+                "ok": True,
+                "documents_count": doc_count,
+                "error": None,
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "documents_count": doc_count,
+                "error": str(e),
+            }
+
+    def fts_rebuild(self) -> dict[str, Any]:
+        """Rebuild the FTS5 index from the documents table.
+
+        Uses FTS5's built-in 'rebuild' command which reads every row from
+        the content table and reconstructs the index. Atomic and idempotent.
+        """
+        doc_count = self._db.execute(
+            "SELECT COUNT(*) AS c FROM documents"
+        ).fetchone()["c"]
+
+        self._db.execute(
+            "INSERT INTO documents_fts(documents_fts) VALUES('rebuild')"
+        )
+        self._db.commit()
+
+        return {"rebuilt": True, "documents_count": doc_count}
