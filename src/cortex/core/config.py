@@ -47,7 +47,9 @@ class CortexConfig:
     llm_api_key: str = ""
 
     # Embeddings
+    embedding_provider: str = "sentence-transformers"  # "sentence-transformers" | "litellm"
     embedding_model: str = "all-mpnet-base-v2"
+    embedding_api_key: str = ""
 
     # Logging
     log_level: str = "INFO"
@@ -169,7 +171,9 @@ def load_config(
         llm_provider=_get("llm_provider"),
         llm_model=_get("llm_model"),
         llm_api_key=_get("llm_api_key"),
+        embedding_provider=_get("embedding_provider", "sentence-transformers"),
         embedding_model=_get("embedding_model", "all-mpnet-base-v2"),
+        embedding_api_key=_get("embedding_api_key"),
         log_level=_get("log_level", "INFO"),
         log_json=_get("log_json", "true").lower() in ("true", "1", "yes"),
         dashboard_password=_get("dashboard_password"),

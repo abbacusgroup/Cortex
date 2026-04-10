@@ -367,20 +367,19 @@ def _get_learner() -> LearningLoop:
 
 
 def _warmup_embeddings(config: CortexConfig) -> None:
-    """Download and cache the embedding model if sentence-transformers is installed."""
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        typer.echo("  Embeddings: not installed (install cortex[embeddings] for semantic search)")
+    """Warm up the configured embedding provider."""
+    from cortex.services.embeddings import create_embedding_provider
+
+    provider = create_embedding_provider(config)
+    if provider is None:
+        typer.echo("  Embeddings: not available (check provider config)")
         return
 
-    model_name = config.embedding_model
-    typer.echo(f"  Embeddings: loading {model_name}...")
-    try:
-        SentenceTransformer(model_name)
-        typer.echo(f"  Embeddings: {model_name} ready")
-    except Exception as e:
-        typer.echo(f"  Embeddings: warm-up failed ({e}) — will retry on first search")
+    typer.echo(f"  Embeddings: loading {config.embedding_provider}/{provider.model_name}...")
+    if provider.warmup():
+        typer.echo(f"  Embeddings: {provider.model_name} ready")
+    else:
+        typer.echo("  Embeddings: warm-up failed — will retry on first use")
 
 
 @app.command()
