@@ -3,6 +3,68 @@ revision = 3
 requires-python = ">=3.12"
 
 [[package]]
+name = "abbacus-cortex"
+version = "0.2.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "bcrypt" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "jinja2" },
+    { name = "mcp" },
+    { name = "pyoxigraph" },
+    { name = "python-dotenv" },
+    { name = "typer" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+embeddings = [
+    { name = "sentence-transformers" },
+]
+llm = [
+    { name = "litellm" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-forked" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "bcrypt", specifier = ">=4.2" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.60" },
+    { name = "mcp", specifier = ">=1.6" },
+    { name = "pyoxigraph", specifier = ">=0.4" },
+    { name = "python-dotenv", specifier = ">=1.1" },
+    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=3.4" },
+    { name = "typer", specifier = ">=0.15" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
+]
+provides-extras = ["embeddings", "llm"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-asyncio", specifier = ">=0.25" },
+    { name = "pytest-forked", specifier = ">=1.6" },
+    { name = "pytest-xdist", specifier = ">=3.8" },
+    { name = "ruff", specifier = ">=0.11" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -382,68 +444,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93a6792e2acffb9d9d5cb0a5cfd8802644b7b1c9a02e4/colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44", size = 27697, upload-time = "2022-10-25T02:36:22.414Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", size = 25335, upload-time = "2022-10-25T02:36:20.889Z" },
-]
-
-[[package]]
-name = "cortex"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiosqlite" },
-    { name = "bcrypt" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "jinja2" },
-    { name = "mcp" },
-    { name = "pyoxigraph" },
-    { name = "python-dotenv" },
-    { name = "typer" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-embeddings = [
-    { name = "sentence-transformers" },
-]
-llm = [
-    { name = "litellm" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-forked" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "bcrypt", specifier = ">=4.2" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "jinja2", specifier = ">=3.1" },
-    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.60" },
-    { name = "mcp", specifier = ">=1.6" },
-    { name = "pyoxigraph", specifier = ">=0.4" },
-    { name = "python-dotenv", specifier = ">=1.1" },
-    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=3.4" },
-    { name = "typer", specifier = ">=0.15" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
-]
-provides-extras = ["embeddings", "llm"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "pytest", specifier = ">=8.3" },
-    { name = "pytest-asyncio", specifier = ">=0.25" },
-    { name = "pytest-forked", specifier = ">=1.6" },
-    { name = "pytest-xdist", specifier = ">=3.8" },
-    { name = "ruff", specifier = ">=0.11" },
 ]
 
 [[package]]
