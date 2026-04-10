@@ -147,6 +147,45 @@ class ReasonStage:
 
         return count
 
+    def check_fixpoint(self) -> dict[str, Any]:
+        """Check if the graph is at fixpoint WITHOUT writing new triples.
+
+        Runs the same CONSTRUCT queries as ``run()`` but only counts how many
+        triples would be inferred. Fully read-only — safe for diagnostics.
+
+        Returns:
+            Dict with total_pending and per-rule counts of missing triples.
+        """
+        total_pending = 0
+        rule_counts: dict[str, int] = {}
+
+        for rule in INFERENCE_RULES:
+            try:
+                result = self.graph._store.query(rule["query"])
+                new_triples = list(result)
+            except Exception as e:
+                logger.warning("Rule '%s' failed during check: %s", rule["name"], e)
+                rule_counts[rule["name"]] = 0
+                continue
+
+            # Count triples that don't already exist (same logic as _apply_rule)
+            count = 0
+            for triple in new_triples:
+                existing = list(self.graph._store.quads_for_pattern(
+                    triple.subject, triple.predicate, triple.object
+                ))
+                if not existing:
+                    count += 1
+
+            rule_counts[rule["name"]] = count
+            total_pending += count
+
+        return {
+            "ok": total_pending == 0,
+            "total_pending": total_pending,
+            "rule_counts": rule_counts,
+        }
+
     def run_for_object(self, obj_id: str) -> dict[str, Any]:
         """Run reasoning focused on a specific object's neighborhood.
 

@@ -1974,6 +1974,177 @@ def doctor_logs(
     _summarize_logs(log_paths)
 
 
+# --------------------------------------------------------------------------- #
+# S4 + S5 — ``cortex doctor check`` / ``cortex doctor repair``                #
+# --------------------------------------------------------------------------- #
+
+
+@doctor_app.command("check")
+def doctor_check() -> None:
+    """Run health checks on the Cortex data stores.
+
+    Validates store presence, FTS5 index consistency, reasoner fixpoint,
+    and server connectivity. Fully read-only — safe to run at any time.
+    """
+    config = load_config()
+    all_ok = True
+
+    typer.secho("Cortex health check:", fg=typer.colors.CYAN)
+
+    # 1. Stores exist
+    db_ok = config.sqlite_db_path.exists()
+    graph_ok = config.graph_db_path.exists() and config.graph_db_path.is_dir()
+    if db_ok and graph_ok:
+        typer.echo("  Stores:     OK (cortex.db + graph.db present)")
+    else:
+        missing = []
+        if not db_ok:
+            missing.append("cortex.db")
+        if not graph_ok:
+            missing.append("graph.db")
+        typer.secho(
+            f"  Stores:     FAIL — missing: {', '.join(missing)}",
+            fg=typer.colors.RED,
+        )
+        typer.echo("  Run `cortex init` to create data stores.")
+        raise typer.Exit(1)
+
+    # 2. FTS5 consistency
+    from cortex.db.content_store import ContentStore
+
+    content = ContentStore(path=config.sqlite_db_path)
+    try:
+        fts = content.fts_integrity_check()
+        if fts["ok"]:
+            typer.echo(
+                f"  FTS5 index: OK ({fts['documents_count']} documents indexed)"
+            )
+        else:
+            all_ok = False
+            typer.secho(
+                f"  FTS5 index: WARN — index inconsistent: {fts['error']}",
+                fg=typer.colors.YELLOW,
+            )
+            typer.echo("              Run `cortex doctor repair` to rebuild.")
+    finally:
+        content.close()
+
+    # 3. Reasoner fixpoint
+    try:
+        from cortex.db.graph_store import GraphStore
+        from cortex.pipeline.reason import ReasonStage
+
+        graph = GraphStore(path=config.graph_db_path)
+        try:
+            reasoner = ReasonStage(graph)
+            fixpoint = reasoner.check_fixpoint()
+            if fixpoint["ok"]:
+                typer.echo("  Reasoner:   OK (fixpoint reached, 0 pending triples)")
+            else:
+                all_ok = False
+                typer.secho(
+                    f"  Reasoner:   WARN — {fixpoint['total_pending']} "
+                    "triples pending inference",
+                    fg=typer.colors.YELLOW,
+                )
+                typer.echo("              Run `cortex doctor repair` to reach fixpoint.")
+        finally:
+            graph.close()
+    except StoreLockedError:
+        typer.secho(
+            "  Reasoner:   SKIP (graph.db locked — server is running)",
+            fg=typer.colors.YELLOW,
+        )
+        typer.echo("              Stop server first, or check results via MCP.")
+
+    # 4. Server connectivity
+    from cortex.cli.backup import _check_server_running
+
+    running, pid, _cmdline = _check_server_running(config)
+    if running:
+        typer.echo(f"  Server:     OK (PID {pid}, port {config.port})")
+    else:
+        typer.echo("  Server:     not running")
+
+    if all_ok:
+        typer.secho("\nAll checks passed.", fg=typer.colors.GREEN)
+    else:
+        typer.secho(
+            "\nSome checks reported warnings. Run `cortex doctor repair` to fix.",
+            fg=typer.colors.YELLOW,
+        )
+
+
+@doctor_app.command("repair")
+def doctor_repair() -> None:
+    """Repair Cortex data stores.
+
+    Rebuilds the FTS5 search index, runs the reasoner to fixpoint, and
+    checkpoints the SQLite WAL. Requires the server to be stopped.
+    """
+    config = load_config()
+
+    # Refuse if server is running
+    from cortex.cli.backup import _check_server_running, _checkpoint_sqlite
+
+    running, pid, _cmdline = _check_server_running(config)
+    if running:
+        typer.secho(
+            f"Cortex server is running (PID {pid}). "
+            f"Stop it first:\n  cortex uninstall\n  # or: kill {pid}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # Verify stores exist
+    if not config.sqlite_db_path.exists():
+        typer.secho(
+            "cortex.db not found. Run `cortex init` first.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.secho("Cortex repair:", fg=typer.colors.CYAN)
+
+    # 1. FTS5 rebuild
+    from cortex.db.content_store import ContentStore
+
+    content = ContentStore(path=config.sqlite_db_path)
+    try:
+        result = content.fts_rebuild()
+        typer.echo(
+            f"  FTS5 index: rebuilt ({result['documents_count']} documents reindexed)"
+        )
+    finally:
+        content.close()
+
+    # 2. Reasoner fixpoint
+    if config.graph_db_path.exists():
+        from cortex.db.graph_store import GraphStore
+        from cortex.pipeline.reason import ReasonStage
+
+        graph = GraphStore(path=config.graph_db_path)
+        try:
+            reasoner = ReasonStage(graph)
+            result = reasoner.run()
+            typer.echo(
+                f"  Reasoner:   {result['total_inferred']} triples inferred "
+                f"(fixpoint in {result['iterations']} iteration(s))"
+            )
+        finally:
+            graph.close()
+    else:
+        typer.echo("  Reasoner:   skipped (graph.db not found)")
+
+    # 3. WAL checkpoint
+    _checkpoint_sqlite(config.sqlite_db_path)
+    typer.echo("  WAL:        checkpointed")
+
+    typer.secho("\nRepair complete.", fg=typer.colors.GREEN)
+
+
 # Allow `python -m cortex.cli.main ...` invocation alongside the `cortex`
 # console_scripts entry point. Used by the integration test suite.
 if __name__ == "__main__":
