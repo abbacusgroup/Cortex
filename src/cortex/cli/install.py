@@ -294,6 +294,11 @@ def _unit_name(label: str) -> str:
 
 def _install_systemd_unit(label: str, content: str) -> Path:
     """Write a unit file and enable it."""
+    if not shutil.which("systemctl"):
+        typer.echo("  Error: systemctl not found — systemd is required for service install on Linux")
+        typer.echo("  You can still run Cortex manually: cortex serve --transport mcp-http")
+        raise typer.Exit(1)
+
     _SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True)
     unit_path = _SYSTEMD_USER_DIR / _unit_name(label)
     unit_name = unit_path.name
@@ -322,11 +327,12 @@ def _uninstall_systemd_unit(label: str) -> None:
     if not unit_path.exists():
         typer.echo(f"  {unit_name}: not installed")
         return
-    subprocess.run(
-        ["systemctl", "--user", "disable", "--now", unit_name],
-        check=False,
-        capture_output=True,
-    )
+    if shutil.which("systemctl"):
+        subprocess.run(
+            ["systemctl", "--user", "disable", "--now", unit_name],
+            check=False,
+            capture_output=True,
+        )
     unit_path.unlink()
     subprocess.run(
         ["systemctl", "--user", "daemon-reload"],
