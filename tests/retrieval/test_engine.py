@@ -397,31 +397,24 @@ class TestLimit:
 # -- Embedder caching -------------------------------------------------------
 
 
-class TestEmbedderCaching:
-    def test_get_embedder_returns_same_instance(self, store):
-        """_get_embedder() should cache the model, not reload every call."""
-
-        class FakeModel:
-            def encode(self, text, **kw):
-                return [0.0] * 768
-
+class TestEmbeddingProvider:
+    def test_embed_query_returns_none_without_provider(self, store):
+        """Without an embedding provider, _embed_query returns None."""
         engine = RetrievalEngine(store)
-        fake = FakeModel()
-        engine._embedder = fake
-
-        # Once set, _get_embedder() must return the cached instance
-        assert engine._get_embedder() is fake
-        assert engine._get_embedder() is fake
-
-    def test_embed_query_returns_none_without_sentence_transformers(self, store):
-        """When sentence-transformers is not importable, _embed_query returns None."""
-        engine = RetrievalEngine(store)
-        # _embedder is None by default and the import will either succeed
-        # (returning a real embedding) or fail (returning None). Either way
-        # the method must not raise.
         result = engine._embed_query("test query")
-        assert result is None or isinstance(result, tuple)
+        assert result is None
 
-    def test_embedder_starts_as_none(self, store):
+    def test_embed_query_with_provider(self, store):
+        """With a provider, _embed_query returns a tuple of floats."""
+        from unittest.mock import MagicMock
+
+        provider = MagicMock()
+        provider.embed.return_value = [0.1, 0.2, 0.3]
+        engine = RetrievalEngine(store, embedding_provider=provider)
+        result = engine._embed_query("test query")
+        assert result == (0.1, 0.2, 0.3)
+        provider.embed.assert_called_once_with("test query")
+
+    def test_provider_starts_as_none(self, store):
         engine = RetrievalEngine(store)
-        assert engine._embedder is None
+        assert engine._embedding_provider is None

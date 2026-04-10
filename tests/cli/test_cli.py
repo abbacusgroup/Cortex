@@ -99,7 +99,7 @@ class TestInit:
         monkeypatch.setattr(builtins, "__import__", _block_st)
         result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
-        assert "not installed" in result.output
+        assert "not available" in result.output
 
 
 # ---------------------------------------------------------------------------

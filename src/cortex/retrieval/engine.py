@@ -13,6 +13,7 @@ from typing import Any
 
 from cortex.core.logging import get_logger
 from cortex.db.store import Store
+from cortex.services.embeddings import EmbeddingProvider
 
 logger = get_logger("retrieval.engine")
 
@@ -28,10 +29,15 @@ DEFAULT_WEIGHTS = {
 class RetrievalEngine:
     """Hybrid search combining keyword, semantic, graph, and recency signals."""
 
-    def __init__(self, store: Store, weights: dict[str, float] | None = None):
+    def __init__(
+        self,
+        store: Store,
+        weights: dict[str, float] | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+    ):
         self.store = store
         self.weights = weights or dict(DEFAULT_WEIGHTS)
-        self._embedder = None
+        self._embedding_provider = embedding_provider
 
     def search(
         self,
@@ -173,26 +179,15 @@ class RetrievalEngine:
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:limit]
 
-    def _get_embedder(self):
-        """Lazy-load and cache the embedding model."""
-        if self._embedder is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-
-                model_name = self.store.config.embedding_model
-                self._embedder = SentenceTransformer(model_name)
-            except Exception:
-                pass
-        return self._embedder
-
     def _embed_query(self, query: str) -> tuple[float, ...] | None:
         """Generate embedding for a query string."""
-        embedder = self._get_embedder()
-        if embedder is None:
+        if self._embedding_provider is None:
             return None
         try:
-            vector = embedder.encode(query, normalize_embeddings=True)
-            return tuple(float(x) for x in vector)
+            vector = self._embedding_provider.embed(query)
+            if vector is None:
+                return None
+            return tuple(vector)
         except Exception:
             return None
 

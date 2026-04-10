@@ -30,6 +30,7 @@ from cortex.retrieval.presenters import (
     DossierPresenter,
     SynthesisPresenter,
 )
+from cortex.services.embeddings import create_embedding_provider
 from cortex.services.llm import LLMClient
 
 logger = get_logger("transport.mcp")
@@ -81,8 +82,9 @@ def create_mcp_server(
         pass
 
     llm = LLMClient(config)
-    pipeline = PipelineOrchestrator(store, config)
-    engine = RetrievalEngine(store)
+    embedding_provider = create_embedding_provider(config)
+    pipeline = PipelineOrchestrator(store, config, embedding_provider)
+    engine = RetrievalEngine(store, embedding_provider=embedding_provider)
     graph_queries = GraphQueries(store)
     learner = LearningLoop(store)
 

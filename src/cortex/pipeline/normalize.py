@@ -15,6 +15,7 @@ from typing import Any
 
 from cortex.core.logging import get_logger
 from cortex.db.store import Store
+from cortex.services.embeddings import EmbeddingProvider
 from cortex.services.llm import LLMClient
 
 logger = get_logger("pipeline.normalize")
@@ -23,22 +24,15 @@ logger = get_logger("pipeline.normalize")
 class NormalizeStage:
     """Classify and enrich a raw knowledge object."""
 
-    def __init__(self, store: Store, llm: LLMClient):
+    def __init__(
+        self,
+        store: Store,
+        llm: LLMClient,
+        embedding_provider: EmbeddingProvider | None = None,
+    ):
         self.store = store
         self.llm = llm
-        self._embedder = None
-
-    def _get_embedder(self):
-        """Lazy-load the embedding model."""
-        if self._embedder is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-                model_name = self.store.config.embedding_model
-                self._embedder = SentenceTransformer(model_name)
-                logger.info("Loaded embedding model: %s", model_name)
-            except Exception as e:
-                logger.warning("Failed to load embedding model: %s", e)
-        return self._embedder
+        self._embedding_provider = embedding_provider
 
     def run(self, obj_id: str) -> dict[str, Any]:
         """Run normalization on a knowledge object.
@@ -119,19 +113,20 @@ class NormalizeStage:
 
     def _generate_embedding(self, obj_id: str, title: str, content: str) -> None:
         """Generate and store embedding for the object."""
-        embedder = self._get_embedder()
-        if embedder is None:
+        if self._embedding_provider is None:
             return
 
         try:
             text = f"{title}\n{content[:2000]}"
-            vector = embedder.encode(text, normalize_embeddings=True)
+            vector = self._embedding_provider.embed(text)
+            if vector is None:
+                return
             embedding_bytes = struct.pack(f"{len(vector)}f", *vector)
 
             self.store.content.store_embedding(
                 doc_id=obj_id,
                 embedding=embedding_bytes,
-                model=self.store.config.embedding_model,
+                model=self._embedding_provider.model_name,
                 dimensions=len(vector),
             )
             logger.debug("Stored embedding for %s (%d dims)", obj_id, len(vector))

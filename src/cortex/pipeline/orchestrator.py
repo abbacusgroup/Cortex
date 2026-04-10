@@ -17,6 +17,7 @@ from cortex.pipeline.link import LinkStage
 from cortex.pipeline.normalize import NormalizeStage
 from cortex.pipeline.reason import ReasonStage
 from cortex.pipeline.templates import get_template
+from cortex.services.embeddings import EmbeddingProvider
 from cortex.services.llm import LLMClient
 
 logger = get_logger("pipeline.orchestrator")
@@ -25,11 +26,16 @@ logger = get_logger("pipeline.orchestrator")
 class PipelineOrchestrator:
     """Coordinates the full intelligence pipeline."""
 
-    def __init__(self, store: Store, config: CortexConfig):
+    def __init__(
+        self,
+        store: Store,
+        config: CortexConfig,
+        embedding_provider: EmbeddingProvider | None = None,
+    ):
         self.store = store
         self.config = config
         self.llm = LLMClient(config)
-        self.normalizer = NormalizeStage(store, self.llm)
+        self.normalizer = NormalizeStage(store, self.llm, embedding_provider)
         self.linker = LinkStage(store, self.llm)
         self.enricher = EnrichStage(store)
         self.reasoner = ReasonStage(store.graph)
