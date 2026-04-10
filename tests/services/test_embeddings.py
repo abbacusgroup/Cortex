@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from cortex.core.config import CortexConfig
 from cortex.services.embeddings import (
     EmbeddingProvider,
@@ -14,7 +12,6 @@ from cortex.services.embeddings import (
     check_embedding_model_consistency,
     create_embedding_provider,
 )
-
 
 # -- SentenceTransformerProvider --------------------------------------------
 
