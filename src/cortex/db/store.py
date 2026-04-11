@@ -33,6 +33,7 @@ class Store:
         self.graph.load_ontology(ontology_path)
         self._initialized = True
         from cortex.pipeline.temporal import TemporalVersioning
+
         self.temporal = TemporalVersioning(self.content)
         logger.info("Store initialized")
 
@@ -204,9 +205,7 @@ class Store:
         )
 
     def delete_relationship(self, *, from_id: str, rel_type: str, to_id: str) -> bool:
-        return self.graph.delete_relationship(
-            from_id=from_id, rel_type=rel_type, to_id=to_id
-        )
+        return self.graph.delete_relationship(from_id=from_id, rel_type=rel_type, to_id=to_id)
 
     def get_relationships(self, obj_id: str) -> list[dict[str, str]]:
         return self.graph.get_relationships(obj_id)
@@ -215,7 +214,9 @@ class Store:
     # Entities (graph-only)
     # -------------------------------------------------------------------------
 
-    def create_entity(self, *, name: str, entity_type: str = "concept", aliases: str = "") -> str:
+    def create_entity(
+        self, *, name: str, entity_type: str = "concept", aliases: str = ""
+    ) -> tuple[str, bool]:
         return self.graph.create_entity(name=name, entity_type=entity_type, aliases=aliases)
 
     def add_mention(self, *, obj_id: str, entity_id: str) -> None:

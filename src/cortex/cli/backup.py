@@ -21,13 +21,15 @@ from cortex.core.config import CortexConfig
 # ---------------------------------------------------------------------------
 
 # Relative paths (from data_dir) to exclude from backup archives.
-_EXCLUDE_EXACT = frozenset({
-    "graph.db.lock",
-    "graph.db/LOCK",
-    ".env",
-    "cortex.db-wal",
-    "cortex.db-shm",
-})
+_EXCLUDE_EXACT = frozenset(
+    {
+        "graph.db.lock",
+        "graph.db/LOCK",
+        ".env",
+        "cortex.db-wal",
+        "cortex.db-shm",
+    }
+)
 
 _EXCLUDE_SUFFIXES = (".log", ".err", ".log.old", ".err.old")
 

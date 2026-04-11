@@ -1,4 +1,5 @@
 """Tests for temporal versioning integration in Store."""
+
 import pytest
 
 from cortex.core.config import CortexConfig
@@ -12,6 +13,7 @@ def store(tmp_path):
     s = Store(config)
     s.initialize(find_ontology())
     return s
+
 
 class TestStoreTemporalIntegration:
     def test_temporal_initialized_after_store_init(self, store):

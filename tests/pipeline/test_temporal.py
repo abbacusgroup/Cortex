@@ -71,9 +71,7 @@ class TestSnapshotBeforeUpdate:
 class TestGetVersion:
     """Tests for get_version — retrieving specific version data."""
 
-    def test_get_version_returns_correct_data(
-        self, content_store, versioning
-    ):
+    def test_get_version_returns_correct_data(self, content_store, versioning):
         doc_id = _insert_doc(content_store, title="V1 Title")
         versioning.snapshot_before_update(doc_id)
 
@@ -110,9 +108,7 @@ class TestGetStateAt:
 
         assert state is None
 
-    def test_state_at_returns_version_valid_at_time(
-        self, content_store, versioning
-    ):
+    def test_state_at_returns_version_valid_at_time(self, content_store, versioning):
         doc_id = _insert_doc(content_store, title="First")
         versioning.snapshot_before_update(doc_id)
 
@@ -143,9 +139,7 @@ class TestGetStateAt:
 class TestListVersions:
     """Tests for list_versions — ordered version metadata."""
 
-    def test_list_versions_ordered_oldest_first(
-        self, content_store, versioning
-    ):
+    def test_list_versions_ordered_oldest_first(self, content_store, versioning):
         doc_id = _insert_doc(content_store)
 
         for i in range(3):

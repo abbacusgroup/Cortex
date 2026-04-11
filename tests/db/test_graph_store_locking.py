@@ -126,9 +126,7 @@ class TestPidMarkerLifecycle:
 
 
 class TestLockFailureRaisesStoreLockedError:
-    def test_concurrent_open_in_subprocess_reports_subprocess_pid(
-        self, tmp_path: Path
-    ):
+    def test_concurrent_open_in_subprocess_reports_subprocess_pid(self, tmp_path: Path):
         db = tmp_path / "g.db"
         sentinel = tmp_path / "ready"
         proc = _spawn_holder_subprocess(db, sentinel)
@@ -139,9 +137,7 @@ class TestLockFailureRaisesStoreLockedError:
             err = exc_info.value
             assert err.holder_pid == proc.pid
             assert err.holder_cmdline is not None
-            assert "python" in err.holder_cmdline.lower() or "cortex" in (
-                err.holder_cmdline or ""
-            )
+            assert "python" in err.holder_cmdline.lower() or "cortex" in (err.holder_cmdline or "")
             assert err.is_stale is False
             # The error message should be actionable
             s = str(err)
@@ -404,12 +400,8 @@ class TestPidReuseRaceProtection:
                 GraphStore(db)
             err = exc_info.value
             assert err.holder_pid == proc.pid
-            assert err.is_stale is False, (
-                "PID is alive, so is_stale must be False"
-            )
-            assert err.is_pid_reuse is False, (
-                "cmdline is unknown, so we cannot claim reuse"
-            )
+            assert err.is_stale is False, "PID is alive, so is_stale must be False"
+            assert err.is_pid_reuse is False, "cmdline is unknown, so we cannot claim reuse"
             assert err.cmdline_unknown is True, (
                 "expected cmdline_unknown=True when _process_cmdline returns None"
             )
@@ -422,9 +414,7 @@ class TestPidReuseRaceProtection:
             proc.terminate()
             proc.wait(timeout=5)
 
-    def test_cmdline_unknown_does_not_trigger_auto_recovery(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_cmdline_unknown_does_not_trigger_auto_recovery(self, tmp_path: Path, monkeypatch):
         """Bundle 10.7 / B.2: the auto-recovery path in ``GraphStore.__init__``
         gates on ``is_stale`` — with ``cmdline_unknown=True`` and PID alive,
         ``is_stale`` must remain False so auto-recovery does NOT fire. The
@@ -448,16 +438,13 @@ class TestPidReuseRaceProtection:
             # Marker must still be present — auto-recovery must NOT have
             # fired. If it had, the marker would be gone.
             assert marker.exists(), (
-                "marker was removed — auto-recovery fired despite "
-                "cmdline_unknown (regression)"
+                "marker was removed — auto-recovery fired despite cmdline_unknown (regression)"
             )
         finally:
             proc.terminate()
             proc.wait(timeout=5)
 
-    def test_cmdline_unknown_false_when_marker_has_no_cmdline(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_cmdline_unknown_false_when_marker_has_no_cmdline(self, tmp_path: Path, monkeypatch):
         """When the marker itself records no cmdline, there's nothing to
         verify against — ``cmdline_unknown`` must stay False even if
         ``_process_cmdline`` also returns None. Otherwise every legacy
@@ -466,9 +453,7 @@ class TestPidReuseRaceProtection:
         db = tmp_path / "g.db"
         db.mkdir(parents=True, exist_ok=True)
         marker = _marker_path_for(db)
-        marker.write_text(
-            json.dumps({"pid": os.getpid(), "acquired_at": "2026-01-01"})
-        )
+        marker.write_text(json.dumps({"pid": os.getpid(), "acquired_at": "2026-01-01"}))
         # Create a dummy LOCK file so the OSError path fires
         (db / "LOCK").write_text("")
 
@@ -493,9 +478,7 @@ class TestPidReuseRaceProtection:
         finally:
             monkeypatch.setattr(gs.ox, "Store", real_store)
 
-    def test_stale_marker_with_dead_pid_takes_precedence_over_reuse(
-        self, tmp_path: Path
-    ):
+    def test_stale_marker_with_dead_pid_takes_precedence_over_reuse(self, tmp_path: Path):
         """When the marker's PID is dead, is_stale=True (PID reuse check is
         skipped because there's no live cmdline to compare).
         """
@@ -504,9 +487,7 @@ class TestPidReuseRaceProtection:
         marker = _marker_path_for(db)
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(
-            json.dumps(
-                {"pid": 999997, "cmdline": "ghost cmdline", "acquired_at": "2026-01-01"}
-            )
+            json.dumps({"pid": 999997, "cmdline": "ghost cmdline", "acquired_at": "2026-01-01"})
         )
 
         # Open should succeed (no actual lock conflict — we only have a stale
@@ -530,9 +511,7 @@ class TestPidReuseRaceProtection:
         marker = _marker_path_for(db)
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(
-            json.dumps(
-                {"pid": 999996, "cmdline": "ghost", "acquired_at": "2026-01-01"}
-            )
+            json.dumps({"pid": 999996, "cmdline": "ghost", "acquired_at": "2026-01-01"})
         )
 
         with pytest.raises(StoreLockedError) as exc_info:
@@ -586,8 +565,7 @@ class TestMarkerEdgeCases:
             # No marker file should exist on disk
             marker = _marker_path_for(db)
             assert not marker.exists(), (
-                "marker file should NOT be created when open fails for a "
-                "non-lock reason"
+                "marker file should NOT be created when open fails for a non-lock reason"
             )
         finally:
             bad_parent.chmod(0o755)  # restore so cleanup can remove it
@@ -642,9 +620,7 @@ class TestMarkerEdgeCases:
         finally:
             gs_mod._write_marker = original  # type: ignore[assignment]
 
-    def test_pid_marker_cleaned_up_on_subprocess_clean_exit(
-        self, tmp_path: Path
-    ):
+    def test_pid_marker_cleaned_up_on_subprocess_clean_exit(self, tmp_path: Path):
         """Subprocess opens GraphStore and exits cleanly via sys.exit (which
         triggers atexit cleanup). Parent verifies marker is removed.
         """
@@ -672,9 +648,7 @@ class TestMarkerEdgeCases:
             f"marker should be removed after subprocess clean exit, found: {marker}"
         )
 
-    def test_concurrent_open_in_same_process_raises_locked_error(
-        self, tmp_path: Path
-    ):
+    def test_concurrent_open_in_same_process_raises_locked_error(self, tmp_path: Path):
         """Opening the same GraphStore path twice in the same Python process
         without closing the first instance should raise StoreLockedError.
 
@@ -726,11 +700,7 @@ class TestMarkerEdgeCases:
         from pathlib import Path
 
         gs_source = (
-            Path(__file__).resolve().parents[2]
-            / "src"
-            / "cortex"
-            / "db"
-            / "graph_store.py"
+            Path(__file__).resolve().parents[2] / "src" / "cortex" / "db" / "graph_store.py"
         ).read_text()
         # The only allowed os.kill call is the signal-0 liveness probe
         # inside _pid_alive. Find every os.kill( occurrence and verify it
@@ -816,9 +786,7 @@ class TestMarkerNotRequiredForLockAcquisition:
     create its own marker.
     """
 
-    def test_no_marker_plus_no_lock_means_clean_open(
-        self, tmp_path: Path
-    ):
+    def test_no_marker_plus_no_lock_means_clean_open(self, tmp_path: Path):
         import cortex.db.graph_store as gs_mod
 
         db = tmp_path / "g.db"
@@ -847,18 +815,14 @@ class TestMarkerNotRequiredForLockAcquisition:
         # ─── Second open: should succeed and write its own marker ─────
         store_b = GraphStore(db)
         try:
-            assert _marker_path_for(db).exists(), (
-                "second open should write its own marker"
-            )
+            assert _marker_path_for(db).exists(), "second open should write its own marker"
             data = json.loads(_marker_path_for(db).read_text())
             assert data["pid"] == os.getpid()
             assert store_b.triple_count >= 0
         finally:
             store_b.close()
 
-    def test_stale_marker_but_no_lock_opens_and_overwrites(
-        self, tmp_path: Path
-    ):
+    def test_stale_marker_but_no_lock_opens_and_overwrites(self, tmp_path: Path):
         """Another marker-race variant: a stale marker file exists (from a
         dead process) but no actual RocksDB lock is held. The new process
         should open successfully and overwrite the marker with its own PID.
@@ -938,9 +902,7 @@ class TestAutoRecoverStaleLock:
         rocksdb_lock.write_text("")
         return db, marker, rocksdb_lock
 
-    def test_stale_marker_triggers_auto_recovery_on_retry(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_stale_marker_triggers_auto_recovery_on_retry(self, tmp_path: Path, monkeypatch):
         """When ox.Store raises a lock error and the marker says the holder
         is dead, GraphStore auto-recovers (removes marker + LOCK) and
         retries the open successfully.
@@ -959,9 +921,7 @@ class TestAutoRecoverStaleLock:
         def flaky_store(path_arg: str):
             call_count["n"] += 1
             if call_count["n"] == 1:
-                raise OSError(
-                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
-                )
+                raise OSError("While lock file: /tmp/LOCK: Resource temporarily unavailable")
             return original_store_cls(path_arg)
 
         monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
@@ -976,9 +936,7 @@ class TestAutoRecoverStaleLock:
         finally:
             store.close()
 
-    def test_auto_recovery_removes_rocksdb_lock_file(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_auto_recovery_removes_rocksdb_lock_file(self, tmp_path: Path, monkeypatch):
         """Explicit assertion that the LOCK file inside graph.db/ is removed
         by the auto-recovery path.
         """
@@ -997,9 +955,7 @@ class TestAutoRecoverStaleLock:
         def flaky_store(path_arg: str):
             call_count["n"] += 1
             if call_count["n"] == 1:
-                raise OSError(
-                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
-                )
+                raise OSError("While lock file: /tmp/LOCK: Resource temporarily unavailable")
             # On the retry, record whether the LOCK file was removed
             seen_rocksdb_lock_exists.append(rocksdb_lock.exists())
             return original_store_cls(path_arg)
@@ -1032,9 +988,7 @@ class TestAutoRecoverStaleLock:
         finally:
             first.close()
 
-    def test_auto_recovery_skipped_for_pid_reuse(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_auto_recovery_skipped_for_pid_reuse(self, tmp_path: Path, monkeypatch):
         """When the marker's PID is alive but its cmdline differs from the
         marker (PID reuse), auto-recovery is not triggered.
         """
@@ -1064,9 +1018,7 @@ class TestAutoRecoverStaleLock:
         def flaky_store(path_arg: str):
             call_count["n"] += 1
             if call_count["n"] == 1:
-                raise OSError(
-                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
-                )
+                raise OSError("While lock file: /tmp/LOCK: Resource temporarily unavailable")
             return original_store_cls(path_arg)
 
         monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
@@ -1079,9 +1031,7 @@ class TestAutoRecoverStaleLock:
         # Crucially: no retry happened, so the call count is 1
         assert call_count["n"] == 1
 
-    def test_auto_recovery_skipped_for_missing_marker(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_auto_recovery_skipped_for_missing_marker(self, tmp_path: Path, monkeypatch):
         """When the lock error happens but there's no marker file at all,
         auto-recovery is not triggered (we don't know enough to act safely).
         """
@@ -1101,9 +1051,7 @@ class TestAutoRecoverStaleLock:
         def flaky_store(path_arg: str):
             call_count["n"] += 1
             if call_count["n"] == 1:
-                raise OSError(
-                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
-                )
+                raise OSError("While lock file: /tmp/LOCK: Resource temporarily unavailable")
             return original_store_cls(path_arg)
 
         monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
@@ -1116,9 +1064,7 @@ class TestAutoRecoverStaleLock:
         # No retry happened
         assert call_count["n"] == 1
 
-    def test_auto_recovery_skipped_for_unreadable_marker(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_auto_recovery_skipped_for_unreadable_marker(self, tmp_path: Path, monkeypatch):
         """When the marker exists but is unreadable (chmod 000), auto-recovery
         is not triggered — we can't tell who the holder is.
         """
@@ -1139,9 +1085,7 @@ class TestAutoRecoverStaleLock:
         def flaky_store(path_arg: str):
             call_count["n"] += 1
             if call_count["n"] == 1:
-                raise OSError(
-                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
-                )
+                raise OSError("While lock file: /tmp/LOCK: Resource temporarily unavailable")
             return original_store_cls(path_arg)
 
         monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
@@ -1155,9 +1099,7 @@ class TestAutoRecoverStaleLock:
         finally:
             marker.chmod(original_mode)
 
-    def test_auto_recovery_re_check_race(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_auto_recovery_re_check_race(self, tmp_path: Path, monkeypatch):
         """Simulate a race: `_pid_alive` returns False in the initial
         staleness check, then True during the re-check inside
         `_auto_recover_stale_lock`. The original StoreLockedError should
@@ -1183,9 +1125,7 @@ class TestAutoRecoverStaleLock:
         monkeypatch.setattr(gs_mod, "_pid_alive", racy_pid_alive)
 
         def always_locked(path_arg: str):
-            raise OSError(
-                "While lock file: /tmp/LOCK: Resource temporarily unavailable"
-            )
+            raise OSError("While lock file: /tmp/LOCK: Resource temporarily unavailable")
 
         monkeypatch.setattr(gs_mod.ox, "Store", always_locked)
 
@@ -1197,9 +1137,7 @@ class TestAutoRecoverStaleLock:
         assert marker.read_text() == marker_data_before
         assert rocksdb_lock.read_text() == lock_data_before
 
-    def test_auto_recovery_logs_info_on_success(
-        self, tmp_path: Path, monkeypatch, caplog
-    ):
+    def test_auto_recovery_logs_info_on_success(self, tmp_path: Path, monkeypatch, caplog):
         """The successful auto-recovery path must emit a single INFO line
         naming the dead holder PID.
         """
@@ -1217,9 +1155,7 @@ class TestAutoRecoverStaleLock:
         def flaky_store(path_arg: str):
             call_count["n"] += 1
             if call_count["n"] == 1:
-                raise OSError(
-                    "While lock file: /tmp/LOCK: Resource temporarily unavailable"
-                )
+                raise OSError("While lock file: /tmp/LOCK: Resource temporarily unavailable")
             return original_store_cls(path_arg)
 
         monkeypatch.setattr(gs_mod.ox, "Store", flaky_store)
@@ -1228,18 +1164,14 @@ class TestAutoRecoverStaleLock:
             store = GraphStore(db)
             try:
                 recovery_logs = [
-                    rec
-                    for rec in caplog.records
-                    if "Auto-recovered stale lock" in rec.getMessage()
+                    rec for rec in caplog.records if "Auto-recovered stale lock" in rec.getMessage()
                 ]
                 assert len(recovery_logs) == 1
                 assert "2000000" in recovery_logs[0].getMessage()
             finally:
                 store.close()
 
-    def test_stale_locked_error_message_mentions_doctor_unlock(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_stale_locked_error_message_mentions_doctor_unlock(self, tmp_path: Path, monkeypatch):
         """When auto-recovery does NOT fire (e.g. pid_reuse case), the error
         message must still direct users at ``cortex doctor unlock``.
         """
@@ -1264,15 +1196,11 @@ class TestAutoRecoverStaleLock:
         (db / "LOCK").write_text("")
 
         def always_locked(path_arg: str):
-            raise OSError(
-                "While lock file: /tmp/LOCK: Resource temporarily unavailable"
-            )
+            raise OSError("While lock file: /tmp/LOCK: Resource temporarily unavailable")
 
         # Pretend recovery always fails (returns False as if the race aborted)
         monkeypatch.setattr(gs_mod.ox, "Store", always_locked)
-        monkeypatch.setattr(
-            gs_mod, "_auto_recover_stale_lock", lambda *a, **kw: False
-        )
+        monkeypatch.setattr(gs_mod, "_auto_recover_stale_lock", lambda *a, **kw: False)
 
         with pytest.raises(StoreLockedError) as exc_info:
             GraphStore(db)

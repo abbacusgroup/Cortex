@@ -81,23 +81,15 @@ class TestHealth:
 
 
 class TestAuth:
-    def test_request_with_api_key_is_allowed(
-        self, client: TestClient
-    ):
-        resp = client.post(
-            "/search", params={"query": "test"}, headers=AUTH
-        )
+    def test_request_with_api_key_is_allowed(self, client: TestClient):
+        resp = client.post("/search", params={"query": "test"}, headers=AUTH)
         assert resp.status_code == 200
 
-    def test_request_without_api_key_returns_401(
-        self, client: TestClient
-    ):
+    def test_request_without_api_key_returns_401(self, client: TestClient):
         resp = client.post("/search", params={"query": "test"})
         assert resp.status_code == 401
 
-    def test_any_key_value_works_in_dev_mode(
-        self, client: TestClient
-    ):
+    def test_any_key_value_works_in_dev_mode(self, client: TestClient):
         resp = client.post(
             "/search",
             params={"query": "test"},
@@ -111,38 +103,25 @@ class TestAuth:
 
 class TestSearch:
     def test_search_returns_list(self, client: TestClient):
-        resp = client.post(
-            "/search", params={"query": "test"}, headers=AUTH
-        )
+        resp = client.post("/search", params={"query": "test"}, headers=AUTH)
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
-    def test_search_finds_captured_object(
-        self, client: TestClient
-    ):
+    def test_search_finds_captured_object(self, client: TestClient):
         _capture(
             client,
             title="Unique quantum discovery",
             content="quantum entanglement breakthrough",
             obj_type="research",
         )
-        resp = client.post(
-            "/search", params={"query": "quantum"}, headers=AUTH
-        )
+        resp = client.post("/search", params={"query": "quantum"}, headers=AUTH)
         assert resp.status_code == 200
         results = resp.json()
         assert len(results) >= 1
-        assert any(
-            "quantum" in r.get("title", "").lower()
-            for r in results
-        )
+        assert any("quantum" in r.get("title", "").lower() for r in results)
 
-    def test_search_empty_query_returns_empty(
-        self, client: TestClient
-    ):
-        resp = client.post(
-            "/search", params={"query": ""}, headers=AUTH
-        )
+    def test_search_empty_query_returns_empty(self, client: TestClient):
+        resp = client.post("/search", params={"query": ""}, headers=AUTH)
         assert resp.status_code == 200
         assert resp.json() == []
 
@@ -151,17 +130,13 @@ class TestSearch:
 
 
 class TestCapture:
-    def test_capture_returns_id_and_status(
-        self, client: TestClient
-    ):
+    def test_capture_returns_id_and_status(self, client: TestClient):
         data = _capture(client, title="Test capture")
         assert "id" in data
         assert data["id"] != ""
         assert data["type"] == "fix"
 
-    def test_capture_with_different_type(
-        self, client: TestClient
-    ):
+    def test_capture_with_different_type(self, client: TestClient):
         data = _capture(
             client,
             title="A lesson",
@@ -170,9 +145,7 @@ class TestCapture:
         )
         assert data["type"] == "lesson"
 
-    def test_capture_returns_ingested_status(
-        self, client: TestClient
-    ):
+    def test_capture_returns_ingested_status(self, client: TestClient):
         data = _capture(client)
         assert data["status"] == "ingested"
 
@@ -191,12 +164,8 @@ class TestRead:
         assert body["id"] == obj_id
         assert body["title"] == "Readable doc"
 
-    def test_read_nonexistent_returns_404(
-        self, client: TestClient
-    ):
-        resp = client.get(
-            "/read/nonexistent-id-xyz", headers=AUTH
-        )
+    def test_read_nonexistent_returns_404(self, client: TestClient):
+        resp = client.get("/read/nonexistent-id-xyz", headers=AUTH)
         assert resp.status_code == 404
 
 
@@ -209,17 +178,13 @@ class TestList:
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
-    def test_list_includes_captured_objects(
-        self, client: TestClient
-    ):
+    def test_list_includes_captured_objects(self, client: TestClient):
         _capture(client, title="Listed item")
         resp = client.get("/list", headers=AUTH)
         assert resp.status_code == 200
         items = resp.json()
         assert len(items) >= 1
-        assert any(
-            i.get("title") == "Listed item" for i in items
-        )
+        assert any(i.get("title") == "Listed item" for i in items)
 
     def test_list_filter_by_type(self, client: TestClient):
         _capture(client, title="Fix A", obj_type="fix")
@@ -232,9 +197,7 @@ class TestList:
         )
         assert resp.status_code == 200
         items = resp.json()
-        assert all(
-            i.get("type") == "fix" for i in items
-        )
+        assert all(i.get("type") == "fix" for i in items)
 
 
 # -- Status ---------------------------------------------------------------
@@ -252,9 +215,7 @@ class TestStatus:
         assert "counts_by_type" in body
         assert "alerts" in body
 
-    def test_status_reflects_multiple_types(
-        self, client: TestClient
-    ):
+    def test_status_reflects_multiple_types(self, client: TestClient):
         _capture(client, title="Fix", obj_type="fix")
         _capture(client, title="Lesson", obj_type="lesson")
 
@@ -273,9 +234,7 @@ class TestDelete:
         captured = _capture(client, title="To delete")
         obj_id = captured["id"]
 
-        resp = client.delete(
-            f"/delete/{obj_id}", headers=AUTH
-        )
+        resp = client.delete(f"/delete/{obj_id}", headers=AUTH)
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "deleted"
@@ -285,12 +244,8 @@ class TestDelete:
         resp = client.get(f"/read/{obj_id}", headers=AUTH)
         assert resp.status_code == 404
 
-    def test_delete_nonexistent_returns_404(
-        self, client: TestClient
-    ):
-        resp = client.delete(
-            "/delete/nonexistent-id-xyz", headers=AUTH
-        )
+    def test_delete_nonexistent_returns_404(self, client: TestClient):
+        resp = client.delete("/delete/nonexistent-id-xyz", headers=AUTH)
         assert resp.status_code == 404
 
 
@@ -307,9 +262,7 @@ class TestContext:
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
-    def test_context_returns_briefing_fields(
-        self, client: TestClient
-    ):
+    def test_context_returns_briefing_fields(self, client: TestClient):
         _capture(
             client,
             title="Context target",
@@ -345,9 +298,7 @@ class TestDossier:
         assert "topic" in body
         assert body["topic"] == "test"
 
-    def test_dossier_unknown_topic_shape(
-        self, client: TestClient
-    ):
+    def test_dossier_unknown_topic_shape(self, client: TestClient):
         resp = client.post(
             "/dossier",
             params={"topic": "ZzzzNonexistent"},
@@ -372,12 +323,8 @@ class TestPipeline:
         body = resp.json()
         assert "pipeline_stages" in body
 
-    def test_pipeline_nonexistent_returns_404(
-        self, client: TestClient
-    ):
-        resp = client.post(
-            "/pipeline/nonexistent-id-xyz", headers=AUTH
-        )
+    def test_pipeline_nonexistent_returns_404(self, client: TestClient):
+        resp = client.post("/pipeline/nonexistent-id-xyz", headers=AUTH)
         assert resp.status_code == 404
 
 
@@ -385,9 +332,7 @@ class TestPipeline:
 
 
 class TestReason:
-    def test_reason_returns_expected_keys(
-        self, client: TestClient
-    ):
+    def test_reason_returns_expected_keys(self, client: TestClient):
         resp = client.post("/reason", headers=AUTH)
         assert resp.status_code == 200
         body = resp.json()
@@ -480,9 +425,7 @@ class TestRestApiDoesNotImportStore:
             "from cortex.ontology.resolver import find_ontology",
         ]
         for line in forbidden:
-            assert line not in src, (
-                f"REST API must not import {line!r} after Phase 4"
-            )
+            assert line not in src, f"REST API must not import {line!r} after Phase 4"
 
     def test_server_module_imports_mcp_client(self):
         import inspect
@@ -532,42 +475,30 @@ class TestRestApiMcpErrorMapping:
     def test_connection_error_maps_to_503(self, tmp_path: Path):
         from cortex.transport.mcp.client import MCPConnectionError
 
-        client = self._failing_client(
-            MCPConnectionError, ("server down",)
-        )
+        client = self._failing_client(MCPConnectionError, ("server down",))
         app = self._make_app(tmp_path, client)
         tc = TestClient(app)
-        resp = tc.post(
-            "/search", params={"query": "x"}, headers=AUTH
-        )
+        resp = tc.post("/search", params={"query": "x"}, headers=AUTH)
         assert resp.status_code == 503
         assert "unreachable" in resp.json()["detail"].lower()
 
     def test_timeout_error_maps_to_504(self, tmp_path: Path):
         from cortex.transport.mcp.client import MCPTimeoutError
 
-        client = self._failing_client(
-            MCPTimeoutError, ("timed out",)
-        )
+        client = self._failing_client(MCPTimeoutError, ("timed out",))
         app = self._make_app(tmp_path, client)
         tc = TestClient(app)
-        resp = tc.post(
-            "/search", params={"query": "x"}, headers=AUTH
-        )
+        resp = tc.post("/search", params={"query": "x"}, headers=AUTH)
         assert resp.status_code == 504
         assert "timed out" in resp.json()["detail"].lower()
 
     def test_server_error_maps_to_502(self, tmp_path: Path):
         from cortex.transport.mcp.client import MCPServerError
 
-        client = self._failing_client(
-            MCPServerError, ("500 from upstream",)
-        )
+        client = self._failing_client(MCPServerError, ("500 from upstream",))
         app = self._make_app(tmp_path, client)
         tc = TestClient(app)
-        resp = tc.post(
-            "/search", params={"query": "x"}, headers=AUTH
-        )
+        resp = tc.post("/search", params={"query": "x"}, headers=AUTH)
         assert resp.status_code == 502
         assert "server error" in resp.json()["detail"].lower()
 
@@ -577,9 +508,7 @@ class TestRestApiMcpErrorMapping:
         client = self._failing_client(MCPToolError, ("boom",))
         app = self._make_app(tmp_path, client)
         tc = TestClient(app)
-        resp = tc.post(
-            "/search", params={"query": "x"}, headers=AUTH
-        )
+        resp = tc.post("/search", params={"query": "x"}, headers=AUTH)
         assert resp.status_code == 502
         assert "tool error" in resp.json()["detail"].lower()
 
@@ -598,9 +527,7 @@ class TestRestApiKeyFromEnvVar:
         )
         assert resp.status_code == 200
 
-    def test_configured_keys_accept_matching(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_configured_keys_accept_matching(self, client: TestClient, monkeypatch):
         monkeypatch.setenv("CORTEX_API_KEYS", "good-key,another")
         resp = client.post(
             "/search",
@@ -609,9 +536,7 @@ class TestRestApiKeyFromEnvVar:
         )
         assert resp.status_code == 200
 
-    def test_configured_keys_reject_nonmatching(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_configured_keys_reject_nonmatching(self, client: TestClient, monkeypatch):
         monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
         resp = client.post(
             "/search",
@@ -620,9 +545,7 @@ class TestRestApiKeyFromEnvVar:
         )
         assert resp.status_code == 401
 
-    def test_configured_keys_accept_trailing_whitespace(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_configured_keys_accept_trailing_whitespace(self, client: TestClient, monkeypatch):
         """Bundle 9 / Group 3 #1: trailing whitespace in the X-API-Key
         header used to return 401 because h11 preserved trailing OWS
         while stripping leading OWS, producing an asymmetric and
@@ -637,9 +560,7 @@ class TestRestApiKeyFromEnvVar:
         )
         assert resp.status_code == 200
 
-    def test_configured_keys_accept_leading_whitespace(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_configured_keys_accept_leading_whitespace(self, client: TestClient, monkeypatch):
         """Bundle 9 / Group 3 #1: leading whitespace was already stripped
         by h11 so this case used to ALSO return 200, but for the wrong
         reason (HTTP-parser-level normalization, not auth-level
@@ -654,9 +575,7 @@ class TestRestApiKeyFromEnvVar:
         )
         assert resp.status_code == 200
 
-    def test_whitespace_only_key_is_rejected(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_whitespace_only_key_is_rejected(self, client: TestClient, monkeypatch):
         """Bundle 9 / Group 3 #1: stripping must not turn a whitespace
         key into the empty string and silently let it through. The auth
         path explicitly re-checks for emptiness after stripping.
@@ -680,9 +599,7 @@ class TestApiKeyBypassEdgeCases:
     whitespace. These tests exercise further bypass vectors.
     """
 
-    def test_empty_string_key_is_rejected(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_empty_string_key_is_rejected(self, client: TestClient, monkeypatch):
         monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
         resp = client.post(
             "/search",
@@ -701,9 +618,7 @@ class TestApiKeyBypassEdgeCases:
         )
         assert resp.status_code == 401
 
-    def test_null_byte_in_key_is_rejected(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_null_byte_in_key_is_rejected(self, client: TestClient, monkeypatch):
         monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
         resp = client.post(
             "/search",
@@ -712,9 +627,7 @@ class TestApiKeyBypassEdgeCases:
         )
         assert resp.status_code == 401
 
-    def test_comma_separated_empty_entries_ignored(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_comma_separated_empty_entries_ignored(self, client: TestClient, monkeypatch):
         """'key1,,key2' should not create an empty-string key."""
         monkeypatch.setenv("CORTEX_API_KEYS", "key1,,key2")
         # Empty key should still be rejected
@@ -732,9 +645,7 @@ class TestApiKeyBypassEdgeCases:
         )
         assert resp.status_code == 200
 
-    def test_very_long_key_is_rejected(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_very_long_key_is_rejected(self, client: TestClient, monkeypatch):
         monkeypatch.setenv("CORTEX_API_KEYS", "good-key")
         resp = client.post(
             "/search",
@@ -743,9 +654,7 @@ class TestApiKeyBypassEdgeCases:
         )
         assert resp.status_code == 401
 
-    def test_key_with_special_characters(
-        self, client: TestClient, monkeypatch
-    ):
+    def test_key_with_special_characters(self, client: TestClient, monkeypatch):
         """Keys containing special chars should match exactly."""
         special_key = "k3y-w1th_$pecial.chars!@#"
         monkeypatch.setenv("CORTEX_API_KEYS", special_key)

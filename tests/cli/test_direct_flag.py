@@ -80,6 +80,7 @@ class TestDirectFlagCallback:
         routing decision proceeds and we can assert the callback reset
         ``_direct_mode`` correctly.
         """
+
         async def fake_list_tools():
             return list(cli_mod._REQUIRED_MCP_ROUTING_TOOLS)
 
@@ -88,9 +89,11 @@ class TestDirectFlagCallback:
         fake_mcp_client = MagicMock()
         fake_mcp_client.list_objects = AsyncMock(return_value=[])
 
-        with patch("cortex.cli.main._get_store") as mock_get_store, \
-             patch("cortex.cli.main._get_probe_client", return_value=fake_probe_client), \
-             patch("cortex.cli.main._get_mcp_client", return_value=fake_mcp_client):
+        with (
+            patch("cortex.cli.main._get_store") as mock_get_store,
+            patch("cortex.cli.main._get_probe_client", return_value=fake_probe_client),
+            patch("cortex.cli.main._get_mcp_client", return_value=fake_mcp_client),
+        ):
             mock_store = mock_get_store.return_value
             mock_store.list_objects.return_value = []
 
@@ -117,6 +120,7 @@ class TestDirectFlagCallback:
         the captured output is colorized.
         """
         import re
+
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         stripped = re.sub(r"\x1b\[[0-9;]*m", "", result.output)

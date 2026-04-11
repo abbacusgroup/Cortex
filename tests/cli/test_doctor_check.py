@@ -108,9 +108,7 @@ class TestFtsIntegrityCheck:
         assert result["documents_count"] == 5
         assert result["error"] is None
 
-    def test_detects_desync_after_triggerless_delete(
-        self, content_store: ContentStore
-    ):
+    def test_detects_desync_after_triggerless_delete(self, content_store: ContentStore):
         # Drop the AFTER DELETE trigger so FTS won't be notified
         content_store._db.execute("DROP TRIGGER IF EXISTS documents_ad")
         content_store._db.execute("DELETE FROM documents WHERE id = 'doc-0'")
@@ -120,9 +118,7 @@ class TestFtsIntegrityCheck:
         assert result["ok"] is False
         assert result["error"] is not None
 
-    def test_detects_desync_after_triggerless_insert(
-        self, content_store: ContentStore
-    ):
+    def test_detects_desync_after_triggerless_insert(self, content_store: ContentStore):
         # Drop the AFTER INSERT trigger so FTS won't index the new row
         content_store._db.execute("DROP TRIGGER IF EXISTS documents_ai")
         content_store._db.execute(
@@ -166,9 +162,7 @@ class TestFtsRebuild:
         check = content_store.fts_integrity_check()
         assert check["ok"]
 
-    def test_rebuild_makes_missing_docs_searchable(
-        self, content_store: ContentStore
-    ):
+    def test_rebuild_makes_missing_docs_searchable(self, content_store: ContentStore):
         # Insert bypassing trigger
         content_store._db.execute("DROP TRIGGER IF EXISTS documents_ai")
         content_store._db.execute(
@@ -298,11 +292,15 @@ class TestDoctorRepair:
 
         _create_full_stores(tmp_path)
         marker = tmp_path / "graph.db.lock"
-        marker.write_text(json.dumps({
-            "pid": os.getpid(),
-            "cmdline": "cortex serve --transport mcp-http",
-            "acquired_at": "2026-04-10T00:00:00+00:00",
-        }))
+        marker.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "cmdline": "cortex serve --transport mcp-http",
+                    "acquired_at": "2026-04-10T00:00:00+00:00",
+                }
+            )
+        )
 
         result = runner.invoke(app, ["doctor", "repair"])
         assert result.exit_code == 1

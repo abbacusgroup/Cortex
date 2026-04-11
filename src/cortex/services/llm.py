@@ -15,6 +15,72 @@ from cortex.core.logging import get_logger
 
 logger = get_logger("services.llm")
 
+# Generic words that should never be extracted as entities.
+# These are common English words that provide no insight when tracked
+# as named entities — "fix" appearing in fix objects is not a pattern.
+ENTITY_STOPWORDS = frozenset(
+    {
+        "fix",
+        "bug",
+        "error",
+        "issue",
+        "problem",
+        "solution",
+        "test",
+        "code",
+        "change",
+        "update",
+        "feature",
+        "function",
+        "file",
+        "folder",
+        "directory",
+        "module",
+        "class",
+        "method",
+        "server",
+        "client",
+        "request",
+        "response",
+        "command",
+        "terminal",
+        "console",
+        "log",
+        "output",
+        "input",
+        "data",
+        "config",
+        "setting",
+        "option",
+        "parameter",
+        "user",
+        "admin",
+        "system",
+        "app",
+        "application",
+        "task",
+        "work",
+        "item",
+        "object",
+        "thing",
+        "api",
+        "url",
+        "endpoint",
+        "route",
+        "path",
+        "build",
+        "deploy",
+        "run",
+        "start",
+        "stop",
+        "version",
+        "release",
+        "branch",
+        "commit",
+        "merge",
+    }
+)
+
 # Classification prompt template
 CLASSIFY_PROMPT = """\
 You are a knowledge classifier for a cognitive knowledge system.
@@ -32,8 +98,12 @@ Respond with ONLY a JSON object (no markdown, no explanation):
   "tags": "<comma-separated relevant tags>",
   "project": "<project name if identifiable, else empty string>",
   "entities": [
-    {{"name": "<entity name>", "type": "<technology|project|pattern|concept>"}}
+    {{"name": "<specific named entity>", "type": "<technology|project|pattern|concept>"}}
   ],
+  // Entities must be SPECIFIC: named technologies (Redis, PostgreSQL, FastAPI),
+  // named projects, recognized patterns (circuit-breaker, saga), or domain
+  // concepts (authentication, caching). Do NOT extract generic words like:
+  // fix, bug, error, issue, test, code, change, update, server, terminal, command.
   "confidence": <0.0-1.0 how confident you are in the classification>,
   "properties": {{
     <type-specific properties as key-value pairs>
@@ -97,6 +167,7 @@ class LLMClient:
     def _check_litellm() -> bool:
         try:
             import litellm  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -144,8 +215,7 @@ class LLMClient:
 
         # Format existing objects for the prompt
         existing_text = "\n".join(
-            f"- ID: {obj['id']}, Type: {obj.get('type', '?')}, "
-            f"Title: {obj.get('title', '?')}"
+            f"- ID: {obj['id']}, Type: {obj.get('type', '?')}, Title: {obj.get('title', '?')}"
             for obj in existing[:20]  # Limit to 20 for prompt size
         )
 
@@ -162,7 +232,8 @@ class LLMClient:
             if not isinstance(parsed, list):
                 return []
             return [
-                r for r in parsed
+                r
+                for r in parsed
                 if isinstance(r, dict)
                 and all(k in r for k in ("from_id", "to_id", "rel_type", "confidence"))
                 and r.get("confidence", 0) > 0.5
@@ -220,8 +291,14 @@ class LLMClient:
     def _validate_classification(data: dict[str, Any]) -> dict[str, Any]:
         """Validate and normalize classification output."""
         valid_types = {
-            "decision", "lesson", "fix", "session",
-            "research", "source", "synthesis", "idea",
+            "decision",
+            "lesson",
+            "fix",
+            "session",
+            "research",
+            "source",
+            "synthesis",
+            "idea",
         }
 
         result = {
@@ -245,10 +322,12 @@ class LLMClient:
         # Validate entities
         valid_entity_types = {"technology", "project", "pattern", "concept"}
         result["entities"] = [
-            e for e in result["entities"]
+            e
+            for e in result["entities"]
             if isinstance(e, dict)
             and "name" in e
             and e.get("type", "concept") in valid_entity_types
+            and e["name"].lower().strip() not in ENTITY_STOPWORDS
         ]
 
         return result

@@ -109,8 +109,10 @@ class AdvancedReasoner:
 
         # Count entity mentions per entity via graph mention index
         recent_fix_ids = {f.get("id", "") for f in recent_fixes}
+        all_entities = self.store.graph.list_entities()
+        entity_name_map = {e["id"]: e["name"] for e in all_entities}
         entity_fix_map: dict[str, list[str]] = {}
-        for entity in self.store.graph.list_entities():
+        for entity in all_entities:
             eid = entity["id"]
             mention_ids = self.store.graph.get_entity_mentions(eid)
             for mid in mention_ids:
@@ -120,13 +122,7 @@ class AdvancedReasoner:
         findings = []
         for entity_id, fix_ids in entity_fix_map.items():
             if len(fix_ids) >= threshold:
-                # Resolve entity name
-                entities = self.store.graph.list_entities()
-                name = entity_id[:8]
-                for e in entities:
-                    if e["id"] == entity_id:
-                        name = e["name"]
-                        break
+                name = entity_name_map.get(entity_id, entity_id[:8])
 
                 findings.append(
                     {
@@ -230,21 +226,20 @@ class AdvancedReasoner:
                     )
                     if dep_superseded:
                         dep_doc = self.store.content.get(rel["other_id"])
-                        dep_title = (
-                            dep_doc.get("title", "")
-                            if dep_doc else rel["other_id"][:8]
+                        dep_title = dep_doc.get("title", "") if dep_doc else rel["other_id"][:8]
+                        findings.append(
+                            {
+                                "type": "stale_dependency",
+                                "severity": "medium",
+                                "message": (
+                                    f"'{obj.get('title', obj_id[:8])}' "
+                                    f"depends on superseded "
+                                    f"object '{dep_title}'"
+                                ),
+                                "object_id": obj_id,
+                                "dependency_id": rel["other_id"],
+                            }
                         )
-                        findings.append({
-                            "type": "stale_dependency",
-                            "severity": "medium",
-                            "message": (
-                                f"'{obj.get('title', obj_id[:8])}' "
-                                f"depends on superseded "
-                                f"object '{dep_title}'"
-                            ),
-                            "object_id": obj_id,
-                            "dependency_id": rel["other_id"],
-                        })
 
         return findings
 

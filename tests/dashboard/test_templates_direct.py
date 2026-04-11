@@ -246,9 +246,7 @@ class TestEntitiesTemplate:
             {"id": "ent-1234567890abcdef", "name": "Oxigraph", "type": "technology"},
             {"id": "ent-fedcba0987654321", "name": "Cortex v2", "type": "project"},
         ]
-        html = env.get_template("entities.html").render(
-            entities=ents, entity_type=""
-        )
+        html = env.get_template("entities.html").render(entities=ents, entity_type="")
         assert "Oxigraph" in html
         assert "Cortex v2" in html
         assert "technology" in html
@@ -257,9 +255,7 @@ class TestEntitiesTemplate:
         assert "2 entity(ies)" in html
 
     def test_renders_empty_state(self, env: Environment) -> None:
-        html = env.get_template("entities.html").render(
-            entities=[], entity_type=""
-        )
+        html = env.get_template("entities.html").render(entities=[], entity_type="")
         assert "No entities found." in html
 
 
@@ -298,9 +294,7 @@ class TestTrailTemplate:
 
 
 class TestSettingsTemplate:
-    def test_renders_with_real_config_object(
-        self, env: Environment, tmp_path: Path
-    ) -> None:
+    def test_renders_with_real_config_object(self, env: Environment, tmp_path: Path) -> None:
         config = CortexConfig(
             data_dir=tmp_path,
             host="127.0.0.1",
@@ -324,13 +318,9 @@ class TestSettingsTemplate:
         assert "Similarity" in html
         assert "0.7" in html
 
-    def test_renders_with_empty_weights(
-        self, env: Environment, tmp_path: Path
-    ) -> None:
+    def test_renders_with_empty_weights(self, env: Environment, tmp_path: Path) -> None:
         config = CortexConfig(data_dir=tmp_path)
-        html = env.get_template("settings.html").render(
-            config=config, weights={}
-        )
+        html = env.get_template("settings.html").render(config=config, weights={})
         # Must not crash when weights is empty
         assert "Retrieval Weights" in html
         assert "Configuration" in html

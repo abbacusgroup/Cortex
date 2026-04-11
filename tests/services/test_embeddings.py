@@ -22,16 +22,12 @@ class TestSentenceTransformerProvider:
         assert p.model_name == "test-model"
 
     def test_available_false_without_package(self):
-        with patch.object(
-            SentenceTransformerProvider, "_check_import", return_value=False
-        ):
+        with patch.object(SentenceTransformerProvider, "_check_import", return_value=False):
             p = SentenceTransformerProvider()
             assert p.available is False
 
     def test_available_true_with_package(self):
-        with patch.object(
-            SentenceTransformerProvider, "_check_import", return_value=True
-        ):
+        with patch.object(SentenceTransformerProvider, "_check_import", return_value=True):
             p = SentenceTransformerProvider()
             assert p.available is True
 
@@ -140,9 +136,7 @@ class TestLiteLLMProvider:
 
 class TestCreateEmbeddingProvider:
     def test_default_returns_sentence_transformer(self, tmp_path):
-        with patch.object(
-            SentenceTransformerProvider, "_check_import", return_value=True
-        ):
+        with patch.object(SentenceTransformerProvider, "_check_import", return_value=True):
             cfg = CortexConfig(data_dir=tmp_path)
             provider = create_embedding_provider(cfg)
             assert isinstance(provider, SentenceTransformerProvider)
@@ -161,9 +155,7 @@ class TestCreateEmbeddingProvider:
             assert provider.model_name == "openai/text-embedding-3-small"
 
     def test_missing_deps_returns_none(self, tmp_path):
-        with patch.object(
-            SentenceTransformerProvider, "_check_import", return_value=False
-        ):
+        with patch.object(SentenceTransformerProvider, "_check_import", return_value=False):
             cfg = CortexConfig(data_dir=tmp_path)
             provider = create_embedding_provider(cfg)
             assert provider is None

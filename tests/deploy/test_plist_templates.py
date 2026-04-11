@@ -63,8 +63,7 @@ class TestShippedPlistTemplates:
         path = _DEPLOY_DIR / filename
         raw = path.read_text()
         assert "YOURUSER" in raw, (
-            f"{filename} must use the ``YOURUSER`` placeholder, not a "
-            f"concrete username."
+            f"{filename} must use the ``YOURUSER`` placeholder, not a concrete username."
         )
         # And specifically NOT any real username: a very coarse check
         # that catches the most common accident (my own username

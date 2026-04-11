@@ -295,7 +295,9 @@ def _unit_name(label: str) -> str:
 def _install_systemd_unit(label: str, content: str) -> Path:
     """Write a unit file and enable it."""
     if not shutil.which("systemctl"):
-        typer.echo("  Error: systemctl not found — systemd is required for service install on Linux")
+        typer.echo(
+            "  Error: systemctl not found — systemd is required for service install on Linux"
+        )
         typer.echo("  You can still run Cortex manually: cortex serve --transport mcp-http")
         raise typer.Exit(1)
 
@@ -363,16 +365,12 @@ def do_install(config: CortexConfig, service: str) -> None:
             if svc == "mcp":
                 _install_launchagent(_MCP_LABEL, render_mcp_plist(config, binary))
             else:
-                _install_launchagent(
-                    _DASHBOARD_LABEL, render_dashboard_plist(config, binary)
-                )
+                _install_launchagent(_DASHBOARD_LABEL, render_dashboard_plist(config, binary))
         else:
             if svc == "mcp":
                 _install_systemd_unit(_MCP_LABEL, render_mcp_unit(config, binary))
             else:
-                _install_systemd_unit(
-                    _DASHBOARD_LABEL, render_dashboard_unit(config, binary)
-                )
+                _install_systemd_unit(_DASHBOARD_LABEL, render_dashboard_unit(config, binary))
 
     typer.echo()
     if "mcp" in services:

@@ -74,19 +74,19 @@ class LinkStage:
             entity_type = entity_info.get("type", "concept")
 
             # Create or get entity (handles dedup internally)
-            entity_id = self.store.create_entity(
-                name=name, entity_type=entity_type
-            )
+            entity_id, created = self.store.create_entity(name=name, entity_type=entity_type)
 
             # Add mentions edge
             self.store.add_mention(obj_id=obj_id, entity_id=entity_id)
 
-            resolved.append({
-                "name": name,
-                "type": entity_type,
-                "entity_id": entity_id,
-                "action": "existing" if entity_id else "created",
-            })
+            resolved.append(
+                {
+                    "name": name,
+                    "type": entity_type,
+                    "entity_id": entity_id,
+                    "action": "created" if created else "existing",
+                }
+            )
             logger.debug("Resolved entity '%s' → %s", name, entity_id)
 
         return resolved
@@ -141,7 +141,9 @@ class LinkStage:
                 created.append(rel)
                 logger.debug(
                     "Created relationship: %s -[%s]-> %s",
-                    from_id[:8], rel_type, to_id[:8],
+                    from_id[:8],
+                    rel_type,
+                    to_id[:8],
                 )
             except Exception as e:
                 logger.warning("Failed to create relationship: %s", e)

@@ -162,9 +162,7 @@ class TestServeMcpHttpTransport:
 
     def test_mcp_http_transport_calls_run_http(self):
         with patch("cortex.transport.mcp.server.run_http") as mock_run_http:
-            result = runner.invoke(
-                app, ["serve", "--transport", "mcp-http", "--port", "1314"]
-            )
+            result = runner.invoke(app, ["serve", "--transport", "mcp-http", "--port", "1314"])
             assert result.exit_code == 0
             mock_run_http.assert_called_once_with(host="127.0.0.1", port=1314)
 
@@ -207,19 +205,19 @@ class TestServeMcpHttpTransport:
         Mock ``_probe_mcp_server`` so the test exercises only the ``http``
         transport wiring.
         """
-        with patch("cortex.transport.api.server.create_api") as mock_create_api, \
-             patch("uvicorn.run") as mock_uvicorn_run, \
-             patch(
-                 "cortex.cli.main._probe_mcp_server",
-                 return_value=set(cli_mod._REQUIRED_MCP_TOOLS),
-             ):
+        with (
+            patch("cortex.transport.api.server.create_api") as mock_create_api,
+            patch("uvicorn.run") as mock_uvicorn_run,
+            patch(
+                "cortex.cli.main._probe_mcp_server",
+                return_value=set(cli_mod._REQUIRED_MCP_TOOLS),
+            ),
+        ):
             mock_create_api.return_value = "fake_api"
             result = runner.invoke(app, ["serve", "--transport", "http"])
             assert result.exit_code == 0
             mock_create_api.assert_called_once()
-            mock_uvicorn_run.assert_called_once_with(
-                "fake_api", host="127.0.0.1", port=1314
-            )
+            mock_uvicorn_run.assert_called_once_with("fake_api", host="127.0.0.1", port=1314)
 
     def test_unknown_transport_rejected(self):
         result = runner.invoke(app, ["serve", "--transport", "gibberish"])
@@ -251,9 +249,10 @@ class TestDashboardStartupProbe:
             "_probe_mcp_server",
             lambda url, **kw: main_mod._REQUIRED_MCP_TOOLS,
         )
-        with patch("uvicorn.run") as mock_uvicorn, patch(
-            "cortex.dashboard.server.create_dashboard"
-        ) as mock_create:
+        with (
+            patch("uvicorn.run") as mock_uvicorn,
+            patch("cortex.dashboard.server.create_dashboard") as mock_create,
+        ):
             mock_create.return_value = "fake_app"
             result = runner.invoke(app, ["dashboard", "--port", "1315"])
             assert result.exit_code == 0
@@ -310,9 +309,7 @@ class TestDashboardStartupProbe:
         result = runner.invoke(app, ["dashboard"])
         duration = _time.time() - start
         assert result.exit_code == 1
-        assert duration < 10.0, (
-            f"dashboard startup took {duration:.2f}s — probe must be bounded"
-        )
+        assert duration < 10.0, f"dashboard startup took {duration:.2f}s — probe must be bounded"
 
     def test_probe_retries_three_times_with_1s_spacing(self, monkeypatch):
         """Bundle 5 / A13: _probe_mcp_server makes exactly 3 attempts with
@@ -332,6 +329,7 @@ class TestDashboardStartupProbe:
             # sleeps before retrying, which is what this test verifies.
             timestamps.append(_time.time())
             from cortex.transport.mcp.client import MCPConnectionError
+
             raise MCPConnectionError("nope")
 
         from cortex.transport.mcp.client import CortexMCPClient
@@ -346,20 +344,12 @@ class TestDashboardStartupProbe:
         from cortex.transport.mcp.client import MCPClientError
 
         with pytest.raises(MCPClientError):
-            _probe_mcp_server(
-                "http://127.0.0.1:1/mcp", retries=3, retry_delay=1.0
-            )
-        assert len(timestamps) == 3, (
-            f"expected exactly 3 retry attempts, got {len(timestamps)}"
-        )
-        deltas = [
-            timestamps[i + 1] - timestamps[i]
-            for i in range(len(timestamps) - 1)
-        ]
+            _probe_mcp_server("http://127.0.0.1:1/mcp", retries=3, retry_delay=1.0)
+        assert len(timestamps) == 3, f"expected exactly 3 retry attempts, got {len(timestamps)}"
+        deltas = [timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1)]
         for delta in deltas:
             assert delta >= 0.9, (
-                f"retry spacing {delta:.3f}s below the 1s minimum "
-                f"(all deltas: {deltas})"
+                f"retry spacing {delta:.3f}s below the 1s minimum (all deltas: {deltas})"
             )
 
     def test_dashboard_clean_error_on_mcp_500_response(self, monkeypatch):
@@ -413,9 +403,7 @@ class TestApiServerDoesNotOpenStore:
 
         # Inspect the module's actual imports (not docstrings) by
         # looking at the compiled module globals.
-        assert not hasattr(api_mod, "Store"), (
-            "api.server imports Store — Phase 4 contract violated"
-        )
+        assert not hasattr(api_mod, "Store"), "api.server imports Store — Phase 4 contract violated"
         assert not hasattr(api_mod, "PipelineOrchestrator")
         assert not hasattr(api_mod, "RetrievalEngine")
         assert not hasattr(api_mod, "LearningLoop")
@@ -442,9 +430,7 @@ class TestCreateMcpServerLockError:
         assert err.holder_pid == held_lock.pid
         assert err.holder_cmdline is not None
 
-    def test_create_mcp_server_with_include_admin_false_also_raises(
-        self, held_lock
-    ):
+    def test_create_mcp_server_with_include_admin_false_also_raises(self, held_lock):
         """Both the admin-on and admin-off construction paths hit the same
         Store acquisition and should propagate StoreLockedError identically.
         """
@@ -474,9 +460,7 @@ class TestServeMcpHttpPortInUse:
                 "[Errno 48] error while attempting to bind on address ('127.0.0.1', 1314): "
                 "address already in use"
             )
-            result = runner.invoke(
-                app, ["serve", "--transport", "mcp-http", "--port", "1314"]
-            )
+            result = runner.invoke(app, ["serve", "--transport", "mcp-http", "--port", "1314"])
             assert result.exit_code != 0
             combined = result.output + (result.stderr or "")
             assert "Cannot start MCP HTTP server" in combined
@@ -494,12 +478,8 @@ class TestServeMcpHttpBindErrors:
         macOS when not root. The CLI must translate that into a clear hint.
         """
         with patch("cortex.transport.mcp.server.run_http") as mock_run_http:
-            mock_run_http.side_effect = PermissionError(
-                "[Errno 13] Permission denied"
-            )
-            result = runner.invoke(
-                app, ["serve", "--transport", "mcp-http", "--port", "80"]
-            )
+            mock_run_http.side_effect = PermissionError("[Errno 13] Permission denied")
+            result = runner.invoke(app, ["serve", "--transport", "mcp-http", "--port", "80"])
             assert result.exit_code == 1
             combined = result.output + (result.stderr or "")
             assert "Permission denied" in combined
@@ -512,9 +492,7 @@ class TestServeMcpHttpBindErrors:
         e.g. ``[Errno 49] Can't assign requested address`` for a bad host.
         """
         with patch("cortex.transport.mcp.server.run_http") as mock_run_http:
-            mock_run_http.side_effect = OSError(
-                "[Errno 49] Can't assign requested address"
-            )
+            mock_run_http.side_effect = OSError("[Errno 49] Can't assign requested address")
             result = runner.invoke(
                 app,
                 [
@@ -541,9 +519,7 @@ class TestDashboardSpawnMcp:
     terminates the child when the dashboard exits.
     """
 
-    def test_dashboard_without_spawn_flag_fails_on_unreachable_mcp(
-        self, monkeypatch
-    ):
+    def test_dashboard_without_spawn_flag_fails_on_unreachable_mcp(self, monkeypatch):
         """Regression guard: the default behavior (no --spawn-mcp) still
         exits cleanly with the legacy error message when the probe fails.
         """
@@ -561,9 +537,7 @@ class TestDashboardSpawnMcp:
         assert "--spawn-mcp" in combined
         assert "Traceback" not in combined
 
-    def test_dashboard_with_spawn_flag_spawns_and_uvicorn_runs(
-        self, monkeypatch
-    ):
+    def test_dashboard_with_spawn_flag_spawns_and_uvicorn_runs(self, monkeypatch):
         """When the probe fails and --spawn-mcp is set, the CLI calls
         ``_spawn_mcp_subprocess`` and then proceeds to uvicorn.run.
         """
@@ -577,6 +551,7 @@ class TestDashboardSpawnMcp:
                 raise MCPConnectionError(f"Cannot reach MCP server at {url}")
             # Second probe (after spawn) succeeds with the required tools
             import cortex.cli.main as main_mod
+
             return main_mod._REQUIRED_MCP_TOOLS
 
         monkeypatch.setattr("cortex.cli.main._probe_mcp_server", flaky_probe)
@@ -606,22 +581,19 @@ class TestDashboardSpawnMcp:
 
         monkeypatch.setattr("cortex.cli.main._spawn_mcp_subprocess", fake_spawn)
 
-        with patch("uvicorn.run") as mock_uvicorn, patch(
-            "cortex.dashboard.server.create_dashboard"
-        ) as mock_create:
+        with (
+            patch("uvicorn.run") as mock_uvicorn,
+            patch("cortex.dashboard.server.create_dashboard") as mock_create,
+        ):
             mock_create.return_value = "fake_app"
             result = runner.invoke(app, ["dashboard", "--spawn-mcp"])
 
-        assert result.exit_code == 0, (
-            f"unexpected exit: {result.output} {result.stderr}"
-        )
+        assert result.exit_code == 0, f"unexpected exit: {result.output} {result.stderr}"
         assert spawn_calls["n"] == 1
         assert probe_calls["n"] == 2  # initial fail + post-spawn success
         mock_uvicorn.assert_called_once()
 
-    def test_dashboard_with_spawn_flag_skips_spawn_when_probe_succeeds(
-        self, monkeypatch
-    ):
+    def test_dashboard_with_spawn_flag_skips_spawn_when_probe_succeeds(self, monkeypatch):
         """If the initial probe succeeds, --spawn-mcp should NOT spawn a
         duplicate MCP server.
         """
@@ -640,20 +612,14 @@ class TestDashboardSpawnMcp:
 
         monkeypatch.setattr("cortex.cli.main._spawn_mcp_subprocess", fake_spawn)
 
-        with patch("uvicorn.run"), patch(
-            "cortex.dashboard.server.create_dashboard"
-        ) as mock_create:
+        with patch("uvicorn.run"), patch("cortex.dashboard.server.create_dashboard") as mock_create:
             mock_create.return_value = "fake_app"
             result = runner.invoke(app, ["dashboard", "--spawn-mcp"])
 
         assert result.exit_code == 0
-        assert spawn_calls["n"] == 0, (
-            "spawn must be skipped when the initial probe succeeds"
-        )
+        assert spawn_calls["n"] == 0, "spawn must be skipped when the initial probe succeeds"
 
-    def test_dashboard_with_spawn_flag_exits_on_spawn_failure(
-        self, monkeypatch
-    ):
+    def test_dashboard_with_spawn_flag_exits_on_spawn_failure(self, monkeypatch):
         """If _spawn_mcp_subprocess raises RuntimeError (subprocess failed
         to become ready), the dashboard exits 1 with a clean error.
         """
@@ -675,9 +641,7 @@ class TestDashboardSpawnMcp:
         assert "oops" in combined
         assert "Traceback" not in combined
 
-    def test_spawn_mcp_subprocess_uses_configured_host_and_port(
-        self, monkeypatch, tmp_path
-    ):
+    def test_spawn_mcp_subprocess_uses_configured_host_and_port(self, monkeypatch, tmp_path):
         """Unit test for ``_spawn_mcp_subprocess`` itself: it parses
         host and port from the URL and passes them on the command line.
         """
@@ -715,9 +679,7 @@ class TestDashboardSpawnMcp:
 
         monkeypatch.setattr(subprocess_mod, "Popen", FakePopen)
 
-        main_mod._spawn_mcp_subprocess(
-            "http://127.0.0.1:9876/mcp", tmp_path
-        )
+        main_mod._spawn_mcp_subprocess("http://127.0.0.1:9876/mcp", tmp_path)
         args = captured["args"]
         assert "serve" in args
         assert "--transport" in args
@@ -736,9 +698,7 @@ class TestDashboardSpawnMcp:
         # the child up to terminate.
         assert captured["stdin"] is subprocess_mod.PIPE
 
-    def test_spawn_mcp_subprocess_fails_fast_on_immediate_exit(
-        self, monkeypatch, tmp_path
-    ):
+    def test_spawn_mcp_subprocess_fails_fast_on_immediate_exit(self, monkeypatch, tmp_path):
         """If the subprocess exits before becoming ready, _spawn_mcp_subprocess
         raises RuntimeError with a clear message and the tail of stderr.
         """
@@ -774,15 +734,11 @@ class TestDashboardSpawnMcp:
 
         monkeypatch.setattr(
             "cortex.cli.main._probe_mcp_server",
-            lambda url, **kw: (_ for _ in ()).throw(
-                MCPConnectionError("not yet")
-            ),
+            lambda url, **kw: (_ for _ in ()).throw(MCPConnectionError("not yet")),
         )
 
         with pytest.raises(RuntimeError) as exc_info:
-            main_mod._spawn_mcp_subprocess(
-                "http://127.0.0.1:9876/mcp", tmp_path
-            )
+            main_mod._spawn_mcp_subprocess("http://127.0.0.1:9876/mcp", tmp_path)
         msg = str(exc_info.value)
         assert "exited with code 1" in msg
         assert "boom" in msg or "StoreLockedError" in msg

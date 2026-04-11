@@ -99,7 +99,7 @@ class TestLoadConfig:
 
     def test_shell_injection_literal(self, tmp_path: Path):
         env_file = tmp_path / ".env"
-        env_file.write_text('CORTEX_HOST=$(rm -rf /)\n')
+        env_file.write_text("CORTEX_HOST=$(rm -rf /)\n")
         cfg = load_config(data_dir=tmp_path / "data", env_file=env_file)
         assert cfg.host == "$(rm -rf /)"  # treated as literal string
 
@@ -132,9 +132,7 @@ class TestMcpServerUrl:
         cfg = load_config(data_dir=tmp_path)
         assert cfg.mcp_server_url == "https://secure.example/mcp"
 
-    def test_invalid_scheme_rejected(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_invalid_scheme_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("CORTEX_MCP_SERVER_URL", "gopher://example/mcp")
         with pytest.raises(ConfigError, match="http://"):
             load_config(data_dir=tmp_path)

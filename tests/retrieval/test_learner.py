@@ -54,14 +54,18 @@ def _obj(
 
 class TestAccessRecording:
     def test_record_access_increments_count(
-        self, store: Store, loop: LearningLoop,
+        self,
+        store: Store,
+        loop: LearningLoop,
     ):
         obj_id = _obj(store)
         loop.record_access(obj_id)
         assert loop.get_access_count(obj_id) == 1
 
     def test_multiple_accesses_increment(
-        self, store: Store, loop: LearningLoop,
+        self,
+        store: Store,
+        loop: LearningLoop,
     ):
         obj_id = _obj(store)
         for _ in range(5):
@@ -69,7 +73,9 @@ class TestAccessRecording:
         assert loop.get_access_count(obj_id) == 5
 
     def test_ten_accesses_promotes_to_reflex(
-        self, store: Store, loop: LearningLoop,
+        self,
+        store: Store,
+        loop: LearningLoop,
     ):
         """10+ accesses triggers promotion to reflex tier."""
         obj_id = _obj(store, tier="archive")
@@ -81,7 +87,9 @@ class TestAccessRecording:
         assert doc["tier"] == "reflex"
 
     def test_get_access_count_unaccessed_is_zero(
-        self, store: Store, loop: LearningLoop,
+        self,
+        store: Store,
+        loop: LearningLoop,
     ):
         obj_id = _obj(store)
         assert loop.get_access_count(obj_id) == 0
@@ -92,24 +100,32 @@ class TestAccessRecording:
 
 class TestMissDetection:
     def test_miss_when_read_not_in_results(
-        self, loop: LearningLoop,
+        self,
+        loop: LearningLoop,
     ):
         """Read ID not in search results -> miss."""
-        assert loop.detect_miss(
-            context_query="some query",
-            context_result_ids=["id-1", "id-2"],
-            subsequent_read_id="id-99",
-        ) is True
+        assert (
+            loop.detect_miss(
+                context_query="some query",
+                context_result_ids=["id-1", "id-2"],
+                subsequent_read_id="id-99",
+            )
+            is True
+        )
 
     def test_hit_when_read_in_results(
-        self, loop: LearningLoop,
+        self,
+        loop: LearningLoop,
     ):
         """Read ID present in search results -> not a miss."""
-        assert loop.detect_miss(
-            context_query="some query",
-            context_result_ids=["id-1", "id-2", "id-3"],
-            subsequent_read_id="id-2",
-        ) is False
+        assert (
+            loop.detect_miss(
+                context_query="some query",
+                context_result_ids=["id-1", "id-2", "id-3"],
+                subsequent_read_id="id-2",
+            )
+            is False
+        )
 
 
 # ── Tier Adjustment ─────────────────────────────────────────────────
@@ -117,7 +133,9 @@ class TestMissDetection:
 
 class TestTierAdjustment:
     def test_promote_high_access_objects(
-        self, store: Store, loop: LearningLoop,
+        self,
+        store: Store,
+        loop: LearningLoop,
     ):
         """Object with 10+ accesses gets promoted via adjust_tiers."""
         obj_id = _obj(store, tier="archive")
@@ -135,18 +153,18 @@ class TestTierAdjustment:
         assert doc["tier"] == "reflex"
 
     def test_demote_inactive_reflex(
-        self, store: Store, loop: LearningLoop,
+        self,
+        store: Store,
+        loop: LearningLoop,
     ):
         """Reflex object with old last_access gets demoted."""
         obj_id = _obj(store, tier="reflex")
 
         # Manually set an old last_access timestamp (60 days ago)
-        old_ts = (
-            datetime.datetime.now(datetime.UTC)
-            - datetime.timedelta(days=60)
-        ).isoformat()
+        old_ts = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=60)).isoformat()
         store.content.set_config(
-            f"{LAST_ACCESS_PREFIX}{obj_id}", old_ts,
+            f"{LAST_ACCESS_PREFIX}{obj_id}",
+            old_ts,
         )
 
         result = loop.adjust_tiers(inactivity_days=30)
@@ -157,7 +175,9 @@ class TestTierAdjustment:
         assert doc["tier"] == "recall"
 
     def test_no_changes_when_all_current(
-        self, store: Store, loop: LearningLoop,
+        self,
+        store: Store,
+        loop: LearningLoop,
     ):
         """No promotions or demotions when nothing qualifies."""
         _obj(store, tier="archive")
@@ -170,20 +190,23 @@ class TestTierAdjustment:
 
 class TestWeights:
     def test_get_weights_returns_defaults(
-        self, loop: LearningLoop,
+        self,
+        loop: LearningLoop,
     ):
         weights = loop.get_weights()
         assert weights == dict(DEFAULT_WEIGHTS)
 
     def test_update_weights_persists(
-        self, loop: LearningLoop,
+        self,
+        loop: LearningLoop,
     ):
         custom = {"keyword": 0.5, "semantic": 0.2, "graph": 0.2, "recency": 0.1}
         loop.update_weights(custom)
         assert loop.get_weights() == custom
 
     def test_reset_weights_restores_defaults(
-        self, loop: LearningLoop,
+        self,
+        loop: LearningLoop,
     ):
         custom = {"keyword": 0.9, "semantic": 0.05, "graph": 0.03, "recency": 0.02}
         loop.update_weights(custom)
@@ -193,7 +216,9 @@ class TestWeights:
         assert loop.get_weights() == dict(DEFAULT_WEIGHTS)
 
     def test_weights_persisted_in_config_store(
-        self, store: Store, loop: LearningLoop,
+        self,
+        store: Store,
+        loop: LearningLoop,
     ):
         """Weights survive a new LearningLoop instance."""
         custom = {"keyword": 0.6, "semantic": 0.1, "graph": 0.2, "recency": 0.1}

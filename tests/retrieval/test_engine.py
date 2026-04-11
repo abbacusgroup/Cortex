@@ -93,37 +93,27 @@ def seeded_store(store: Store) -> tuple[Store, dict[str, str]]:
 class TestCosineSimilarity:
     def test_identical_vectors_return_one(self):
         v = (1.0, 0.0, 0.0)
-        assert RetrievalEngine._cosine_similarity(v, v) == pytest.approx(
-            1.0
-        )
+        assert RetrievalEngine._cosine_similarity(v, v) == pytest.approx(1.0)
 
     def test_orthogonal_vectors_return_zero(self):
         a = (1.0, 0.0, 0.0)
         b = (0.0, 1.0, 0.0)
-        assert RetrievalEngine._cosine_similarity(a, b) == pytest.approx(
-            0.0
-        )
+        assert RetrievalEngine._cosine_similarity(a, b) == pytest.approx(0.0)
 
     def test_different_length_vectors_return_zero(self):
         a = (1.0, 2.0)
         b = (1.0, 2.0, 3.0)
-        assert RetrievalEngine._cosine_similarity(a, b) == pytest.approx(
-            0.0
-        )
+        assert RetrievalEngine._cosine_similarity(a, b) == pytest.approx(0.0)
 
     def test_opposite_vectors_return_negative_one(self):
         a = (1.0, 0.0)
         b = (-1.0, 0.0)
-        assert RetrievalEngine._cosine_similarity(a, b) == pytest.approx(
-            -1.0
-        )
+        assert RetrievalEngine._cosine_similarity(a, b) == pytest.approx(-1.0)
 
     def test_zero_vector_returns_zero(self):
         a = (0.0, 0.0, 0.0)
         b = (1.0, 2.0, 3.0)
-        assert RetrievalEngine._cosine_similarity(a, b) == pytest.approx(
-            0.0
-        )
+        assert RetrievalEngine._cosine_similarity(a, b) == pytest.approx(0.0)
 
 
 # -- Keyword search -------------------------------------------------------
@@ -214,9 +204,7 @@ class TestFilters:
         store, _ids = seeded_store
         engine = RetrievalEngine(store)
 
-        results = engine.search(
-            "quantum", doc_type="research"
-        )
+        results = engine.search("quantum", doc_type="research")
         for r in results:
             assert r["type"] == "research"
 
@@ -367,9 +355,7 @@ class TestCustomWeights:
         for r in results:
             # With graph weight = 0, graph score does not affect combined
             breakdown = r["score_breakdown"]
-            graph_contribution = (
-                breakdown.get("graph", 0) * 0.0
-            )
+            graph_contribution = breakdown.get("graph", 0) * 0.0
             assert graph_contribution == 0.0
 
 

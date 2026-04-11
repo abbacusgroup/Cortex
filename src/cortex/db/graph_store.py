@@ -161,9 +161,7 @@ def _write_marker(marker_path: Path) -> bool:
         return False
 
 
-def _auto_recover_stale_lock(
-    path: Path, marker_path: Path, stale_pid: int
-) -> bool:
+def _auto_recover_stale_lock(path: Path, marker_path: Path, stale_pid: int) -> bool:
     """Attempt to recover a stale lock safely.
 
     Called when ``_raise_locked_error`` would report ``is_stale=True`` AND
@@ -213,9 +211,7 @@ def _auto_recover_stale_lock(
     return True
 
 
-def _build_locked_error(
-    path: Path, marker_path: Path, oserror: OSError
-) -> StoreLockedError:
+def _build_locked_error(path: Path, marker_path: Path, oserror: OSError) -> StoreLockedError:
     """Read the marker (if any), determine staleness, and build a StoreLockedError.
 
     Cases encoded as flags on the returned error:
@@ -295,10 +291,7 @@ def _build_locked_error(
                 # locked_err.is_stale gate).
                 if holder_cmdline is not None:
                     cmdline_unknown = True
-            elif (
-                holder_cmdline is not None
-                and live_cmdline != holder_cmdline
-            ):
+            elif holder_cmdline is not None and live_cmdline != holder_cmdline:
                 is_pid_reuse = True
 
     return StoreLockedError(
@@ -395,9 +388,7 @@ class GraphStore:
                 if not recoverable:
                     raise locked_err from e
 
-                if not _auto_recover_stale_lock(
-                    path, marker_path, locked_err.holder_pid
-                ):
+                if not _auto_recover_stale_lock(path, marker_path, locked_err.holder_pid):
                     # The re-check showed the PID came back alive — treat
                     # the lock as legitimately held and raise the original
                     # error unchanged.
@@ -445,6 +436,7 @@ class GraphStore:
                 del self._store
             del store
             import gc
+
             gc.collect()
 
     def __enter__(self) -> GraphStore:
@@ -558,9 +550,19 @@ class GraphStore:
             ox.Quad(subject, RDF_TYPE, KNOWLEDGE_OBJECT_CLASS),
             # Common properties
             ox.Quad(subject, cortex_iri("title"), ox.Literal(title)),
-            ox.Quad(subject, cortex_iri("capturedAt"), ox.Literal(now, datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#dateTime"))),
+            ox.Quad(
+                subject,
+                cortex_iri("capturedAt"),
+                ox.Literal(now, datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#dateTime")),
+            ),
             ox.Quad(subject, cortex_iri("tier"), ox.Literal(tier)),
-            ox.Quad(subject, cortex_iri("confidence"), ox.Literal(str(confidence), datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#float"))),
+            ox.Quad(
+                subject,
+                cortex_iri("confidence"),
+                ox.Literal(
+                    str(confidence), datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#float")
+                ),
+            ),
         ]
 
         if content:
@@ -700,9 +702,7 @@ class GraphStore:
             filters.append("?s a cortex:KnowledgeObject .")
 
         if project:
-            filters.append(
-                f'?s cortex:project "{_sparql_escape_string(project)}" .'
-            )
+            filters.append(f'?s cortex:project "{_sparql_escape_string(project)}" .')
 
         filter_block = "\n            ".join(filters)
 
@@ -829,11 +829,13 @@ class GraphStore:
             for quad in quads:
                 target = str(quad.object.value)
                 if "obj/" in target:
-                    rels.append({
-                        "direction": "outgoing",
-                        "rel_type": rel_name,
-                        "other_id": target.split("/")[-1],
-                    })
+                    rels.append(
+                        {
+                            "direction": "outgoing",
+                            "rel_type": rel_name,
+                            "other_id": target.split("/")[-1],
+                        }
+                    )
 
         # Incoming
         for rel_name, pred_iri in RELATIONSHIP_MAP.items():
@@ -843,11 +845,13 @@ class GraphStore:
             for quad in quads:
                 source = str(quad.subject.value)
                 if "obj/" in source:
-                    rels.append({
-                        "direction": "incoming",
-                        "rel_type": rel_name,
-                        "other_id": source.split("/")[-1],
-                    })
+                    rels.append(
+                        {
+                            "direction": "incoming",
+                            "rel_type": rel_name,
+                            "other_id": source.split("/")[-1],
+                        }
+                    )
 
         return rels
 
@@ -861,11 +865,11 @@ class GraphStore:
         name: str,
         entity_type: str = "concept",
         aliases: str = "",
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Create or get an entity node.
 
         Returns:
-            Entity ID.
+            Tuple of (entity_id, created) where created is True if new.
         """
         if entity_type not in ENTITY_CLASS_MAP:
             entity_type = "concept"
@@ -873,7 +877,7 @@ class GraphStore:
         # Check for existing entity with same name (case-insensitive)
         existing = self._find_entity_by_name(name)
         if existing:
-            return existing
+            return existing, False
 
         entity_id = str(uuid4())
         subject = cortex_iri(f"entity/{entity_id}")
@@ -889,7 +893,7 @@ class GraphStore:
         for quad in quads:
             self._store.add(quad)
 
-        return entity_id
+        return entity_id, True
 
     def _find_entity_by_name(self, name: str) -> str | None:
         """Find entity by name (case-insensitive)."""
@@ -943,11 +947,13 @@ class GraphStore:
         entities = []
         for row in self._store.query(query):
             subj = str(row["s"].value)
-            entities.append({
-                "id": subj.split("/")[-1] if "entity/" in subj else subj,
-                "name": row["name"].value,
-                "type": str(row["type"].value).split("#")[-1].lower(),
-            })
+            entities.append(
+                {
+                    "id": subj.split("/")[-1] if "entity/" in subj else subj,
+                    "name": row["name"].value,
+                    "type": str(row["type"].value).split("#")[-1].lower(),
+                }
+            )
         return entities
 
     # -------------------------------------------------------------------------

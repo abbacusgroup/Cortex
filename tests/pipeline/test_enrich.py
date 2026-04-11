@@ -49,9 +49,7 @@ class TestEnrichTierComputation:
         """Object with summary and confidence > 0 -> recall."""
         obj_id = _create_object(store)
         # Simulate classification: add summary + confidence
-        store.content.update(
-            obj_id, summary="A useful summary", confidence=0.8
-        )
+        store.content.update(obj_id, summary="A useful summary", confidence=0.8)
         result = enricher.run(obj_id)
 
         assert result["tier"] == "recall"
@@ -65,9 +63,7 @@ class TestEnrichTierComputation:
 
         assert result["tier"] == "reflex"
 
-    def test_no_summary_with_high_confidence_still_archive(
-        self, store, enricher
-    ):
+    def test_no_summary_with_high_confidence_still_archive(self, store, enricher):
         """Empty summary with confidence > 0 is still archive."""
         obj_id = _create_object(store, confidence=0.9)
         store.content.update(obj_id, summary="")
@@ -103,20 +99,14 @@ class TestConnectionCount:
 
         assert result["connection_count"] == 0
 
-    def test_connections_reflect_actual_relationships(
-        self, store, enricher
-    ):
+    def test_connections_reflect_actual_relationships(self, store, enricher):
         """connection_count matches the number of relationships."""
         obj_a = _create_object(store, title="Object A")
         obj_b = _create_object(store, title="Object B")
         obj_c = _create_object(store, title="Object C")
 
-        store.create_relationship(
-            from_id=obj_a, rel_type="supports", to_id=obj_b
-        )
-        store.create_relationship(
-            from_id=obj_a, rel_type="causedBy", to_id=obj_c
-        )
+        store.create_relationship(from_id=obj_a, rel_type="supports", to_id=obj_b)
+        store.create_relationship(from_id=obj_a, rel_type="causedBy", to_id=obj_c)
 
         result = enricher.run(obj_a)
         assert result["connection_count"] == 2
@@ -136,9 +126,7 @@ class TestStaleness:
         dep_id = _create_object(store, title="Old dependency")
         obj_id = _create_object(store, title="Depends on old")
 
-        store.create_relationship(
-            from_id=obj_id, rel_type="dependsOn", to_id=dep_id
-        )
+        store.create_relationship(from_id=obj_id, rel_type="dependsOn", to_id=dep_id)
         # Mark the dependency as superseded
         store.content.update(dep_id, pipeline_stage="superseded")
 
@@ -151,9 +139,7 @@ class TestStaleness:
         # Create 3 superseded dependencies (0.5 each -> 1.5, capped to 1.0)
         for i in range(3):
             dep_id = _create_object(store, title=f"Old dep {i}")
-            store.create_relationship(
-                from_id=obj_id, rel_type="dependsOn", to_id=dep_id
-            )
+            store.create_relationship(from_id=obj_id, rel_type="dependsOn", to_id=dep_id)
             store.content.update(dep_id, pipeline_stage="superseded")
 
         result = enricher.run(obj_id)

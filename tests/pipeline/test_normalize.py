@@ -39,9 +39,7 @@ def _create_obj(store: Store, *, title: str = "Test", content: str = "Body") -> 
 
 
 class TestNormalize:
-    def test_pipeline_stage_updated_to_normalized(
-        self, store: Store, normalizer: NormalizeStage
-    ):
+    def test_pipeline_stage_updated_to_normalized(self, store: Store, normalizer: NormalizeStage):
         obj_id = _create_obj(store, title="Stage test")
         normalizer.run(obj_id)
 
@@ -49,16 +47,12 @@ class TestNormalize:
         assert doc is not None
         assert doc["pipeline_stage"] == "normalized"
 
-    def test_returns_normalized_status(
-        self, store: Store, normalizer: NormalizeStage
-    ):
+    def test_returns_normalized_status(self, store: Store, normalizer: NormalizeStage):
         obj_id = _create_obj(store)
         result = normalizer.run(obj_id)
         assert result["status"] == "normalized"
 
-    def test_returns_type_and_confidence(
-        self, store: Store, normalizer: NormalizeStage
-    ):
+    def test_returns_type_and_confidence(self, store: Store, normalizer: NormalizeStage):
         obj_id = _create_obj(store)
         result = normalizer.run(obj_id)
         assert "type" in result
@@ -69,17 +63,13 @@ class TestNormalize:
 
 
 class TestNormalizeFallback:
-    def test_type_defaults_to_idea_without_llm(
-        self, store: Store, normalizer: NormalizeStage
-    ):
+    def test_type_defaults_to_idea_without_llm(self, store: Store, normalizer: NormalizeStage):
         obj_id = _create_obj(store, title="Fallback test")
         result = normalizer.run(obj_id)
         assert result["type"] == "idea"
         assert result["confidence"] == 0.0
 
-    def test_summary_set_after_normalization(
-        self, store: Store, normalizer: NormalizeStage
-    ):
+    def test_summary_set_after_normalization(self, store: Store, normalizer: NormalizeStage):
         obj_id = _create_obj(store, title="Summary check")
         normalizer.run(obj_id)
 
@@ -88,16 +78,12 @@ class TestNormalizeFallback:
         # In fallback mode, summary is set to the title
         assert doc["summary"] == "Summary check"
 
-    def test_entities_empty_in_fallback(
-        self, store: Store, normalizer: NormalizeStage
-    ):
+    def test_entities_empty_in_fallback(self, store: Store, normalizer: NormalizeStage):
         obj_id = _create_obj(store)
         result = normalizer.run(obj_id)
         assert result["entities"] == []
 
-    def test_properties_empty_in_fallback(
-        self, store: Store, normalizer: NormalizeStage
-    ):
+    def test_properties_empty_in_fallback(self, store: Store, normalizer: NormalizeStage):
         obj_id = _create_obj(store)
         result = normalizer.run(obj_id)
         assert result["properties"] == {}
@@ -107,9 +93,7 @@ class TestNormalizeFallback:
 
 
 class TestNormalizeNotFound:
-    def test_nonexistent_object_returns_not_found(
-        self, normalizer: NormalizeStage
-    ):
+    def test_nonexistent_object_returns_not_found(self, normalizer: NormalizeStage):
         result = normalizer.run("nonexistent-id-12345")
         assert result["status"] == "not_found"
 
@@ -120,8 +104,11 @@ class TestNormalizeNotFound:
 class TestNormalizePreClassified:
     def test_pre_classified_skips_llm(self, store, normalizer):
         obj_id = store.create(
-            obj_type="fix", title="Pre-classified", content="some content",
-            summary="A pre-classified fix", confidence=0.9,
+            obj_type="fix",
+            title="Pre-classified",
+            content="some content",
+            summary="A pre-classified fix",
+            confidence=0.9,
         )
         result = normalizer.run(obj_id)
         assert result["status"] == "normalized"
@@ -130,7 +117,9 @@ class TestNormalizePreClassified:
 
     def test_pre_classified_preserves_summary(self, store, normalizer):
         obj_id = store.create(
-            obj_type="lesson", title="Test", content="content",
+            obj_type="lesson",
+            title="Test",
+            content="content",
             summary="My custom summary",
         )
         normalizer.run(obj_id)

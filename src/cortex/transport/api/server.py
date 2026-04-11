@@ -86,15 +86,12 @@ def create_api(
         # and on slow CI hardware these can take 15-25s on first call
         # due to embedding model cold-start. 10s was too tight and
         # produced flaky 503s in the integration suite.
-        mcp_client = CortexMCPClient(
-            config.mcp_server_url, timeout_seconds=30.0
-        )
+        mcp_client = CortexMCPClient(config.mcp_server_url, timeout_seconds=30.0)
 
     app = FastAPI(
         title="Cortex API",
         description=(
-            "Cognitive knowledge system — REST surface over the canonical "
-            "MCP HTTP server."
+            "Cognitive knowledge system — REST surface over the canonical MCP HTTP server."
         ),
         version="0.2.0",
     )
@@ -105,21 +102,15 @@ def create_api(
     # ─── MCP error handlers — translate typed client errors to HTTP ──
 
     @app.exception_handler(MCPConnectionError)
-    async def _mcp_conn_handler(
-        request: Request, exc: MCPConnectionError
-    ):
+    async def _mcp_conn_handler(request: Request, exc: MCPConnectionError):
         return _error_response(503, f"MCP server unreachable: {exc}")
 
     @app.exception_handler(MCPTimeoutError)
-    async def _mcp_timeout_handler(
-        request: Request, exc: MCPTimeoutError
-    ):
+    async def _mcp_timeout_handler(request: Request, exc: MCPTimeoutError):
         return _error_response(504, f"MCP server timed out: {exc}")
 
     @app.exception_handler(MCPServerError)
-    async def _mcp_server_handler(
-        request: Request, exc: MCPServerError
-    ):
+    async def _mcp_server_handler(request: Request, exc: MCPServerError):
         return _error_response(502, f"MCP server error: {exc}")
 
     @app.exception_handler(MCPToolError)
@@ -178,9 +169,7 @@ def create_api(
         client = request.client.host if request.client else "unknown"
         now = time.monotonic()
 
-        _rate_limits[client] = [
-            t for t in _rate_limits[client] if now - t < RATE_LIMIT_WINDOW
-        ]
+        _rate_limits[client] = [t for t in _rate_limits[client] if now - t < RATE_LIMIT_WINDOW]
 
         if len(_rate_limits[client]) >= RATE_LIMIT_MAX:
             raise HTTPException(
@@ -208,9 +197,7 @@ def create_api(
         _key: str = Depends(verify_api_key),
     ) -> list[dict[str, Any]]:
         """Hybrid search for knowledge objects."""
-        return await mcp_client.search(
-            query, doc_type=doc_type, project=project, limit=limit
-        )
+        return await mcp_client.search(query, doc_type=doc_type, project=project, limit=limit)
 
     @app.post("/context", dependencies=[Depends(rate_limit)])
     async def context(
@@ -239,15 +226,11 @@ def create_api(
         # cortex_read returns the string ``f"Not found: {obj_id}"`` for
         # missing objects, or a dict for hits. Normalize to 404 here.
         if result is None:
-            raise HTTPException(
-                status_code=404, detail=f"Not found: {obj_id}"
-            )
+            raise HTTPException(status_code=404, detail=f"Not found: {obj_id}")
         if isinstance(result, str):
             raise HTTPException(status_code=404, detail=result)
         if isinstance(result, dict) and result.get("error"):
-            raise HTTPException(
-                status_code=404, detail=str(result.get("error"))
-            )
+            raise HTTPException(status_code=404, detail=str(result.get("error")))
         return result
 
     @app.post("/capture", dependencies=[Depends(rate_limit)])
@@ -286,9 +269,7 @@ def create_api(
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Create a relationship."""
-        result = await mcp_client.link(
-            from_id=from_id, rel_type=rel_type, to_id=to_id
-        )
+        result = await mcp_client.link(from_id=from_id, rel_type=rel_type, to_id=to_id)
         if isinstance(result, dict) and result.get("status") == "error":
             raise HTTPException(
                 status_code=400,
@@ -337,9 +318,7 @@ def create_api(
         """Get graph around an object."""
         return await mcp_client.graph(obj_id=obj_id)
 
-    @app.get(
-        "/graph/entity/{entity_name}", dependencies=[Depends(rate_limit)]
-    )
+    @app.get("/graph/entity/{entity_name}", dependencies=[Depends(rate_limit)])
     async def graph_entity(
         entity_name: str,
         _key: str = Depends(verify_api_key),
@@ -355,9 +334,7 @@ def create_api(
         _key: str = Depends(verify_api_key),
     ) -> list[dict[str, Any]]:
         """List knowledge objects."""
-        return await mcp_client.list_objects(
-            doc_type=doc_type, project=project, limit=limit
-        )
+        return await mcp_client.list_objects(doc_type=doc_type, project=project, limit=limit)
 
     # ─── Pipeline & Reasoning ─────────────────────────────────────
 
@@ -369,9 +346,7 @@ def create_api(
         """Re-run the intelligence pipeline on an existing object."""
         result = await mcp_client.pipeline(obj_id)
         if isinstance(result, dict) and result.get("error"):
-            raise HTTPException(
-                status_code=404, detail=result.get("error")
-            )
+            raise HTTPException(status_code=404, detail=result.get("error"))
         return result
 
     @app.post("/reason", dependencies=[Depends(rate_limit)])
@@ -397,9 +372,7 @@ def create_api(
         _key: str = Depends(verify_api_key),
     ) -> dict[str, Any]:
         """Generate synthesis."""
-        return await mcp_client.synthesize(
-            period_days=period_days, project=project
-        )
+        return await mcp_client.synthesize(period_days=period_days, project=project)
 
     @app.delete("/delete/{obj_id}", dependencies=[Depends(rate_limit)])
     async def delete(
@@ -411,12 +384,9 @@ def create_api(
         if isinstance(result, dict):
             status_val = result.get("status")
             if status_val == "not_found" or (
-                status_val == "error"
-                and "not found" in result.get("message", "").lower()
+                status_val == "error" and "not found" in result.get("message", "").lower()
             ):
-                raise HTTPException(
-                    status_code=404, detail=f"Not found: {obj_id}"
-                )
+                raise HTTPException(status_code=404, detail=f"Not found: {obj_id}")
         return result
 
     return app

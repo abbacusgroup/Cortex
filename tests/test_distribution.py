@@ -131,15 +131,26 @@ class TestLlmsTxt:
             "cortex_export",
             "cortex_safety_check",
             "cortex_reason",
+            "cortex_list_entities",
+            "cortex_query_trail",
+            "cortex_graph_data",
+            "cortex_debug_sessions",
+            "cortex_debug_memory",
         ]
         for tool in tools:
             assert tool in content, f"Missing tool: {tool}"
-        assert len(tools) == 17
+        assert len(tools) == 22
 
     def test_knowledge_types(self):
         content = (PROJECT_ROOT / "llms.txt").read_text()
         for ktype in (
-            "decision", "lesson", "fix", "session",
-            "research", "source", "synthesis", "idea",
+            "decision",
+            "lesson",
+            "fix",
+            "session",
+            "research",
+            "source",
+            "synthesis",
+            "idea",
         ):
             assert ktype in content, f"Missing knowledge type: {ktype}"

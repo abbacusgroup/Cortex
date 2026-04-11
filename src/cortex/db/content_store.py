@@ -163,8 +163,22 @@ class ContentStore:
                    (id, title, content, raw_markdown, type, project, tags, summary,
                     tier, pipeline_stage, confidence, captured_by, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (doc_id, title, content, raw_markdown, doc_type, project, tags, summary,
-                 tier, pipeline_stage, confidence, captured_by, ts_created, ts_updated),
+                (
+                    doc_id,
+                    title,
+                    content,
+                    raw_markdown,
+                    doc_type,
+                    project,
+                    tags,
+                    summary,
+                    tier,
+                    pipeline_stage,
+                    confidence,
+                    captured_by,
+                    ts_created,
+                    ts_updated,
+                ),
             )
             self._db.commit()
         except sqlite3.IntegrityError as e:
@@ -177,9 +191,7 @@ class ContentStore:
         Returns:
             Dict with all fields, or None if not found.
         """
-        row = self._db.execute(
-            "SELECT * FROM documents WHERE id = ?", (doc_id,)
-        ).fetchone()
+        row = self._db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
         if row is None:
             return None
         return dict(row)
@@ -204,9 +216,7 @@ class ContentStore:
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = [*updates.values(), doc_id]
 
-        self._db.execute(
-            f"UPDATE documents SET {set_clause} WHERE id = ?", values
-        )
+        self._db.execute(f"UPDATE documents SET {set_clause} WHERE id = ?", values)
         self._db.commit()
         return True
 
@@ -386,8 +396,15 @@ class ContentStore:
             """INSERT INTO query_log
                (timestamp, tool, params, result_ids, result_count, duration_ms, session_id)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (now, tool, json.dumps(params), json.dumps(result_ids),
-             len(result_ids), duration_ms, session_id),
+            (
+                now,
+                tool,
+                json.dumps(params),
+                json.dumps(result_ids),
+                len(result_ids),
+                duration_ms,
+                session_id,
+            ),
         )
         self._db.commit()
 
@@ -410,17 +427,14 @@ class ContentStore:
 
         Returns a dict with ok, documents_count, and error detail if any.
         """
-        doc_count = self._db.execute(
-            "SELECT COUNT(*) AS c FROM documents"
-        ).fetchone()["c"]
+        doc_count = self._db.execute("SELECT COUNT(*) AS c FROM documents").fetchone()["c"]
 
         try:
             # FTS5 integrity-check: verifies the index matches the content table.
             # Rank=1 means check a hash of the indexed content against the table.
             # Raises sqlite3.DatabaseError if inconsistent.
             self._db.execute(
-                "INSERT INTO documents_fts(documents_fts, rank) "
-                "VALUES('integrity-check', 1)"
+                "INSERT INTO documents_fts(documents_fts, rank) VALUES('integrity-check', 1)"
             )
             return {
                 "ok": True,
@@ -440,13 +454,9 @@ class ContentStore:
         Uses FTS5's built-in 'rebuild' command which reads every row from
         the content table and reconstructs the index. Atomic and idempotent.
         """
-        doc_count = self._db.execute(
-            "SELECT COUNT(*) AS c FROM documents"
-        ).fetchone()["c"]
+        doc_count = self._db.execute("SELECT COUNT(*) AS c FROM documents").fetchone()["c"]
 
-        self._db.execute(
-            "INSERT INTO documents_fts(documents_fts) VALUES('rebuild')"
-        )
+        self._db.execute("INSERT INTO documents_fts(documents_fts) VALUES('rebuild')")
         self._db.commit()
 
         return {"rebuilt": True, "documents_count": doc_count}

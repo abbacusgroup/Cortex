@@ -20,9 +20,7 @@ def store() -> ContentStore:
 
 
 class TestCRUD:
-    def test_insert_returns_id_and_get_returns_all_fields(
-        self, store: ContentStore
-    ):
+    def test_insert_returns_id_and_get_returns_all_fields(self, store: ContentStore):
         doc_id = store.insert(
             doc_id="doc-1",
             title="My Title",
@@ -56,9 +54,7 @@ class TestCRUD:
         assert doc["created_at"] is not None
         assert doc["updated_at"] is not None
 
-    def test_update_changes_fields_and_bumps_updated_at(
-        self, store: ContentStore
-    ):
+    def test_update_changes_fields_and_bumps_updated_at(self, store: ContentStore):
         store.insert(doc_id="u1", title="Old")
         before = store.get("u1")
         assert before is not None
@@ -84,9 +80,7 @@ class TestCRUD:
         assert store.get("d1") is None
         assert store.search("searchable") == []
 
-    def test_delete_nonexistent_returns_false(
-        self, store: ContentStore
-    ):
+    def test_delete_nonexistent_returns_false(self, store: ContentStore):
         assert store.delete("nope") is False
 
     def test_list_documents_unfiltered(self, store: ContentStore):
@@ -102,9 +96,7 @@ class TestCRUD:
         assert len(docs) == 1
         assert docs[0]["id"] == "a"
 
-    def test_list_documents_filter_by_project(
-        self, store: ContentStore
-    ):
+    def test_list_documents_filter_by_project(self, store: ContentStore):
         store.insert(doc_id="a", title="A", project="alpha")
         store.insert(doc_id="b", title="B", project="beta")
         docs = store.list_documents(project="beta")
@@ -136,9 +128,7 @@ class TestCRUD:
         assert doc["created_at"] == "2025-01-01T00:00:00+00:00"
         assert doc["updated_at"] == "2025-06-15T12:30:00+00:00"
 
-    def test_insert_defaults_to_now_when_no_timestamps(
-        self, store: ContentStore
-    ):
+    def test_insert_defaults_to_now_when_no_timestamps(self, store: ContentStore):
         store.insert(doc_id="ts-default", title="Default TS")
         doc = store.get("ts-default")
         assert doc is not None
@@ -149,9 +139,7 @@ class TestCRUD:
         assert doc["created_at"][:4].isdigit()
         assert doc["updated_at"][:4].isdigit()
 
-    def test_insert_duplicate_raises_store_error(
-        self, store: ContentStore
-    ):
+    def test_insert_duplicate_raises_store_error(self, store: ContentStore):
         store.insert(doc_id="dup", title="First")
         with pytest.raises(StoreError):
             store.insert(doc_id="dup", title="Second")
@@ -168,9 +156,7 @@ class TestFTS:
         assert results[0]["id"] == "t1"
 
     def test_search_word_in_content(self, store: ContentStore):
-        store.insert(
-            doc_id="c1", title="Boring", content="The flux capacitor"
-        )
+        store.insert(doc_id="c1", title="Boring", content="The flux capacitor")
         results = store.search("capacitor")
         assert len(results) == 1
         assert results[0]["id"] == "c1"
@@ -193,9 +179,7 @@ class TestFTS:
         store.insert(doc_id="n1", title="Something")
         assert store.search("zzzznotfound") == []
 
-    def test_bm25_title_ranks_higher_than_content(
-        self, store: ContentStore
-    ):
+    def test_bm25_title_ranks_higher_than_content(self, store: ContentStore):
         # "neutrino" in content only
         store.insert(
             doc_id="content_match",
@@ -212,9 +196,7 @@ class TestFTS:
         assert len(results) == 2
         assert results[0]["id"] == "title_match"
 
-    def test_sql_injection_treated_as_search_term(
-        self, store: ContentStore
-    ):
+    def test_sql_injection_treated_as_search_term(self, store: ContentStore):
         store.insert(doc_id="safe", title="Normal document")
         # Classic SQL injection attempts
         payloads = [

@@ -80,9 +80,7 @@ class CallRecorder:
         return []
 
     async def graph_data(self, project="", doc_type="", limit=500, offset=0):
-        self._record(
-            "graph_data", project=project, doc_type=doc_type, limit=limit, offset=offset
-        )
+        self._record("graph_data", project=project, doc_type=doc_type, limit=limit, offset=offset)
         return {"nodes": [], "edges": [], "total": 0}
 
     async def dossier(self, topic):
@@ -160,9 +158,7 @@ class TestEndpointsRouteThroughMcpClient:
         assert capture_call[1]["project"] == "p"
         assert capture_call[1]["tags"] == "a,b"
 
-    def test_entities_page_calls_list_entities(
-        self, app_with_recorder, call_recorder
-    ):
+    def test_entities_page_calls_list_entities(self, app_with_recorder, call_recorder):
         client = TestClient(app_with_recorder)
         client.get("/entities")
         names = [c[0] for c in call_recorder.calls]
@@ -216,9 +212,7 @@ class TestDashboardDoesNotImportStore:
             "from cortex.services.llm import LLMClient",
         ]
         for line in forbidden:
-            assert line not in src, (
-                f"Dashboard must not import {line!r} after Phase 2.D"
-            )
+            assert line not in src, f"Dashboard must not import {line!r} after Phase 2.D"
 
 
 class TestMcpErrorHandlers:
@@ -315,9 +309,7 @@ class TestMcpErrorHandlers:
 class TestAuthStillEnforced:
     """Auth wrappers must survive the refactor."""
 
-    def test_documents_requires_auth_when_password_set(
-        self, tmp_path, call_recorder
-    ):
+    def test_documents_requires_auth_when_password_set(self, tmp_path, call_recorder):
         _sessions.clear()
         pw_hash = bcrypt.hashpw(b"x", bcrypt.gensalt()).decode()
         config = CortexConfig(data_dir=tmp_path, dashboard_password=pw_hash)
@@ -364,9 +356,7 @@ class TestSettingsPageRendersWithoutStore:
     would open the store, even after future refactors.
     """
 
-    def test_get_settings_renders_without_store_calls(
-        self, app_with_recorder, call_recorder
-    ):
+    def test_get_settings_renders_without_store_calls(self, app_with_recorder, call_recorder):
         client = TestClient(app_with_recorder)
         resp = client.get("/settings")
         assert resp.status_code == 200
@@ -391,9 +381,7 @@ class TestSettingsPageRendersWithoutStore:
             f"but called: {sorted(overlap)}"
         )
 
-    def test_get_settings_does_not_crash_with_failing_store_client(
-        self, tmp_path
-    ):
+    def test_get_settings_does_not_crash_with_failing_store_client(self, tmp_path):
         """Even if every MCP method would raise, /settings still renders —
         because it doesn't call any of them. Proves the endpoint has zero
         dependency on the MCP client's live connection.
@@ -452,9 +440,7 @@ class TestDashboardDoesNotDoubleCountAccess:
     Phase 2.D — this test ensures we don't accidentally re-add it.
     """
 
-    def test_get_document_calls_read_exactly_once(
-        self, app_with_recorder, call_recorder
-    ):
+    def test_get_document_calls_read_exactly_once(self, app_with_recorder, call_recorder):
         client = TestClient(app_with_recorder)
         client.get("/documents/some-obj-id")
         # Filter to just the 'read' calls
@@ -463,9 +449,7 @@ class TestDashboardDoesNotDoubleCountAccess:
             f"expected exactly one read call, got {len(read_calls)}: {read_calls}"
         )
 
-    def test_three_views_produce_three_read_calls(
-        self, app_with_recorder, call_recorder
-    ):
+    def test_three_views_produce_three_read_calls(self, app_with_recorder, call_recorder):
         """Sanity: three GET /documents/{id} requests → three read calls.
         Catches a future regression where someone batches/dedupes accesses.
         """
@@ -484,9 +468,7 @@ class TestPostCreateInputValidation:
     request without making any MCP call.
     """
 
-    def test_post_create_missing_title_returns_422(
-        self, app_with_recorder, call_recorder
-    ):
+    def test_post_create_missing_title_returns_422(self, app_with_recorder, call_recorder):
         """``title`` is a required form field; omitting it must return 422
         from FastAPI's form validation, NOT call MCP, NOT crash.
         """
@@ -497,14 +479,10 @@ class TestPostCreateInputValidation:
         # No MCP capture call should have been made
         assert not any(c[0] == "capture" for c in call_recorder.calls)
 
-    def test_post_create_with_only_title_succeeds(
-        self, app_with_recorder, call_recorder
-    ):
+    def test_post_create_with_only_title_succeeds(self, app_with_recorder, call_recorder):
         """Sanity: title alone is enough; the other Form fields default."""
         client = TestClient(app_with_recorder)
-        resp = client.post(
-            "/create", data={"title": "T"}, follow_redirects=False
-        )
+        resp = client.post("/create", data={"title": "T"}, follow_redirects=False)
         assert resp.status_code == 302  # redirect to /documents/<id>
         # MCP capture WAS called
         assert any(c[0] == "capture" for c in call_recorder.calls)

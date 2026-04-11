@@ -19,36 +19,42 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 1314
 
 # Knowledge object types (must match ontology classes)
-KNOWLEDGE_TYPES = frozenset({
-    "decision",
-    "lesson",
-    "fix",
-    "session",
-    "research",
-    "source",
-    "synthesis",
-    "idea",
-})
+KNOWLEDGE_TYPES = frozenset(
+    {
+        "decision",
+        "lesson",
+        "fix",
+        "session",
+        "research",
+        "source",
+        "synthesis",
+        "idea",
+    }
+)
 
 # Relationship types (must match ontology object properties)
-RELATIONSHIP_TYPES = frozenset({
-    "causedBy",
-    "contradicts",
-    "supports",
-    "supersedes",
-    "dependsOn",
-    "ledTo",
-    "implements",
-    "mentions",
-})
+RELATIONSHIP_TYPES = frozenset(
+    {
+        "causedBy",
+        "contradicts",
+        "supports",
+        "supersedes",
+        "dependsOn",
+        "ledTo",
+        "implements",
+        "mentions",
+    }
+)
 
 # Entity subtypes
-ENTITY_TYPES = frozenset({
-    "technology",
-    "project",
-    "pattern",
-    "concept",
-})
+ENTITY_TYPES = frozenset(
+    {
+        "technology",
+        "project",
+        "pattern",
+        "concept",
+    }
+)
 
 # Tiers
 TIERS = frozenset({"archive", "recall", "reflex"})

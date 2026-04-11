@@ -1,8 +1,19 @@
 # Cortex
 
+<!-- mcp-name: io.github.abbacusgroup/cortex -->
+
+[![CI](https://github.com/abbacusgroup/Cortex/actions/workflows/test.yml/badge.svg)](https://github.com/abbacusgroup/Cortex/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/abbacus-cortex)](https://pypi.org/project/abbacus-cortex/)
+[![Python](https://img.shields.io/pypi/pyversions/abbacus-cortex)](https://pypi.org/project/abbacus-cortex/)
+[![License](https://img.shields.io/badge/license-BUSL--1.1-blue)](LICENSE)
+
 Cognitive knowledge system with formal ontology, reasoning, and intelligence serving.
 
 Cortex captures knowledge objects (decisions, lessons, fixes, sessions, research, ideas), classifies them with an OWL-RL ontology, discovers relationships, reasons over the graph, and serves intelligence through hybrid retrieval.
+
+![Dashboard](docs/dashboard/dashboard4.png)
+
+![Knowledge Graph](docs/dashboard/dashboard2.png)
 
 ## Install
 
@@ -187,6 +198,20 @@ decision, lesson, fix, session, research, source, synthesis, idea
 
 causedBy, contradicts (symmetric), supports, supersedes (transitive), dependsOn, ledTo (inverse of causedBy), implements, mentions
 
+## Privacy
+
+Cortex stores all data locally. No telemetry, no analytics, no phone-home. If you configure an LLM provider (via `CORTEX_LLM_API_KEY`), object content may be sent to that provider for classification and reasoning. Embeddings are computed locally by default using `sentence-transformers`.
+
 ## License
 
-Copyright Abbacus Group.
+Copyright (c) 2026 Abbacus Group. Licensed under the [Business Source License 1.1](LICENSE).
+
+- **Additional Use Grant:** You may use the Licensed Work for your internal business purposes.
+- **Change Date:** 2030-04-11
+- **Change License:** MIT
+
+After the Change Date, this software converts to the MIT license.
+
+## Trademark Notice
+
+Cortex is a project of Abbacus Group and is not affiliated with any other product named Cortex.

@@ -30,16 +30,18 @@ class BriefingPresenter:
         """
         results = []
         for doc in documents:
-            results.append({
-                "id": doc.get("id", ""),
-                "title": doc.get("title", ""),
-                "type": doc.get("type", ""),
-                "tags": doc.get("tags", ""),
-                "project": doc.get("project", ""),
-                "summary": doc.get("summary", "") or doc.get("title", ""),
-                "tier": doc.get("tier", ""),
-                "score": doc.get("score"),
-            })
+            results.append(
+                {
+                    "id": doc.get("id", ""),
+                    "title": doc.get("title", ""),
+                    "type": doc.get("type", ""),
+                    "tags": doc.get("tags", ""),
+                    "project": doc.get("project", ""),
+                    "summary": doc.get("summary", "") or doc.get("title", ""),
+                    "tier": doc.get("tier", ""),
+                    "score": doc.get("score"),
+                }
+            )
         return results
 
 
@@ -92,9 +94,7 @@ class DossierPresenter:
             }
 
         # Sort by creation date
-        related_objects.sort(
-            key=lambda x: x.get("created_at", ""), reverse=True
-        )
+        related_objects.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
         # Find contradictions
         contradictions = self._find_contradictions(related_objects)
@@ -133,9 +133,7 @@ class DossierPresenter:
             "timeline": timeline,
         }
 
-    def _find_contradictions(
-        self, objects: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _find_contradictions(self, objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Find contradiction relationships among the given objects."""
         contradictions = []
         obj_ids = {obj.get("id") for obj in objects if obj.get("id")}
@@ -147,17 +145,17 @@ class DossierPresenter:
             rels = self.store.get_relationships(obj_id)
             for rel in rels:
                 if rel["rel_type"] == "contradicts" and rel["other_id"] in obj_ids:
-                    contradictions.append({
-                        "object_a": obj_id,
-                        "object_b": rel["other_id"],
-                        "title_a": obj.get("title", ""),
-                    })
+                    contradictions.append(
+                        {
+                            "object_a": obj_id,
+                            "object_b": rel["other_id"],
+                            "title_a": obj.get("title", ""),
+                        }
+                    )
 
         return contradictions
 
-    def _find_related_entities(
-        self, objects: list[dict[str, Any]]
-    ) -> list[dict[str, str]]:
+    def _find_related_entities(self, objects: list[dict[str, Any]]) -> list[dict[str, str]]:
         """Find entities mentioned across the related objects."""
         obj_ids = {obj.get("id", "") for obj in objects if obj.get("id")}
         all_entities = self.store.graph.list_entities()
@@ -184,8 +182,7 @@ class DocumentPresenter:
         # Add entity mentions via dedicated mention index
         all_entities = self.store.graph.list_entities()
         entities = [
-            e for e in all_entities
-            if obj_id in self.store.graph.get_entity_mentions(e["id"])
+            e for e in all_entities if obj_id in self.store.graph.get_entity_mentions(e["id"])
         ]
         doc["entities"] = entities
         return doc
@@ -211,19 +208,12 @@ class SynthesisPresenter:
         """
         import datetime
 
-        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
-            days=period_days
-        )
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=period_days)
         cutoff_str = cutoff.isoformat()
 
         # Get recent objects
-        all_objects = self.store.list_objects(
-            obj_type=None, project=project, limit=500
-        )
-        recent = [
-            obj for obj in all_objects
-            if obj.get("created_at", "") >= cutoff_str
-        ]
+        all_objects = self.store.list_objects(obj_type=None, project=project, limit=500)
+        recent = [obj for obj in all_objects if obj.get("created_at", "") >= cutoff_str]
 
         if not recent:
             return {
@@ -256,22 +246,18 @@ class SynthesisPresenter:
             "status": "ok",
             "object_count": len(recent),
             "themes": [
-                {"name": k, "count": v} for k, v in sorted(
-                    themes.items(), key=lambda x: x[1], reverse=True
-                )
+                {"name": k, "count": v}
+                for k, v in sorted(themes.items(), key=lambda x: x[1], reverse=True)
             ],
             "sources": sources,
             "narrative": narrative,
         }
 
-    def _build_narrative(
-        self, objects: list[dict[str, Any]], themes: dict[str, int]
-    ) -> str:
+    def _build_narrative(self, objects: list[dict[str, Any]], themes: dict[str, int]) -> str:
         """Build a narrative summary."""
         if self.llm and self.llm.available:
             summaries = "\n".join(
-                f"- [{obj.get('type', '?')}] {obj.get('title', '?')}: "
-                f"{obj.get('summary', '')}"
+                f"- [{obj.get('type', '?')}] {obj.get('title', '?')}: {obj.get('summary', '')}"
                 for obj in objects[:20]
             )
             try:
@@ -328,16 +314,18 @@ class AlertPresenter:
                     pair = tuple(sorted([obj_id, rel["other_id"]]))
                     if pair not in seen:
                         seen.add(pair)
-                        alerts.append({
-                            "type": "contradiction",
-                            "severity": "high",
-                            "message": (
-                                f"Contradiction between "
-                                f"'{obj.get('title', obj_id[:8])}' "
-                                f"and object {rel['other_id'][:8]}"
-                            ),
-                            "object_ids": list(pair),
-                        })
+                        alerts.append(
+                            {
+                                "type": "contradiction",
+                                "severity": "high",
+                                "message": (
+                                    f"Contradiction between "
+                                    f"'{obj.get('title', obj_id[:8])}' "
+                                    f"and object {rel['other_id'][:8]}"
+                                ),
+                                "object_ids": list(pair),
+                            }
+                        )
         return alerts
 
     def _check_patterns(self) -> list[dict[str, Any]]:
@@ -349,9 +337,7 @@ class AlertPresenter:
         cutoff_str = cutoff.isoformat()
 
         fixes = self.store.list_objects(obj_type="fix", limit=500)
-        recent_fixes = [
-            f for f in fixes if f.get("created_at", "") >= cutoff_str
-        ]
+        recent_fixes = [f for f in fixes if f.get("created_at", "") >= cutoff_str]
 
         # Count entity mentions across recent fixes
         recent_fix_ids = {f.get("id", "") for f in recent_fixes}
@@ -364,15 +350,17 @@ class AlertPresenter:
 
         for entity_id, fix_ids in entity_counts.items():
             if len(fix_ids) >= 3:
-                alerts.append({
-                    "type": "pattern",
-                    "severity": "medium",
-                    "message": (
-                        f"Systemic issue: {len(fix_ids)} fixes in 14 days "
-                        f"mentioning entity {entity_id[:8]}"
-                    ),
-                    "object_ids": fix_ids,
-                })
+                alerts.append(
+                    {
+                        "type": "pattern",
+                        "severity": "medium",
+                        "message": (
+                            f"Systemic issue: {len(fix_ids)} fixes in 14 days "
+                            f"mentioning entity {entity_id[:8]}"
+                        ),
+                        "object_ids": fix_ids,
+                    }
+                )
 
         return alerts
 
@@ -385,19 +373,18 @@ class AlertPresenter:
             obj_id = obj.get("id", "")
             rels = self.store.get_relationships(obj_id)
             for rel in rels:
-                if (
-                    rel["direction"] == "outgoing"
-                    and rel["rel_type"] == "dependsOn"
-                ):
+                if rel["direction"] == "outgoing" and rel["rel_type"] == "dependsOn":
                     dep = self.store.content.get(rel["other_id"])
                     if dep and dep.get("tier") == "archive":
-                        alerts.append({
-                            "type": "staleness",
-                            "severity": "low",
-                            "message": (
-                                f"'{obj.get('title', obj_id[:8])}' depends on "
-                                f"archived object {rel['other_id'][:8]}"
-                            ),
-                            "object_ids": [obj_id, rel["other_id"]],
-                        })
+                        alerts.append(
+                            {
+                                "type": "staleness",
+                                "severity": "low",
+                                "message": (
+                                    f"'{obj.get('title', obj_id[:8])}' depends on "
+                                    f"archived object {rel['other_id'][:8]}"
+                                ),
+                                "object_ids": [obj_id, rel["other_id"]],
+                            }
+                        )
         return alerts

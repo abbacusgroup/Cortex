@@ -70,7 +70,9 @@ class NormalizeStage:
             classification = self.llm.classify(title=title, content=content)
             logger.debug(
                 "Classified %s as %s (%.2f)",
-                obj_id, classification["type"], classification["confidence"],
+                obj_id,
+                classification["type"],
+                classification["confidence"],
             )
 
         # Step 2: Update the object with classification results

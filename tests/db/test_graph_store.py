@@ -79,19 +79,13 @@ class TestCreateRead:
         assert obj["rootCause"] == "null ref"
 
     @pytest.mark.parametrize("obj_type", OBJECT_TYPES)
-    def test_create_all_types(
-        self, store: GraphStore, obj_type: str
-    ) -> None:
-        obj_id = store.create_object(
-            obj_type=obj_type, title=f"Test {obj_type}"
-        )
+    def test_create_all_types(self, store: GraphStore, obj_type: str) -> None:
+        obj_id = store.create_object(obj_type=obj_type, title=f"Test {obj_type}")
         obj = store.read_object(obj_id)
         assert obj is not None
         assert obj["type"] == obj_type
 
-    def test_create_with_custom_captured_at(
-        self, store: GraphStore
-    ) -> None:
+    def test_create_with_custom_captured_at(self, store: GraphStore) -> None:
         ts = "2026-03-23T00:00:00+00:00"
         obj_id = store.create_object(
             obj_type="decision",
@@ -108,18 +102,14 @@ class TestUpdate:
     """update_object modifies properties."""
 
     def test_update_changes_property(self, store: GraphStore) -> None:
-        obj_id = store.create_object(
-            obj_type="lesson", title="Original title"
-        )
+        obj_id = store.create_object(obj_type="lesson", title="Original title")
         store.update_object(obj_id, title="Updated title")
         obj = store.read_object(obj_id)
         assert obj is not None
         assert obj["title"] == "Updated title"
 
     def test_update_adds_new_property(self, store: GraphStore) -> None:
-        obj_id = store.create_object(
-            obj_type="idea", title="New idea"
-        )
+        obj_id = store.create_object(obj_type="idea", title="New idea")
         store.update_object(obj_id, feasibility="high")
         obj = store.read_object(obj_id)
         assert obj is not None
@@ -130,20 +120,14 @@ class TestDelete:
     """delete_object removes all triples."""
 
     def test_delete_removes_object(self, store: GraphStore) -> None:
-        obj_id = store.create_object(
-            obj_type="research", title="Temp"
-        )
+        obj_id = store.create_object(obj_type="research", title="Temp")
         assert store.delete_object(obj_id) is True
         assert store.read_object(obj_id) is None
 
-    def test_delete_removes_incoming_relationships(
-        self, store: GraphStore
-    ) -> None:
+    def test_delete_removes_incoming_relationships(self, store: GraphStore) -> None:
         a = store.create_object(obj_type="decision", title="A")
         b = store.create_object(obj_type="lesson", title="B")
-        store.create_relationship(
-            from_id=a, rel_type="supports", to_id=b
-        )
+        store.create_relationship(from_id=a, rel_type="supports", to_id=b)
         store.delete_object(b)
         rels = store.get_relationships(a)
         assert len(rels) == 0
@@ -153,23 +137,15 @@ class TestListObjects:
     """list_objects with filters."""
 
     def test_list_by_type(self, store: GraphStore) -> None:
-        store.create_object(
-            obj_type="fix", title="Fix1", project="p1"
-        )
-        store.create_object(
-            obj_type="lesson", title="Lesson1", project="p1"
-        )
+        store.create_object(obj_type="fix", title="Fix1", project="p1")
+        store.create_object(obj_type="lesson", title="Lesson1", project="p1")
         fixes = store.list_objects(obj_type="fix")
         assert len(fixes) == 1
         assert fixes[0]["type"] == "fix"
 
     def test_list_by_project(self, store: GraphStore) -> None:
-        store.create_object(
-            obj_type="fix", title="Fix1", project="alpha"
-        )
-        store.create_object(
-            obj_type="fix", title="Fix2", project="beta"
-        )
+        store.create_object(obj_type="fix", title="Fix1", project="alpha")
+        store.create_object(obj_type="fix", title="Fix2", project="beta")
         alpha = store.list_objects(project="alpha")
         assert len(alpha) == 1
         assert alpha[0]["project"] == "alpha"
@@ -194,32 +170,18 @@ class TestCrudEdgeCases:
         assert obj is not None
         assert obj["title"] == title
 
-    def test_update_nonexistent_raises_not_found(
-        self, store: GraphStore
-    ) -> None:
+    def test_update_nonexistent_raises_not_found(self, store: GraphStore) -> None:
         with pytest.raises(NotFoundError):
-            store.update_object(
-                "00000000-0000-0000-0000-000000000000", title="nope"
-            )
+            store.update_object("00000000-0000-0000-0000-000000000000", title="nope")
 
-    def test_delete_nonexistent_returns_false(
-        self, store: GraphStore
-    ) -> None:
-        result = store.delete_object(
-            "00000000-0000-0000-0000-000000000000"
-        )
+    def test_delete_nonexistent_returns_false(self, store: GraphStore) -> None:
+        result = store.delete_object("00000000-0000-0000-0000-000000000000")
         assert result is False
 
-    def test_read_nonexistent_returns_none(
-        self, store: GraphStore
-    ) -> None:
-        assert store.read_object(
-            "00000000-0000-0000-0000-000000000000"
-        ) is None
+    def test_read_nonexistent_returns_none(self, store: GraphStore) -> None:
+        assert store.read_object("00000000-0000-0000-0000-000000000000") is None
 
-    def test_duplicate_titles_different_ids(
-        self, store: GraphStore
-    ) -> None:
+    def test_duplicate_titles_different_ids(self, store: GraphStore) -> None:
         id1 = store.create_object(obj_type="idea", title="Same Title")
         id2 = store.create_object(obj_type="idea", title="Same Title")
         assert id1 != id2
@@ -234,18 +196,12 @@ class TestCrudEdgeCases:
         assert obj is not None
         assert obj["title"] == evil
 
-    def test_content_exceeding_10mb_raises_validation(
-        self, store: GraphStore
-    ) -> None:
+    def test_content_exceeding_10mb_raises_validation(self, store: GraphStore) -> None:
         big = "x" * (10 * 1024 * 1024 + 1)
         with pytest.raises(ValidationError, match="10MB"):
-            store.create_object(
-                obj_type="research", title="Big", content=big
-            )
+            store.create_object(obj_type="research", title="Big", content=big)
 
-    def test_invalid_type_raises_validation(
-        self, store: GraphStore
-    ) -> None:
+    def test_invalid_type_raises_validation(self, store: GraphStore) -> None:
         with pytest.raises(ValidationError, match="Invalid knowledge type"):
             store.create_object(obj_type="foobar", title="Bad type")
 
@@ -310,9 +266,7 @@ class TestSparqlInjectionListObjects:
     filter behaves normally for hostile values.
     """
 
-    def test_project_with_double_quote_filters_correctly(
-        self, store: GraphStore
-    ) -> None:
+    def test_project_with_double_quote_filters_correctly(self, store: GraphStore) -> None:
         evil_project = 'proj"name'
         store.create_object(obj_type="fix", title="F1", project=evil_project)
         store.create_object(obj_type="fix", title="F2", project="other")
@@ -322,9 +276,7 @@ class TestSparqlInjectionListObjects:
         assert results[0]["title"] == "F1"
         assert results[0]["project"] == evil_project
 
-    def test_project_with_backslash_filters_correctly(
-        self, store: GraphStore
-    ) -> None:
+    def test_project_with_backslash_filters_correctly(self, store: GraphStore) -> None:
         evil_project = "path\\to\\project"
         store.create_object(obj_type="fix", title="B1", project=evil_project)
         store.create_object(obj_type="fix", title="B2", project="clean")
@@ -334,9 +286,7 @@ class TestSparqlInjectionListObjects:
         assert results[0]["title"] == "B1"
         assert results[0]["project"] == evil_project
 
-    def test_project_with_newline_filters_correctly(
-        self, store: GraphStore
-    ) -> None:
+    def test_project_with_newline_filters_correctly(self, store: GraphStore) -> None:
         evil_project = "line1\nline2"
         store.create_object(obj_type="fix", title="N1", project=evil_project)
         store.create_object(obj_type="fix", title="N2", project="plain")
@@ -345,9 +295,7 @@ class TestSparqlInjectionListObjects:
         assert len(results) == 1
         assert results[0]["title"] == "N1"
 
-    def test_project_injection_attempt_does_not_leak_other_rows(
-        self, store: GraphStore
-    ) -> None:
+    def test_project_injection_attempt_does_not_leak_other_rows(self, store: GraphStore) -> None:
         # Classic injection payload: try to close the literal and append
         # a clause that would match everything. With the escape in place
         # the whole string is a literal, so nothing matches — the query
@@ -371,96 +319,55 @@ class TestSparqlInjectionListObjects:
 class TestRelationships:
     """Relationship CRUD between knowledge objects."""
 
-    def test_create_and_get_relationship(
-        self, store: GraphStore
-    ) -> None:
+    def test_create_and_get_relationship(self, store: GraphStore) -> None:
         a = store.create_object(obj_type="decision", title="A")
         b = store.create_object(obj_type="lesson", title="B")
-        store.create_relationship(
-            from_id=a, rel_type="causedBy", to_id=b
-        )
+        store.create_relationship(from_id=a, rel_type="causedBy", to_id=b)
         rels = store.get_relationships(a)
-        assert any(
-            r["rel_type"] == "causedBy" and r["other_id"] == b
-            for r in rels
-        )
+        assert any(r["rel_type"] == "causedBy" and r["other_id"] == b for r in rels)
 
     def test_delete_relationship(self, store: GraphStore) -> None:
         a = store.create_object(obj_type="fix", title="A")
         b = store.create_object(obj_type="fix", title="B")
-        store.create_relationship(
-            from_id=a, rel_type="supports", to_id=b
-        )
-        assert store.delete_relationship(
-            from_id=a, rel_type="supports", to_id=b
-        )
+        store.create_relationship(from_id=a, rel_type="supports", to_id=b)
+        assert store.delete_relationship(from_id=a, rel_type="supports", to_id=b)
         rels = store.get_relationships(a)
         assert len(rels) == 0
 
-    def test_self_referential_raises_validation(
-        self, store: GraphStore
-    ) -> None:
+    def test_self_referential_raises_validation(self, store: GraphStore) -> None:
         a = store.create_object(obj_type="lesson", title="Self")
         with pytest.raises(ValidationError, match="Self-referential"):
-            store.create_relationship(
-                from_id=a, rel_type="contradicts", to_id=a
-            )
+            store.create_relationship(from_id=a, rel_type="contradicts", to_id=a)
 
-    def test_duplicate_relationship_is_idempotent(
-        self, store: GraphStore
-    ) -> None:
+    def test_duplicate_relationship_is_idempotent(self, store: GraphStore) -> None:
         a = store.create_object(obj_type="decision", title="A")
         b = store.create_object(obj_type="decision", title="B")
-        store.create_relationship(
-            from_id=a, rel_type="supersedes", to_id=b
-        )
-        store.create_relationship(
-            from_id=a, rel_type="supersedes", to_id=b
-        )
-        rels = [
-            r
-            for r in store.get_relationships(a)
-            if r["rel_type"] == "supersedes"
-        ]
+        store.create_relationship(from_id=a, rel_type="supersedes", to_id=b)
+        store.create_relationship(from_id=a, rel_type="supersedes", to_id=b)
+        rels = [r for r in store.get_relationships(a) if r["rel_type"] == "supersedes"]
         assert len(rels) == 1
 
-    def test_delete_object_cleans_up_relationships(
-        self, store: GraphStore
-    ) -> None:
+    def test_delete_object_cleans_up_relationships(self, store: GraphStore) -> None:
         a = store.create_object(obj_type="fix", title="A")
         b = store.create_object(obj_type="lesson", title="B")
         c = store.create_object(obj_type="session", title="C")
-        store.create_relationship(
-            from_id=a, rel_type="supports", to_id=b
-        )
-        store.create_relationship(
-            from_id=c, rel_type="dependsOn", to_id=b
-        )
+        store.create_relationship(from_id=a, rel_type="supports", to_id=b)
+        store.create_relationship(from_id=c, rel_type="dependsOn", to_id=b)
         store.delete_object(b)
         assert store.get_relationships(a) == []
         assert store.get_relationships(c) == []
 
-    def test_invalid_rel_type_raises_validation(
-        self, store: GraphStore
-    ) -> None:
+    def test_invalid_rel_type_raises_validation(self, store: GraphStore) -> None:
         a = store.create_object(obj_type="idea", title="A")
         b = store.create_object(obj_type="idea", title="B")
-        with pytest.raises(
-            ValidationError, match="Invalid relationship type"
-        ):
-            store.create_relationship(
-                from_id=a, rel_type="nonsense", to_id=b
-            )
+        with pytest.raises(ValidationError, match="Invalid relationship type"):
+            store.create_relationship(from_id=a, rel_type="nonsense", to_id=b)
 
-    def test_incoming_relationship_visible(
-        self, store: GraphStore
-    ) -> None:
+    def test_incoming_relationship_visible(self, store: GraphStore) -> None:
         """The target should see the relationship as incoming."""
         a = store.create_object(obj_type="decision", title="A")
         b = store.create_object(obj_type="lesson", title="B")
-        store.create_relationship(
-            from_id=a, rel_type="ledTo", to_id=b
-        )
+        store.create_relationship(from_id=a, rel_type="ledTo", to_id=b)
         rels = store.get_relationships(b)
         incoming = [r for r in rels if r["direction"] == "incoming"]
         assert len(incoming) == 1
@@ -475,21 +382,20 @@ class TestRelationships:
 class TestEntities:
     """Entity CRUD and mention linking."""
 
-    def test_create_entity_returns_id(self, store: GraphStore) -> None:
-        eid = store.create_entity(name="Python", entity_type="technology")
+    def test_create_entity_returns_id_and_created_flag(self, store: GraphStore) -> None:
+        eid, created = store.create_entity(name="Python", entity_type="technology")
         assert eid
         assert len(eid) == 36
+        assert created is True
 
-    def test_duplicate_name_case_insensitive_returns_existing(
-        self, store: GraphStore
-    ) -> None:
-        id1 = store.create_entity(name="Oxigraph", entity_type="technology")
-        id2 = store.create_entity(name="oxigraph", entity_type="technology")
+    def test_duplicate_name_case_insensitive_returns_existing(self, store: GraphStore) -> None:
+        id1, created1 = store.create_entity(name="Oxigraph", entity_type="technology")
+        id2, created2 = store.create_entity(name="oxigraph", entity_type="technology")
         assert id1 == id2
+        assert created1 is True
+        assert created2 is False
 
-    def test_list_entities_with_type_filter(
-        self, store: GraphStore
-    ) -> None:
+    def test_list_entities_with_type_filter(self, store: GraphStore) -> None:
         store.create_entity(name="Python", entity_type="technology")
         store.create_entity(name="SOLID", entity_type="pattern")
         techs = store.list_entities(entity_type="technology")
@@ -502,25 +408,15 @@ class TestEntities:
         all_ents = store.list_entities()
         assert len(all_ents) == 2
 
-    def test_add_mention_and_get_entity_mentions(
-        self, store: GraphStore
-    ) -> None:
-        eid = store.create_entity(
-            name="Oxigraph", entity_type="technology"
-        )
-        obj_id = store.create_object(
-            obj_type="research", title="Graph DB research"
-        )
+    def test_add_mention_and_get_entity_mentions(self, store: GraphStore) -> None:
+        eid, _ = store.create_entity(name="Oxigraph", entity_type="technology")
+        obj_id = store.create_object(obj_type="research", title="Graph DB research")
         store.add_mention(obj_id=obj_id, entity_id=eid)
         mentions = store.get_entity_mentions(eid)
         assert obj_id in mentions
 
-    def test_entity_with_unknown_type_defaults_to_concept(
-        self, store: GraphStore
-    ) -> None:
-        eid = store.create_entity(
-            name="Emergence", entity_type="bogus_type"
-        )
+    def test_entity_with_unknown_type_defaults_to_concept(self, store: GraphStore) -> None:
+        eid, _ = store.create_entity(name="Emergence", entity_type="bogus_type")
         entities = store.list_entities(entity_type="concept")
         assert any(e["id"] == eid for e in entities)
 
@@ -533,20 +429,13 @@ class TestEntities:
 class TestSparql:
     """Direct SPARQL query interface."""
 
-    def test_valid_query_returns_results(
-        self, store: GraphStore
-    ) -> None:
+    def test_valid_query_returns_results(self, store: GraphStore) -> None:
         store.create_object(obj_type="fix", title="SPARQL test fix")
-        rows = store.query(
-            "SELECT ?s ?title WHERE {"
-            " ?s a cortex:Fix . ?s cortex:title ?title . }"
-        )
+        rows = store.query("SELECT ?s ?title WHERE { ?s a cortex:Fix . ?s cortex:title ?title . }")
         assert len(rows) >= 1
         assert any(r["title"] == "SPARQL test fix" for r in rows)
 
-    def test_malformed_sparql_raises_store_error(
-        self, store: GraphStore
-    ) -> None:
+    def test_malformed_sparql_raises_store_error(self, store: GraphStore) -> None:
         with pytest.raises(StoreError, match="SPARQL syntax"):
             store.query("SELECT WHERE {{ invalid sparql %%% }}")
 
@@ -562,9 +451,7 @@ class TestSparql:
         counts = store.count_by_type()
         assert counts == {}
 
-    def test_query_with_explicit_prefixes(
-        self, store: GraphStore
-    ) -> None:
+    def test_query_with_explicit_prefixes(self, store: GraphStore) -> None:
         """Query that already has PREFIX declarations should not double-add."""
         store.create_object(obj_type="idea", title="Prefix test")
         rows = store.query(
@@ -588,9 +475,7 @@ class TestPersistence:
 
         gs = GraphStore(path=db_path)
         gs.load_ontology(ONTOLOGY_PATH)
-        obj_id = gs.create_object(
-            obj_type="lesson", title="Persisted"
-        )
+        obj_id = gs.create_object(obj_type="lesson", title="Persisted")
         del gs  # close
 
         gs2 = GraphStore(path=db_path)

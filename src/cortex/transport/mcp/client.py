@@ -381,22 +381,16 @@ class CortexMCPClient:
             },
         )
 
-    async def link(
-        self, from_id: str, rel_type: str, to_id: str
-    ) -> dict[str, Any]:
+    async def link(self, from_id: str, rel_type: str, to_id: str) -> dict[str, Any]:
         """Create a typed relationship between two knowledge objects."""
         return await self._call(
             "cortex_link",
             {"from_id": from_id, "rel_type": rel_type, "to_id": to_id},
         )
 
-    async def feedback(
-        self, obj_id: str, relevant: bool = True
-    ) -> dict[str, Any]:
+    async def feedback(self, obj_id: str, relevant: bool = True) -> dict[str, Any]:
         """Record explicit relevance feedback for a knowledge object."""
-        return await self._call(
-            "cortex_feedback", {"obj_id": obj_id, "relevant": relevant}
-        )
+        return await self._call("cortex_feedback", {"obj_id": obj_id, "relevant": relevant})
 
     async def classify(
         self,
@@ -435,9 +429,7 @@ class CortexMCPClient:
         )
 
     async def graph(self, obj_id: str = "", entity: str = "") -> dict[str, Any]:
-        return await self._call(
-            "cortex_graph", {"obj_id": obj_id, "entity": entity}
-        )
+        return await self._call("cortex_graph", {"obj_id": obj_id, "entity": entity})
 
     async def status(self) -> dict[str, Any]:
         return await self._call("cortex_status")
@@ -446,9 +438,7 @@ class CortexMCPClient:
         return await self._call("cortex_query_trail", {"limit": limit})
 
     async def list_entities(self, entity_type: str = "") -> list[dict[str, Any]]:
-        return await self._call(
-            "cortex_list_entities", {"entity_type": entity_type}
-        )
+        return await self._call("cortex_list_entities", {"entity_type": entity_type})
 
     async def graph_data(
         self,
@@ -472,9 +462,7 @@ class CortexMCPClient:
     async def pipeline(self, obj_id: str) -> dict[str, Any]:
         return await self._call("cortex_pipeline", {"obj_id": obj_id})
 
-    async def synthesize(
-        self, period_days: int = 7, project: str = ""
-    ) -> dict[str, Any]:
+    async def synthesize(self, period_days: int = 7, project: str = "") -> dict[str, Any]:
         return await self._call(
             "cortex_synthesize",
             {"period_days": period_days, "project": project},

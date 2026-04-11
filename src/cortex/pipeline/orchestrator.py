@@ -127,7 +127,9 @@ class PipelineOrchestrator:
         return result
 
     def run_pipeline(
-        self, obj_id: str, pre_entities: list[dict[str, str]] | None = None,
+        self,
+        obj_id: str,
+        pre_entities: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Run the full pipeline on an existing object.
 

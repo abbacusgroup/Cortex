@@ -100,6 +100,28 @@ Review a destructive action before executing.
 ### cortex_reason (admin)
 Run advanced reasoning: detect contradictions, patterns, knowledge gaps, and staleness.
 
+### cortex_list_entities (admin)
+List entities in the knowledge graph, optionally filtered by type.
+- entity_type (str): Filter by type (technology, project, pattern, concept)
+
+### cortex_query_trail (admin)
+Return the most recent search query log entries. Used by the dashboard trail page.
+- limit (int): Number of entries to return (default 50, max 1000)
+
+### cortex_graph_data (admin)
+Return graph data in Cytoscape.js format for dashboard visualization. Aggregates objects, relationships, and entities into a single payload.
+- project (str): Filter by project name
+- doc_type (str): Filter by knowledge type
+- limit (int): Maximum number of objects (default 500, max 1000)
+- offset (int): Pagination offset
+
+### cortex_debug_sessions (admin)
+Return MCP session table diagnostics. Reports session counts, zombie entries, memory usage, and process ID.
+
+### cortex_debug_memory (admin)
+Take tracemalloc memory snapshots for leak diagnosis.
+- action (str): "start" to begin tracing, "snapshot" to take a snapshot and diff against previous, "stop" to stop tracing (default "snapshot")
+
 ## Knowledge Types
 decision, lesson, fix, session, research, source, synthesis, idea
 

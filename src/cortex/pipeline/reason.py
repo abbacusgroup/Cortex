@@ -91,6 +91,7 @@ class ReasonStage:
         total_inferred = 0
         rule_counts: dict[str, int] = {}
 
+        iteration = 0
         for iteration in range(max_iterations):
             iteration_inferred = 0
 
@@ -100,15 +101,11 @@ class ReasonStage:
                 iteration_inferred += count
 
             if iteration_inferred == 0:
-                logger.debug(
-                    "Reasoner reached fixpoint after %d iteration(s)", iteration + 1
-                )
+                logger.debug("Reasoner reached fixpoint after %d iteration(s)", iteration + 1)
                 break
 
             total_inferred += iteration_inferred
-            logger.debug(
-                "Iteration %d: %d new triples", iteration + 1, iteration_inferred
-            )
+            logger.debug("Iteration %d: %d new triples", iteration + 1, iteration_inferred)
 
         return {
             "status": "reasoned",
@@ -135,9 +132,9 @@ class ReasonStage:
         for triple in new_triples:
             quad = ox.Quad(triple.subject, triple.predicate, triple.object)
             # Check if already exists
-            existing = list(self.graph._store.quads_for_pattern(
-                triple.subject, triple.predicate, triple.object
-            ))
+            existing = list(
+                self.graph._store.quads_for_pattern(triple.subject, triple.predicate, triple.object)
+            )
             if not existing:
                 self.graph._store.add(quad)
                 count += 1
@@ -171,9 +168,11 @@ class ReasonStage:
             # Count triples that don't already exist (same logic as _apply_rule)
             count = 0
             for triple in new_triples:
-                existing = list(self.graph._store.quads_for_pattern(
-                    triple.subject, triple.predicate, triple.object
-                ))
+                existing = list(
+                    self.graph._store.quads_for_pattern(
+                        triple.subject, triple.predicate, triple.object
+                    )
+                )
                 if not existing:
                     count += 1
 

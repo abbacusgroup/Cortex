@@ -574,7 +574,9 @@ def status() -> None:
         store = _get_store(must_init=False)
         stats = store.status()
 
-    typer.echo("Cortex v0.1.0")
+    from cortex import __version__
+
+    typer.echo(f"Cortex v{__version__}")
     typer.echo(f"  Initialized: {stats['initialized']}")
     typer.echo(f"  Documents:   {stats['sqlite_total']}")
     typer.echo(f"  Triples:     {stats['graph_triples']}")
@@ -594,9 +596,7 @@ def context(
 ) -> None:
     """Get a briefing (summaries only) for a topic."""
     if _use_mcp():
-        briefs = _mcp_call_or_exit(
-            lambda: _get_mcp_client().context(topic=topic, limit=limit)
-        )
+        briefs = _mcp_call_or_exit(lambda: _get_mcp_client().context(topic=topic, limit=limit))
     else:
         store = _get_store()
         from cortex.retrieval.engine import RetrievalEngine
@@ -624,9 +624,7 @@ def dossier(
 ) -> None:
     """Build an intelligence dossier around an entity or topic."""
     if _use_mcp():
-        result = _mcp_call_or_exit(
-            lambda: _get_mcp_client().dossier(topic=topic)
-        )
+        result = _mcp_call_or_exit(lambda: _get_mcp_client().dossier(topic=topic))
     else:
         store = _get_store()
         from cortex.retrieval.presenters import DossierPresenter
@@ -671,9 +669,7 @@ def graph(
 ) -> None:
     """Show an object's relationships and graph neighborhood."""
     if _use_mcp():
-        result = _mcp_call_or_exit(
-            lambda: _get_mcp_client().graph(obj_id=obj_id)
-        )
+        result = _mcp_call_or_exit(lambda: _get_mcp_client().graph(obj_id=obj_id))
         chain = result.get("causal_chain", [])
         timeline = result.get("evolution", [])
         rels = result.get("relationships", [])
@@ -719,9 +715,7 @@ def synthesize(
     """Generate a synthesis of recent knowledge."""
     if _use_mcp():
         result = _mcp_call_or_exit(
-            lambda: _get_mcp_client().synthesize(
-                period_days=period, project=project or ""
-            )
+            lambda: _get_mcp_client().synthesize(period_days=period, project=project or "")
         )
     else:
         store = _get_store()
@@ -966,6 +960,7 @@ def serve(
     """
     if transport == "stdio":
         from cortex.transport.mcp.server import run_stdio
+
         try:
             run_stdio()
         except StoreLockedError as e:
@@ -973,6 +968,7 @@ def serve(
             raise typer.Exit(1) from e
     elif transport == "mcp-http":
         from cortex.transport.mcp.server import run_http
+
         typer.echo(f"Cortex MCP (streamable-http) at http://{host}:{port}/mcp")
         if parent_watchdog:
             _start_parent_watchdog()
@@ -1096,6 +1092,7 @@ def setup(
         typer.echo(f"  LLM: {config.llm_model}")
         try:
             from cortex.services.llm import LLMClient
+
             llm = LLMClient(config)
             llm.complete("Say 'connected' in one word.")
             typer.echo("  LLM: Connected")
@@ -1378,15 +1375,12 @@ def dashboard(
 
         # --spawn-mcp: launch the MCP server as a subprocess and wait.
         typer.secho(
-            f"MCP server at {config.mcp_server_url} unreachable — "
-            f"spawning one via --spawn-mcp…",
+            f"MCP server at {config.mcp_server_url} unreachable — spawning one via --spawn-mcp…",
             fg=typer.colors.YELLOW,
             err=True,
         )
         try:
-            spawned_proc = _spawn_mcp_subprocess(
-                config.mcp_server_url, config.data_dir
-            )
+            spawned_proc = _spawn_mcp_subprocess(config.mcp_server_url, config.data_dir)
         except RuntimeError as spawn_err:
             typer.secho(
                 f"Failed to spawn MCP subprocess: {spawn_err}",
@@ -1506,9 +1500,7 @@ def run_pipeline_cmd(
         raise typer.Exit(1)
 
     if _use_mcp():
-        result = _mcp_call_or_exit(
-            lambda: _get_mcp_client().pipeline(obj_id=obj_id)
-        )
+        result = _mcp_call_or_exit(lambda: _get_mcp_client().pipeline(obj_id=obj_id))
         if "error" in result:
             typer.echo(result["error"], err=True)
             raise typer.Exit(1)
@@ -1635,15 +1627,10 @@ def doctor_unlock(
     if dry_run:
         typer.echo("Dry run — no files will be removed.")
         typer.echo(f"  marker: {marker_path} (exists={marker_path.exists()})")
-        typer.echo(
-            f"  rocksdb LOCK: {rocksdb_lock} (exists={rocksdb_lock.exists()})"
-        )
+        typer.echo(f"  rocksdb LOCK: {rocksdb_lock} (exists={rocksdb_lock.exists()})")
         if holder_pid is not None:
             alive = _pid_alive(holder_pid)
-            typer.echo(
-                f"  holder PID: {holder_pid} "
-                f"({'alive' if alive else 'dead'})"
-            )
+            typer.echo(f"  holder PID: {holder_pid} ({'alive' if alive else 'dead'})")
             if holder_cmdline:
                 typer.echo(f"  holder cmdline: {holder_cmdline}")
         raise typer.Exit(0)
@@ -1689,8 +1676,7 @@ def doctor_unlock(
             rocksdb_lock.unlink(missing_ok=True)
             removed.append(str(rocksdb_lock))
         typer.secho(
-            f"Unlocked. No holder PID known; removed: "
-            f"{', '.join(removed) or 'nothing'}",
+            f"Unlocked. No holder PID known; removed: {', '.join(removed) or 'nothing'}",
             fg=typer.colors.GREEN,
         )
         raise typer.Exit(0)
@@ -1703,9 +1689,7 @@ def doctor_unlock(
             and holder_cmdline is not None
             and live_cmdline != holder_cmdline
         )
-        cmdline_unknown = (
-            live_cmdline is None and holder_cmdline is not None
-        )
+        cmdline_unknown = live_cmdline is None and holder_cmdline is not None
         if is_reuse:
             typer.secho(
                 f"PID {holder_pid} is alive but its cmdline does NOT match "
@@ -1727,14 +1711,12 @@ def doctor_unlock(
                 err=True,
             )
             typer.echo(
-                "  If you are sure the marker is stale, run: "
-                "cortex doctor unlock --force",
+                "  If you are sure the marker is stale, run: cortex doctor unlock --force",
                 err=True,
             )
         else:
             typer.secho(
-                f"PID {holder_pid} is still running — refusing to unlock "
-                f"a live holder.",
+                f"PID {holder_pid} is still running — refusing to unlock a live holder.",
                 fg=typer.colors.RED,
                 err=True,
             )
@@ -1757,8 +1739,7 @@ def doctor_unlock(
         raise typer.Exit(1)
 
     typer.secho(
-        f"Unlocked. Holder PID {holder_pid} was dead; removed "
-        f"{marker_path} and {rocksdb_lock}.",
+        f"Unlocked. Holder PID {holder_pid} was dead; removed {marker_path} and {rocksdb_lock}.",
         fg=typer.colors.GREEN,
     )
 
@@ -1777,7 +1758,7 @@ _LAUNCHAGENT_LOG_FILENAMES = (
 )
 
 # Size thresholds for the summary status badge.
-_LOG_SIZE_GREEN_MAX = 10 * 1024 * 1024   # 10 MB
+_LOG_SIZE_GREEN_MAX = 10 * 1024 * 1024  # 10 MB
 _LOG_SIZE_YELLOW_MAX = 100 * 1024 * 1024  # 100 MB
 
 
@@ -1840,9 +1821,7 @@ def _summarize_logs(log_paths: list[Path]) -> None:
         stat = path.stat()
         size_bytes = stat.st_size
         lines = _count_lines(path)
-        mtime = datetime.datetime.fromtimestamp(stat.st_mtime).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
+        mtime = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
         color = _log_status_color(size_bytes)
         label = _log_status_label(size_bytes)
         typer.echo(
@@ -2015,9 +1994,7 @@ def doctor_check() -> None:
     try:
         fts = content.fts_integrity_check()
         if fts["ok"]:
-            typer.echo(
-                f"  FTS5 index: OK ({fts['documents_count']} documents indexed)"
-            )
+            typer.echo(f"  FTS5 index: OK ({fts['documents_count']} documents indexed)")
         else:
             all_ok = False
             typer.secho(
@@ -2042,8 +2019,7 @@ def doctor_check() -> None:
             else:
                 all_ok = False
                 typer.secho(
-                    f"  Reasoner:   WARN — {fixpoint['total_pending']} "
-                    "triples pending inference",
+                    f"  Reasoner:   WARN — {fixpoint['total_pending']} triples pending inference",
                     fg=typer.colors.YELLOW,
                 )
                 typer.echo("              Run `cortex doctor repair` to reach fixpoint.")
@@ -2113,9 +2089,7 @@ def doctor_repair() -> None:
     content = ContentStore(path=config.sqlite_db_path)
     try:
         result = content.fts_rebuild()
-        typer.echo(
-            f"  FTS5 index: rebuilt ({result['documents_count']} documents reindexed)"
-        )
+        typer.echo(f"  FTS5 index: rebuilt ({result['documents_count']} documents reindexed)")
     finally:
         content.close()
 

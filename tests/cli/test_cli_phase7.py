@@ -47,9 +47,7 @@ class TestSetup:
 
     def test_setup_creates_data_dir(self, tmp_path):
         data_dir = tmp_path / "fresh"
-        result = runner.invoke(
-            app, ["setup", "--auto"], env={"CORTEX_DATA_DIR": str(data_dir)}
-        )
+        result = runner.invoke(app, ["setup", "--auto"], env={"CORTEX_DATA_DIR": str(data_dir)})
         assert result.exit_code == 0
         assert data_dir.exists()
 

@@ -89,9 +89,7 @@ class TestKnowledgeObjectSubclasses:
         assert local_names == KNOWLEDGE_SUBCLASSES
 
     @pytest.mark.parametrize("cls_name", sorted(KNOWLEDGE_SUBCLASSES))
-    def test_each_subclass_is_owl_class(
-        self, store: ox.Store, cls_name: str
-    ) -> None:
+    def test_each_subclass_is_owl_class(self, store: ox.Store, cls_name: str) -> None:
         query = f"""
         ASK {{
             cortex:{cls_name} a owl:Class .
@@ -100,9 +98,7 @@ class TestKnowledgeObjectSubclasses:
         assert store.query(f"{PREFIXES}\n{query}")
 
     @pytest.mark.parametrize("cls_name", sorted(KNOWLEDGE_SUBCLASSES))
-    def test_each_subclass_has_label(
-        self, store: ox.Store, cls_name: str
-    ) -> None:
+    def test_each_subclass_has_label(self, store: ox.Store, cls_name: str) -> None:
         query = f"""
         ASK {{
             cortex:{cls_name} rdfs:label ?label .
@@ -262,9 +258,7 @@ class TestClassHierarchy:
         "entity_type",
         ["Technology", "Project", "Pattern", "Concept"],
     )
-    def test_entity_subtype_has_label(
-        self, store: ox.Store, entity_type: str
-    ) -> None:
+    def test_entity_subtype_has_label(self, store: ox.Store, entity_type: str) -> None:
         query = f"""
         ASK {{
             cortex:{entity_type} rdfs:label ?label .
@@ -305,7 +299,7 @@ class TestAdversarialOntologyLoading:
     def test_empty_with_prefixes_only(self) -> None:
         """A Turtle file with only prefix declarations loads cleanly."""
         s = ox.Store()
-        content = b'@prefix cortex: <https://cortex.abbacus.ai/ontology#> .\n'
+        content = b"@prefix cortex: <https://cortex.abbacus.ai/ontology#> .\n"
         with tempfile.NamedTemporaryFile(suffix=".ttl") as f:
             f.write(content)
             f.flush()

@@ -111,11 +111,21 @@ class TestErrorCodes:
 
     def test_unique_codes(self):
         error_classes = [
-            CortexError, ConfigError, ConfigNotFoundError, ConfigPermissionError,
-            StoreError, NotFoundError, SyncError, StoreLockedError,
-            OntologyError, ValidationError,
-            PipelineError, ClassificationError, LLMError,
-            TransportError, AuthenticationError,
+            CortexError,
+            ConfigError,
+            ConfigNotFoundError,
+            ConfigPermissionError,
+            StoreError,
+            NotFoundError,
+            SyncError,
+            StoreLockedError,
+            OntologyError,
+            ValidationError,
+            PipelineError,
+            ClassificationError,
+            LLMError,
+            TransportError,
+            AuthenticationError,
         ]
         codes = [cls.code for cls in error_classes]
         assert len(codes) == len(set(codes)), f"Duplicate codes: {codes}"

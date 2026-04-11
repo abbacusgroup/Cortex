@@ -369,13 +369,9 @@ class TestCortexQueryTrail:
 
         mcp = create_mcp_server(config, include_admin=True)
         result = _call_tool(mcp, "cortex_query_trail")  # no args
-        assert len(result) == 50, (
-            f"default limit should be 50, got {len(result)} entries"
-        )
+        assert len(result) == 50, f"default limit should be 50, got {len(result)} entries"
 
-    def test_default_returns_all_when_fewer_than_50_logged(
-        self, config: CortexConfig
-    ):
+    def test_default_returns_all_when_fewer_than_50_logged(self, config: CortexConfig):
         """When < 50 entries exist, default should return all of them, not 0
         and not exactly 50.
         """
@@ -464,16 +460,12 @@ class TestCortexGraphData:
         mcp = create_mcp_server(config, include_admin=True)
         result = _call_tool(mcp, "cortex_graph_data", project="alpha")
         obj_node_ids = {
-            n["data"]["id"]
-            for n in result["nodes"]
-            if not n["data"]["id"].startswith("entity:")
+            n["data"]["id"] for n in result["nodes"] if not n["data"]["id"].startswith("entity:")
         }
         assert id_a in obj_node_ids
         assert id_b not in obj_node_ids
 
-    def test_invalid_doc_type_falls_back_to_knowledge_object(
-        self, config: CortexConfig
-    ):
+    def test_invalid_doc_type_falls_back_to_knowledge_object(self, config: CortexConfig):
         """Bundle 4 / A11: unknown ``doc_type`` must not crash. The current
         code's else-branch (``graph_store.list_objects`` ~line 573) falls back
         to querying ``cortex:KnowledgeObject`` when the type isn't in
@@ -515,11 +507,11 @@ class TestCortexGraphData:
         """
         mcp = create_mcp_server(config, include_admin=True)
         hostile_inputs = [
-            'with"quote',             # SPARQL string terminator
-            "with'apostrophe",        # alternate delimiter
-            "with\\backslash",        # escape character
-            "with\nnewline",          # whitespace
-            '"; DROP ALL; "',         # injection attempt
+            'with"quote',  # SPARQL string terminator
+            "with'apostrophe",  # alternate delimiter
+            "with\\backslash",  # escape character
+            "with\nnewline",  # whitespace
+            '"; DROP ALL; "',  # injection attempt
         ]
         for hostile in hostile_inputs:
             result = _call_tool(mcp, "cortex_graph_data", project=hostile)
@@ -563,9 +555,7 @@ class TestCortexReadPathTraversal:
             "a" * 10_000,
         ],
     )
-    def test_hostile_obj_id_returns_not_found(
-        self, config: CortexConfig, hostile_id: str
-    ):
+    def test_hostile_obj_id_returns_not_found(self, config: CortexConfig, hostile_id: str):
         mcp = create_mcp_server(config, include_admin=True)
         result = _call_tool(mcp, "cortex_read", obj_id=hostile_id)
         # Should return "Not found: ..." string, never raise or leak data

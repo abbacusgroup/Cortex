@@ -103,28 +103,19 @@ class RetrievalEngine:
         if entity:
             candidates = self._filter_by_entity(candidates, entity)
         if doc_type:
-            candidates = {
-                k: v for k, v in candidates.items()
-                if v.get("type") == doc_type
-            }
+            candidates = {k: v for k, v in candidates.items() if v.get("type") == doc_type}
         if project:
-            candidates = {
-                k: v for k, v in candidates.items()
-                if v.get("project") == project
-            }
+            candidates = {k: v for k, v in candidates.items() if v.get("project") == project}
 
         # Compute combined scores
         results = []
         for _doc_id, cand in candidates.items():
             scores = cand.get("scores", {})
             combined = sum(
-                scores.get(signal, 0.0) * self.weights.get(signal, 0.0)
-                for signal in self.weights
+                scores.get(signal, 0.0) * self.weights.get(signal, 0.0) for signal in self.weights
             )
             cand["score"] = round(combined, 4)
-            cand["score_breakdown"] = {
-                k: round(v, 4) for k, v in scores.items()
-            }
+            cand["score_breakdown"] = {k: round(v, 4) for k, v in scores.items()}
             results.append(cand)
 
         # Sort by combined score (descending)
@@ -149,13 +140,13 @@ class RetrievalEngine:
 
         logger.debug(
             "Hybrid search '%s': %d results in %.1fms",
-            query, len(results), duration_ms,
+            query,
+            len(results),
+            duration_ms,
         )
         return results
 
-    def _semantic_search(
-        self, query: str, limit: int = 60
-    ) -> list[tuple[str, float]]:
+    def _semantic_search(self, query: str, limit: int = 60) -> list[tuple[str, float]]:
         """Find documents by embedding similarity.
 
         Returns:
@@ -218,8 +209,8 @@ class RetrievalEngine:
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=datetime.UTC)
                 age_days = (now - dt).total_seconds() / 86400
-                # Exponential decay: 0 days = 1.0, 7 days ≈ 0.5, 30 days ≈ 0.1
-                score = math.exp(-0.1 * age_days)
+                # Exponential decay: 0 days = 1.0, 7 days ≈ 0.8, 30 days ≈ 0.4
+                score = math.exp(-0.03 * age_days)
                 cand.setdefault("scores", {})["recency"] = score
             except (ValueError, TypeError):
                 cand.setdefault("scores", {})["recency"] = 0.0
@@ -230,10 +221,7 @@ class RetrievalEngine:
         """Filter candidates to only those mentioning a specific entity."""
         # Find entity by name
         entities = self.store.graph.list_entities()
-        entity_ids = [
-            e["id"] for e in entities
-            if e["name"].lower() == entity_name.lower()
-        ]
+        entity_ids = [e["id"] for e in entities if e["name"].lower() == entity_name.lower()]
         if not entity_ids:
             return candidates
 
@@ -242,7 +230,4 @@ class RetrievalEngine:
         for eid in entity_ids:
             mentioning_ids.update(self.store.graph.get_entity_mentions(eid))
 
-        return {
-            k: v for k, v in candidates.items()
-            if k in mentioning_ids
-        }
+        return {k: v for k, v in candidates.items() if k in mentioning_ids}

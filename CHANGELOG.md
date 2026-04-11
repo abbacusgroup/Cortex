@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-04-11
+
+### Fixed
+
+- `cortex status` now prints the actual version from `cortex.__version__` instead of hardcoded "v0.1.0" (P1)
+- `reason.py` no longer crashes with `UnboundLocalError` when `max_iterations=0` (NEW-1)
+- `link.py` `action` field now correctly reports `"created"` vs `"existing"` for entities — `create_entity` returns `(entity_id, created)` tuple (NEW-2)
+- `advanced_reason.py` pattern detection no longer re-queries `list_entities()` on every match — single fetch with dict lookup (NEW-3)
+- `cli/install.py` line length lint violation fixed (NEW-4)
+- MCP server docstring updated from "17 tools" to "22 tools" with correct admin tool list and localhost HTTP gating description (P8)
+- `test_distribution.py` tool list updated to all 22 tools (P7)
+
+### Added
+
+- **LICENSE file** — Business Source License 1.1 (Licensor: Abbacus Group, Change Date: 2030-04-11, Change License: MIT, Additional Use Grant: internal business purposes)
+- **PyPI metadata** — `license`, `license-files`, `keywords`, `classifiers`, and `[project.urls]` added to `pyproject.toml`
+- **5 missing tools documented in `llms.txt`** — `cortex_query_trail`, `cortex_graph_data`, `cortex_list_entities`, `cortex_debug_sessions`, `cortex_debug_memory` (P6)
+- **README badges** — CI, PyPI version, Python versions, License
+- **README dashboard screenshots** — home page and knowledge graph views
+- **README privacy section** — documents local-only storage and LLM provider data flow
+- **README license section** — names BSL 1.1 with terms summary
+- **README trademark notice** — Abbacus Group disclaimer
+- **CHANGELOG compare URLs** for version history
+
+### Changed
+
+- **`litellm` is now a required dependency** — moved from `[project.optional-dependencies]` to core `dependencies` so all installs ship with LLM classification and reasoning support (P2)
+- **Homebrew formula license** — changed from `"MIT"` to `"BUSL-1.1"` (NEW-5)
+- **Code formatting** — `ruff format` applied to 66 files
+
+### Removed
+
+- Stale `.cortex-data/` entry from `.gitignore` (legacy data dir name)
+- Personal `dev-brain` vault path from `.env.example` and `REIMPORT_INSTRUCTIONS.md`
+- Stale 0.1.0 and 0.2.0 build artifacts from `dist/`
+- `[llm]` optional dependency extra (litellm is now required)
+
 ## [0.2.0] — 2026-04-09
 
 ### Added — Release
@@ -500,3 +537,7 @@ If you're upgrading from a pre-2026-04-07 install:
 > limitation is resolved by Phase 4 (Bundle 7). All three transports
 > (MCP, dashboard, REST API) plus the CLI now route through the
 > canonical MCP HTTP server.
+
+[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/abbacusgroup/Cortex/compare/v0.2.0...v0.2.2
+[0.2.0]: https://github.com/abbacusgroup/Cortex/releases/tag/v0.2.0

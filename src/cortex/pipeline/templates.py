@@ -92,9 +92,14 @@ IDEA_TEMPLATE = CaptureTemplate(
 
 # Template registry
 TEMPLATES: dict[str, CaptureTemplate] = {
-    t.name: t for t in [
-        SESSION_TEMPLATE, FIX_TEMPLATE, DECISION_TEMPLATE,
-        LESSON_TEMPLATE, RESEARCH_TEMPLATE, IDEA_TEMPLATE,
+    t.name: t
+    for t in [
+        SESSION_TEMPLATE,
+        FIX_TEMPLATE,
+        DECISION_TEMPLATE,
+        LESSON_TEMPLATE,
+        RESEARCH_TEMPLATE,
+        IDEA_TEMPLATE,
     ]
 }
 
