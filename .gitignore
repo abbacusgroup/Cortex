@@ -37,3 +37,5 @@ htmlcov/
 # live in ~/Lab/<name>_<DATE>.md (outside the repo) per workspace rule.
 # A stray tasks/ directory means something escaped that rule.
 tasks/
+.mcpregistry_github_token
+.mcpregistry_registry_token
