@@ -130,21 +130,15 @@ class TestRunPipeline:
     """Direct run_pipeline() tests."""
 
     def test_returns_pipeline_stages_dict(self, orchestrator, store):
-        obj_id = store.create(
-            obj_type="idea", title="Manual", content="test"
-        )
+        obj_id = store.create(obj_type="idea", title="Manual", content="test")
         result = orchestrator.run_pipeline(obj_id)
 
         assert "pipeline_stages" in result
         assert isinstance(result["pipeline_stages"], dict)
 
-    def test_stage_failure_doesnt_block_later_stages(
-        self, orchestrator, store
-    ):
+    def test_stage_failure_doesnt_block_later_stages(self, orchestrator, store):
         """If normalize fails, enrich and reason still run."""
-        obj_id = store.create(
-            obj_type="lesson", title="Resilience test", content="data"
-        )
+        obj_id = store.create(obj_type="lesson", title="Resilience test", content="data")
         result = orchestrator.run_pipeline(obj_id)
 
         stages = result["pipeline_stages"]
@@ -154,16 +148,12 @@ class TestRunPipeline:
 
     def test_status_complete_when_all_succeed(self, orchestrator, store):
         """When all stages succeed, overall status is 'complete'."""
-        obj_id = store.create(
-            obj_type="idea", title="Happy path", content="everything works"
-        )
+        obj_id = store.create(obj_type="idea", title="Happy path", content="everything works")
         result = orchestrator.run_pipeline(obj_id)
 
         stages = result["pipeline_stages"]
         # With no LLM, normalize falls back gracefully; enrich/reason work
-        all_ok = all(
-            s.get("status") != "failed" for s in stages.values()
-        )
+        all_ok = all(s.get("status") != "failed" for s in stages.values())
         if all_ok:
             assert result["status"] == "complete"
 
@@ -172,9 +162,7 @@ class TestRunPipeline:
         # Delete the object from content store to cause enrich to return
         # not_found (which isn't "failed" per the status check). Instead,
         # we test the logic by checking what the orchestrator produces.
-        obj_id = store.create(
-            obj_type="fix", title="Partial test", content="x"
-        )
+        obj_id = store.create(obj_type="fix", title="Partial test", content="x")
         result = orchestrator.run_pipeline(obj_id)
 
         # Status should be either "complete" or "partial"
@@ -184,23 +172,29 @@ class TestRunPipeline:
 class TestCaptureWithPreClassification:
     def test_summary_stored_at_ingest(self, orchestrator, store):
         result = orchestrator.capture(
-            title="Pre-classified", content="body",
-            summary="A summary", run_pipeline=False,
+            title="Pre-classified",
+            content="body",
+            summary="A summary",
+            run_pipeline=False,
         )
         doc = store.content.get(result["id"])
         assert doc["summary"] == "A summary"
 
     def test_confidence_stored(self, orchestrator, store):
         result = orchestrator.capture(
-            title="Test", content="body",
-            summary="A summary", confidence=0.9, run_pipeline=False,
+            title="Test",
+            content="body",
+            summary="A summary",
+            confidence=0.9,
+            run_pipeline=False,
         )
         doc = store.content.get(result["id"])
         assert doc["confidence"] == 0.9
 
     def test_entities_used_in_pipeline(self, orchestrator, store):
         result = orchestrator.capture(
-            title="Entity test", content="Using Python and FastAPI",
+            title="Entity test",
+            content="Using Python and FastAPI",
             summary="Python FastAPI usage",
             entities=[
                 {"name": "Python", "type": "technology"},

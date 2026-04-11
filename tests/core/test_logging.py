@@ -33,6 +33,7 @@ class TestJSONFormatter:
             raise ValueError("boom")
         except ValueError:
             import sys
+
             exc_info = sys.exc_info()
 
         record = logging.LogRecord(
@@ -146,10 +147,7 @@ class TestQuietNoisyLoggers:
         # Manually drop the level to verify the second call re-applies.
         logging.getLogger("mcp.server.streamable_http").setLevel(logging.DEBUG)
         setup_logging()  # second call — should re-quiet the logger
-        assert (
-            logging.getLogger("mcp.server.streamable_http").level
-            == logging.WARNING
-        )
+        assert logging.getLogger("mcp.server.streamable_http").level == logging.WARNING
 
 
 class TestQuietHttpLoggers:
@@ -244,9 +242,7 @@ class TestQuietHttpLoggers:
         # Manually drop the level to verify the second call re-applies.
         logging.getLogger("uvicorn.access").setLevel(logging.DEBUG)
         setup_logging()  # second call — should re-quiet the logger
-        assert (
-            logging.getLogger("uvicorn.access").level == logging.WARNING
-        )
+        assert logging.getLogger("uvicorn.access").level == logging.WARNING
 
     def test_uvicorn_access_has_min_level_filter(self, monkeypatch):
         """``setup_logging`` must attach a ``_MinLevelFilter`` to the
@@ -267,9 +263,7 @@ class TestQuietHttpLoggers:
 
         for name in ("uvicorn", "uvicorn.access"):
             logger = logging.getLogger(name)
-            filters = [
-                f for f in logger.filters if isinstance(f, _MinLevelFilter)
-            ]
+            filters = [f for f in logger.filters if isinstance(f, _MinLevelFilter)]
             assert len(filters) == 1, f"{name} should have exactly 1 filter"
             assert filters[0]._min_level == logging.WARNING
 
@@ -325,10 +319,7 @@ class TestQuietHttpLoggers:
         setup_logging()
         setup_logging()
 
-        cortex_filters = [
-            f for f in access_logger.filters
-            if isinstance(f, _MinLevelFilter)
-        ]
+        cortex_filters = [f for f in access_logger.filters if isinstance(f, _MinLevelFilter)]
         assert len(cortex_filters) == 1
 
     def test_uvicorn_filter_respects_debug_http(self, monkeypatch):
@@ -345,6 +336,4 @@ class TestQuietHttpLoggers:
 
         for name in ("uvicorn", "uvicorn.access"):
             logger = logging.getLogger(name)
-            assert not any(
-                isinstance(f, _MinLevelFilter) for f in logger.filters
-            )
+            assert not any(isinstance(f, _MinLevelFilter) for f in logger.filters)

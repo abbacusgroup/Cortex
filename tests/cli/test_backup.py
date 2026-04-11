@@ -36,9 +36,7 @@ def data_dir(tmp_path: Path) -> Path:
     db_path = d / "cortex.db"
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute(
-        "CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT, created_at TEXT)"
-    )
+    conn.execute("CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT, created_at TEXT)")
     for i in range(5):
         conn.execute(
             "INSERT INTO documents VALUES (?, ?, ?)",
@@ -175,9 +173,7 @@ class TestCheckpointSqlite:
     def test_checkpoints_wal(self, config: CortexConfig):
         # Write some data to force WAL activity
         conn = sqlite3.connect(str(config.sqlite_db_path))
-        conn.execute(
-            "INSERT INTO documents VALUES ('extra', 'Extra', '2026-04-09')"
-        )
+        conn.execute("INSERT INTO documents VALUES ('extra', 'Extra', '2026-04-09')")
         conn.commit()
         conn.close()
 
@@ -246,17 +242,13 @@ class TestDoBackup:
             names = tar.getnames()
         assert ".env" not in names
 
-    def test_archive_excludes_rocksdb_old_logs(
-        self, config: CortexConfig, tmp_path: Path
-    ):
+    def test_archive_excludes_rocksdb_old_logs(self, config: CortexConfig, tmp_path: Path):
         result = do_backup(config, output=tmp_path / "out")
         with tarfile.open(result, "r:gz") as tar:
             names = tar.getnames()
         assert not any("LOG.old" in n for n in names)
 
-    def test_archive_includes_rocksdb_log(
-        self, config: CortexConfig, tmp_path: Path
-    ):
+    def test_archive_includes_rocksdb_log(self, config: CortexConfig, tmp_path: Path):
         result = do_backup(config, output=tmp_path / "out")
         with tarfile.open(result, "r:gz") as tar:
             names = tar.getnames()
@@ -267,9 +259,7 @@ class TestDoBackup:
         result = do_backup(config, output=custom)
         assert result.parent == custom
 
-    def test_warns_when_server_running(
-        self, config: CortexConfig, tmp_path: Path, capsys
-    ):
+    def test_warns_when_server_running(self, config: CortexConfig, tmp_path: Path, capsys):
         with patch("cortex.db.graph_store._pid_alive", return_value=True):
             do_backup(config, output=tmp_path / "out")
         captured = capsys.readouterr()
@@ -299,9 +289,7 @@ class TestDoBackup:
 
 
 class TestDoRestore:
-    def test_restores_from_archive(
-        self, config: CortexConfig, archive_path: Path
-    ):
+    def test_restores_from_archive(self, config: CortexConfig, archive_path: Path):
         # Delete current stores to simulate fresh restore
         config.sqlite_db_path.unlink()
         import shutil
@@ -314,27 +302,21 @@ class TestDoRestore:
         assert config.graph_db_path.is_dir()
         assert (config.graph_db_path / "CURRENT").exists()
 
-    def test_refuses_when_server_running(
-        self, config: CortexConfig, archive_path: Path
-    ):
+    def test_refuses_when_server_running(self, config: CortexConfig, archive_path: Path):
         with (
             patch("cortex.db.graph_store._pid_alive", return_value=True),
             pytest.raises(typer.Exit),
         ):
             do_restore(config, archive_path)
 
-    def test_creates_pre_restore(
-        self, config: CortexConfig, archive_path: Path
-    ):
+    def test_creates_pre_restore(self, config: CortexConfig, archive_path: Path):
         do_restore(config, archive_path)
         pre = config.data_dir / ".pre-restore"
         assert pre.exists()
         assert (pre / "cortex.db").exists()
         assert (pre / "graph.db").is_dir()
 
-    def test_removes_lock_files(
-        self, config: CortexConfig, archive_path: Path, tmp_path: Path
-    ):
+    def test_removes_lock_files(self, config: CortexConfig, archive_path: Path, tmp_path: Path):
         # Create a tainted archive that includes lock files
         tainted = tmp_path / "tainted.tar.gz"
         with tarfile.open(tainted, "w:gz") as tar:
@@ -386,9 +368,7 @@ class TestDoRestore:
         with pytest.raises(typer.Exit):
             do_restore(config, bad)
 
-    def test_path_traversal_rejected(
-        self, config: CortexConfig, tmp_path: Path
-    ):
+    def test_path_traversal_rejected(self, config: CortexConfig, tmp_path: Path):
         bad = tmp_path / "traversal.tar.gz"
         with tarfile.open(bad, "w:gz") as tar:
             import io
@@ -402,9 +382,7 @@ class TestDoRestore:
         with pytest.raises(typer.Exit):
             do_restore(config, bad)
 
-    def test_reports_doc_count(
-        self, config: CortexConfig, archive_path: Path, capsys
-    ):
+    def test_reports_doc_count(self, config: CortexConfig, archive_path: Path, capsys):
         do_restore(config, archive_path)
         captured = capsys.readouterr()
         assert "Documents: 5" in captured.out

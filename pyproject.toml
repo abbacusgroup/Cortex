@@ -1,12 +1,28 @@
 [project]
 name = "abbacus-cortex"
-version = "0.2.1"
+version = "0.2.2"
 description = "Cognitive knowledge system with formal ontology, reasoning, and intelligence serving"
 readme = "README.md"
 authors = [
     { name = "Fabrizzio Silveira", email = "74255714+grayisnotacolor@users.noreply.github.com" }
 ]
+license = "BUSL-1.1"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+keywords = ["knowledge-graph", "knowledge-management", "mcp", "reasoning", "ontology", "rdf", "ai", "semantic-search", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Database :: Database Engines/Servers",
+    "Typing :: Typed",
+]
+
 dependencies = [
     # Graph / Ontology
     "pyoxigraph>=0.4",
@@ -27,11 +43,19 @@ dependencies = [
     "mcp>=1.6",
     # HTTP client
     "httpx>=0.28",
+    # LLM (provider-agnostic: Anthropic, OpenAI, Ollama, etc.)
+    "litellm>=1.60",
 ]
+
+[project.urls]
+Homepage = "https://github.com/abbacusgroup/Cortex"
+Repository = "https://github.com/abbacusgroup/Cortex"
+Documentation = "https://github.com/abbacusgroup/Cortex#readme"
+Changelog = "https://github.com/abbacusgroup/Cortex/blob/main/CHANGELOG.md"
+"Bug Tracker" = "https://github.com/abbacusgroup/Cortex/issues"
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers>=3.4"]
-llm = ["litellm>=1.60"]
 
 [project.scripts]
 cortex = "cortex.cli.main:app"
@@ -57,11 +81,12 @@ build-backend = "uv_build"
 build-backend.module-name = "cortex"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "benchmarks"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
 markers = [
     "slow: end-to-end tests that spawn subprocesses (skipped in fast loops)",
+    "bench: benchmark suite (run with -m bench)",
 ]
 
 [tool.ruff]

@@ -91,7 +91,7 @@ class TestPatterns:
 
     def test_three_fixes_same_entity_detected(self, store, reasoner):
         """3 recent fixes mentioning one entity -> systemic_issue."""
-        entity_id = store.create_entity(name="AuthService", entity_type="technology")
+        entity_id, _ = store.create_entity(name="AuthService", entity_type="technology")
         for i in range(3):
             fix_id = _create(
                 store,
@@ -110,7 +110,7 @@ class TestPatterns:
 
     def test_below_threshold_not_detected(self, store, reasoner):
         """Only 2 fixes (below threshold=3) -> no pattern."""
-        entity_id = store.create_entity(name="CacheLayer", entity_type="technology")
+        entity_id, _ = store.create_entity(name="CacheLayer", entity_type="technology")
         for i in range(2):
             fix_id = _create(
                 store,
@@ -125,7 +125,7 @@ class TestPatterns:
 
     def test_old_fixes_outside_window(self, store, reasoner):
         """3 fixes but older than window -> not detected."""
-        entity_id = store.create_entity(name="OldModule", entity_type="technology")
+        entity_id, _ = store.create_entity(name="OldModule", entity_type="technology")
         for i in range(3):
             fix_id = _create(
                 store,
@@ -183,7 +183,7 @@ class TestGaps:
 
     def test_fixes_without_lessons(self, store, reasoner):
         """Entity with fixes but no lessons -> missing_lessons."""
-        entity_id = store.create_entity(name="DBPool", entity_type="technology")
+        entity_id, _ = store.create_entity(name="DBPool", entity_type="technology")
         fix_id = _create(store, obj_type="fix", title="Fix pool leak")
         store.add_mention(obj_id=fix_id, entity_id=entity_id)
 
@@ -195,7 +195,7 @@ class TestGaps:
 
     def test_fixes_with_lessons_no_gap(self, store, reasoner):
         """Entity with both fixes and lessons -> no gap."""
-        entity_id = store.create_entity(name="DBPool", entity_type="technology")
+        entity_id, _ = store.create_entity(name="DBPool", entity_type="technology")
         fix_id = _create(store, obj_type="fix", title="Fix pool leak")
         lesson_id = _create(store, obj_type="lesson", title="Pool sizing matters")
         store.add_mention(obj_id=fix_id, entity_id=entity_id)

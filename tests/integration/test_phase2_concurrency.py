@@ -232,9 +232,7 @@ class TestCliConflictBehavior:
     (it's documented as expected).
     """
 
-    def test_cli_init_fails_when_mcp_http_server_holds_lock(
-        self, mcp_http_server, tmp_path
-    ):
+    def test_cli_init_fails_when_mcp_http_server_holds_lock(self, mcp_http_server, tmp_path):
         import os
 
         _url, _proc = mcp_http_server
@@ -253,18 +251,14 @@ class TestCliConflictBehavior:
             f"got rc={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
         )
         combined = result.stdout + result.stderr
-        assert "locked" in combined.lower(), (
-            f"Expected lock error, got: {combined!r}"
-        )
+        assert "locked" in combined.lower(), f"Expected lock error, got: {combined!r}"
         assert "Traceback" not in combined
 
 
 @pytest.mark.xdist_group(name="phase2_concurrency")
 class TestMcpHttpServerCrashRecovery:
     @pytest.mark.asyncio
-    async def test_capture_from_mcp_visible_in_dashboard(
-        self, mcp_http_server, tmp_path: Path
-    ):
+    async def test_capture_from_mcp_visible_in_dashboard(self, mcp_http_server, tmp_path: Path):
         """Phase 2.I: write via the MCP HTTP client, then start the dashboard
         as a subprocess pointing at the same MCP server, and verify the
         captured object appears in the dashboard's /api/graph-data response.
@@ -323,9 +317,7 @@ class TestMcpHttpServerCrashRecovery:
             deadline = time.time() + 15
             while time.time() < deadline:
                 try:
-                    urllib.request.urlopen(
-                        f"http://127.0.0.1:{dash_port}/", timeout=1
-                    )
+                    urllib.request.urlopen(f"http://127.0.0.1:{dash_port}/", timeout=1)
                     break
                 except (urllib.error.URLError, OSError):
                     time.sleep(0.2)
@@ -333,8 +325,7 @@ class TestMcpHttpServerCrashRecovery:
                 stdout = dash_proc.stdout.read() if dash_proc.stdout else ""
                 stderr = dash_proc.stderr.read() if dash_proc.stderr else ""
                 raise TimeoutError(
-                    f"Dashboard did not start.\n"
-                    f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                    f"Dashboard did not start.\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
                 )
 
             # Hit /api/graph-data and verify the new object is in the result
@@ -358,9 +349,7 @@ class TestMcpHttpServerCrashRecovery:
                 dash_proc.wait()
 
     @pytest.mark.asyncio
-    async def test_client_gets_clean_error_after_server_killed(
-        self, tmp_path: Path
-    ):
+    async def test_client_gets_clean_error_after_server_killed(self, tmp_path: Path):
         """Kill the MCP server mid-session; the client should raise a clean
         connection error, not a Python traceback."""
         import os
@@ -497,9 +486,7 @@ def _spawn_dashboard(
     ready = False
     while time.time() < deadline:
         try:
-            urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/", timeout=1
-            )
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1)
             ready = True
             break
         except (urllib.error.URLError, OSError):
@@ -579,9 +566,7 @@ class TestAdminToolsExcludedOnNonLocalhost:
         if hasattr(_cfg_mod, "_cached_config"):
             _cfg_mod._cached_config = None  # type: ignore[assignment]
 
-    def test_nonlocalhost_host_excludes_admin_tools(
-        self, monkeypatch, tmp_path: Path
-    ):
+    def test_nonlocalhost_host_excludes_admin_tools(self, monkeypatch, tmp_path: Path):
         self._isolated_data_dir(monkeypatch, tmp_path)
         from cortex.transport.mcp import server as mcp_server
 
@@ -600,15 +585,12 @@ class TestAdminToolsExcludedOnNonLocalhost:
             captured["kwargs"] = kwargs
             return mcp
 
-        monkeypatch.setattr(
-            mcp_server, "create_mcp_server", spy_create_and_patch_run
-        )
+        monkeypatch.setattr(mcp_server, "create_mcp_server", spy_create_and_patch_run)
         # 192.0.2.1 is RFC 5737 TEST-NET-1 — guaranteed documentation-only
         mcp_server.run_http(host="192.0.2.1", port=12345)
 
         assert captured["kwargs"].get("include_admin") is False, (
-            f"non-localhost host must force include_admin=False, "
-            f"got kwargs={captured['kwargs']}"
+            f"non-localhost host must force include_admin=False, got kwargs={captured['kwargs']}"
         )
         assert captured.get("run_called"), "mcp.run should still be invoked"
 
@@ -625,13 +607,9 @@ class TestAdminToolsExcludedOnNonLocalhost:
             "cortex_reason",
         }
         leaked = tool_names & admin_tools
-        assert not leaked, (
-            f"admin tools leaked in non-localhost mode: {sorted(leaked)}"
-        )
+        assert not leaked, f"admin tools leaked in non-localhost mode: {sorted(leaked)}"
 
-    def test_localhost_host_includes_admin_tools(
-        self, monkeypatch, tmp_path: Path
-    ):
+    def test_localhost_host_includes_admin_tools(self, monkeypatch, tmp_path: Path):
         """Regression guard: when bound to 127.0.0.1, admin tools ARE
         registered. Positive pair for the negative test above.
         """
@@ -677,9 +655,7 @@ class TestDashboardDoesNotOpenGraphDb:
     """
 
     @pytest.mark.asyncio
-    async def test_only_mcp_server_holds_graph_db(
-        self, mcp_http_server, tmp_path: Path
-    ):
+    async def test_only_mcp_server_holds_graph_db(self, mcp_http_server, tmp_path: Path):
         import urllib.request
 
         url, mcp_proc = mcp_http_server
@@ -687,17 +663,13 @@ class TestDashboardDoesNotOpenGraphDb:
         # are open on the MCP server side. 15s timeout under xdist
         # contention (see Bundle 9 / F.1 fix).
         client = CortexMCPClient(url, timeout_seconds=60.0)
-        await client.capture(
-            title="lsof seed", content="ensure db is touched", obj_type="idea"
-        )
+        await client.capture(title="lsof seed", content="ensure db is touched", obj_type="idea")
 
         dash_url, dash_proc = _spawn_dashboard(tmp_path, url)
         try:
             # Drive some traffic through the dashboard so it definitely
             # exercises its MCP client path.
-            urllib.request.urlopen(
-                f"{dash_url}/api/graph-data", timeout=5
-            )
+            urllib.request.urlopen(f"{dash_url}/api/graph-data", timeout=5)
 
             # Resolve the actual graph.db path inside tmp_path
             graph_db = tmp_path / "graph.db"
@@ -765,15 +737,12 @@ class TestHighConcurrencyStress:
         )
         failures = [r for r in results if isinstance(r, Exception)]
         assert not failures, (
-            f"expected 0 failures over 30 concurrent calls, got {len(failures)}: "
-            f"{failures[:3]}"
+            f"expected 0 failures over 30 concurrent calls, got {len(failures)}: {failures[:3]}"
         )
         assert all(isinstance(r, list) for r in results)
 
     @pytest.mark.asyncio
-    async def test_no_orphan_markers_during_concurrent_run(
-        self, mcp_http_server, tmp_path: Path
-    ):
+    async def test_no_orphan_markers_during_concurrent_run(self, mcp_http_server, tmp_path: Path):
         """While a client hammers the server, only ONE marker should exist:
         the MCP server's own. No orphan markers should appear from the
         client calls (the client never opens the store directly).
@@ -802,9 +771,7 @@ class TestHighConcurrencyStress:
         # Still only one marker, still pointing at the MCP server, and no
         # orphan *.lock files anywhere in the data dir
         all_markers = sorted(tmp_path.rglob("*.lock"))
-        assert all_markers == [marker_path], (
-            f"orphan markers appeared: {all_markers}"
-        )
+        assert all_markers == [marker_path], f"orphan markers appeared: {all_markers}"
         after = _json.loads(marker_path.read_text())
         assert after["pid"] == mcp_proc.pid
 
@@ -825,9 +792,7 @@ class TestDashboardSurvivesMcpCrashAndRestart:
             dash_url, dash_proc = _spawn_dashboard(tmp_path, mcp_url)
 
             # Sanity: dashboard works initially
-            with urllib.request.urlopen(
-                f"{dash_url}/api/graph-data", timeout=5
-            ) as resp:
+            with urllib.request.urlopen(f"{dash_url}/api/graph-data", timeout=5) as resp:
                 assert resp.status == 200
 
             # Kill the MCP server
@@ -838,9 +803,7 @@ class TestDashboardSurvivesMcpCrashAndRestart:
             status_code: int | None = None
             body = ""
             try:
-                with urllib.request.urlopen(
-                    f"{dash_url}/api/graph-data", timeout=5
-                ) as resp:
+                with urllib.request.urlopen(f"{dash_url}/api/graph-data", timeout=5) as resp:
                     status_code = resp.status
                     body = resp.read().decode()
             except urllib.error.HTTPError as e:
@@ -875,9 +838,7 @@ class TestDashboardSurvivesMcpCrashAndRestart:
             dash_url, dash_proc = _spawn_dashboard(tmp_path, mcp_url)
 
             # Sanity: initial request works
-            with urllib.request.urlopen(
-                f"{dash_url}/api/graph-data", timeout=5
-            ) as resp:
+            with urllib.request.urlopen(f"{dash_url}/api/graph-data", timeout=5) as resp:
                 assert resp.status == 200
 
             # Kill MCP server
@@ -889,20 +850,15 @@ class TestDashboardSurvivesMcpCrashAndRestart:
 
             # Restart on the same port
             mcp_proc = None  # type: ignore[assignment]
-            _mcp_url2, mcp_proc = _spawn_mcp_http_server(
-                tmp_path, port=port
-            )
+            _mcp_url2, mcp_proc = _spawn_mcp_http_server(tmp_path, port=port)
 
             # Dashboard should now succeed again. The per-call session
             # pattern in transport/mcp/client.py means the dashboard
             # opens a fresh MCP session for each request, so the restart
             # is transparent.
-            with urllib.request.urlopen(
-                f"{dash_url}/api/graph-data", timeout=10
-            ) as resp:
+            with urllib.request.urlopen(f"{dash_url}/api/graph-data", timeout=10) as resp:
                 assert resp.status == 200, (
-                    f"dashboard did not recover after MCP restart: "
-                    f"status={resp.status}"
+                    f"dashboard did not recover after MCP restart: status={resp.status}"
                 )
         finally:
             if dash_proc is not None:

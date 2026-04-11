@@ -71,26 +71,20 @@ class TestDoctorUnlock:
         combined = result.output + (result.stderr or "")
         assert "nothing to unlock" in combined.lower()
 
-    def test_unlock_with_stale_marker_removes_marker_and_rocksdb_lock(
-        self, tmp_path: Path
-    ):
+    def test_unlock_with_stale_marker_removes_marker_and_rocksdb_lock(self, tmp_path: Path):
         """Dead holder PID → both files removed, exit 0."""
         marker, rocksdb_lock = _write_stale_marker(tmp_path)
         assert marker.exists()
         assert rocksdb_lock.exists()
 
         result = runner.invoke(app, ["doctor", "unlock"])
-        assert result.exit_code == 0, (
-            f"unexpected exit: {result.output} {result.stderr}"
-        )
+        assert result.exit_code == 0, f"unexpected exit: {result.output} {result.stderr}"
         assert not marker.exists(), "marker should be removed"
         assert not rocksdb_lock.exists(), "rocksdb LOCK should be removed"
         combined = result.output + (result.stderr or "")
         assert "Unlocked" in combined
 
-    def test_unlock_refuses_to_unlock_living_holder(
-        self, tmp_path: Path
-    ):
+    def test_unlock_refuses_to_unlock_living_holder(self, tmp_path: Path):
         """Live holder (this process's own PID) → refuse, exit 1."""
         # Write a marker claiming THIS process is the holder with a matching
         # cmdline so the PID-reuse detection also matches.
@@ -150,9 +144,7 @@ class TestDoctorUnlock:
         rocksdb_lock.write_text("")
 
         result = runner.invoke(app, ["doctor", "unlock", "--force"])
-        assert result.exit_code == 0, (
-            f"unexpected exit: {result.output} {result.stderr}"
-        )
+        assert result.exit_code == 0, f"unexpected exit: {result.output} {result.stderr}"
         assert not marker.exists()
         assert not rocksdb_lock.exists()
         combined = result.output + (result.stderr or "")
@@ -209,9 +201,7 @@ class TestDoctorUnlock:
         assert "does NOT match" in combined or "reuse" in combined.lower()
         assert "--force" in combined
 
-    def test_unlock_cmdline_unknown_refuses_with_clear_message(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_unlock_cmdline_unknown_refuses_with_clear_message(self, tmp_path: Path, monkeypatch):
         """Bundle 10.7 / B.2: when ``_process_cmdline`` returns None for a
         live holder PID, ``doctor unlock`` must refuse and clearly say
         the cmdline could not be verified (not a generic "still running"
@@ -242,9 +232,7 @@ class TestDoctorUnlock:
         result = runner.invoke(app, ["doctor", "unlock"])
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")
-        assert "cmdline could NOT be read" in combined or (
-            "cannot verify" in combined.lower()
-        )
+        assert "cmdline could NOT be read" in combined or ("cannot verify" in combined.lower())
         assert "--force" in combined
         # Marker must NOT have been removed
         assert marker.exists()
@@ -265,16 +253,12 @@ class TestDoctorLogs:
         """Default view shows size, line count, mtime, and status badge
         for each existing log file, and reports missing ones.
         """
-        self._write_log(
-            tmp_path, "mcp-http.log", "line1\nline2\nline3\n"
-        )
+        self._write_log(tmp_path, "mcp-http.log", "line1\nline2\nline3\n")
         self._write_log(tmp_path, "mcp-http.err", "error1\nerror2\n")
         # dashboard.log and dashboard.err intentionally missing
 
         result = runner.invoke(app, ["doctor", "logs"])
-        assert result.exit_code == 0, (
-            f"unexpected exit: {result.output} {result.stderr}"
-        )
+        assert result.exit_code == 0, f"unexpected exit: {result.output} {result.stderr}"
         out = result.output
         # Both present files are listed with a status and line count
         assert "mcp-http.log" in out
@@ -295,9 +279,7 @@ class TestDoctorLogs:
         self._write_log(tmp_path, "mcp-http.log", content)
 
         result = runner.invoke(app, ["doctor", "logs", "--tail", "3"])
-        assert result.exit_code == 0, (
-            f"unexpected exit: {result.output} {result.stderr}"
-        )
+        assert result.exit_code == 0, f"unexpected exit: {result.output} {result.stderr}"
         out = result.output
         # Header with the tailed path
         assert "mcp-http.log" in out
@@ -318,9 +300,7 @@ class TestDoctorLogs:
         assert log.stat().st_size > 0
 
         result = runner.invoke(app, ["doctor", "logs", "--rotate"])
-        assert result.exit_code == 0, (
-            f"unexpected exit: {result.output} {result.stderr}"
-        )
+        assert result.exit_code == 0, f"unexpected exit: {result.output} {result.stderr}"
         # Live file is empty
         assert log.exists()
         assert log.stat().st_size == 0
@@ -356,20 +336,14 @@ class TestDoctorLogs:
         without raising.
         """
         result = runner.invoke(app, ["doctor", "logs"])
-        assert result.exit_code == 0, (
-            f"summary failed: {result.output} {result.stderr}"
-        )
+        assert result.exit_code == 0, f"summary failed: {result.output} {result.stderr}"
         assert "(not present)" in result.output
 
         result = runner.invoke(app, ["doctor", "logs", "--tail", "10"])
-        assert result.exit_code == 0, (
-            f"tail failed: {result.output} {result.stderr}"
-        )
+        assert result.exit_code == 0, f"tail failed: {result.output} {result.stderr}"
 
         result = runner.invoke(app, ["doctor", "logs", "--rotate"])
-        assert result.exit_code == 0, (
-            f"rotate failed: {result.output} {result.stderr}"
-        )
+        assert result.exit_code == 0, f"rotate failed: {result.output} {result.stderr}"
         # Rotate with nothing to do should report so
         assert "not present" in result.output or "Skipped" in result.output
 

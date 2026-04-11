@@ -1,8 +1,9 @@
-"""Cortex MCP server — 17 tools for AI agent integration.
+"""Cortex MCP server — 22 tools for AI agent integration.
 
 Provides both stdio and StreamableHTTP transports.
-Admin tools (status, synthesize, delete, export, safety_check, reason) are
-only exposed on stdio, not HTTP.
+Admin tools (status, synthesize, delete, export, safety_check, reason,
+list_entities, query_trail, graph_data, debug_sessions, debug_memory) are
+exposed on stdio and on localhost HTTP only.
 """
 
 from __future__ import annotations
@@ -36,19 +37,21 @@ from cortex.services.llm import LLMClient
 logger = get_logger("transport.mcp")
 
 # Admin tool names — gated by include_admin (true for stdio + localhost mcp-http).
-ADMIN_TOOLS = frozenset({
-    "cortex_status",
-    "cortex_synthesize",
-    "cortex_delete",
-    "cortex_export",
-    "cortex_safety_check",
-    "cortex_reason",
-    "cortex_query_trail",
-    "cortex_graph_data",
-    "cortex_list_entities",
-    "cortex_debug_sessions",
-    "cortex_debug_memory",
-})
+ADMIN_TOOLS = frozenset(
+    {
+        "cortex_status",
+        "cortex_synthesize",
+        "cortex_delete",
+        "cortex_export",
+        "cortex_safety_check",
+        "cortex_reason",
+        "cortex_query_trail",
+        "cortex_graph_data",
+        "cortex_list_entities",
+        "cortex_debug_sessions",
+        "cortex_debug_memory",
+    }
+)
 
 # Maximum result size caps for the new dashboard-aggregation tools.
 QUERY_TRAIL_MAX_LIMIT = 1000
@@ -494,6 +497,7 @@ def create_mcp_server(
         def cortex_reason() -> dict[str, Any]:
             """Run advanced reasoning: contradictions, patterns, gaps, staleness."""
             from cortex.pipeline.advanced_reason import AdvancedReasoner
+
             reasoner = AdvancedReasoner(store, llm)
             return reasoner.run_all()
 
@@ -561,8 +565,15 @@ def create_mcp_server(
                         },
                     }
                 )
+            page_obj_ids = {obj.get("id", "") for obj in objects}
+
+            for obj in objects:
+                obj_id = obj.get("id", "")
                 for rel in store.get_relationships(obj_id):
                     if rel["direction"] != "outgoing":
+                        continue
+                    # Only include edges where target is also on this page
+                    if rel["other_id"] not in page_obj_ids:
                         continue
                     edge_key = f"{obj_id}-{rel['rel_type']}-{rel['other_id']}"
                     if edge_key in seen_edges:
@@ -577,8 +588,11 @@ def create_mcp_server(
                             },
                         }
                     )
-
             for entity in store.list_entities():
+                mention_ids = store.graph.get_entity_mentions(entity["id"])
+                page_mentions = [m for m in mention_ids if m in page_obj_ids]
+                if not page_mentions:
+                    continue
                 eid = f"entity:{entity['id']}"
                 nodes.append(
                     {
@@ -590,7 +604,7 @@ def create_mcp_server(
                         },
                     }
                 )
-                for mid in store.graph.get_entity_mentions(entity["id"]):
+                for mid in page_mentions:
                     edge_key = f"{mid}-mentions-{eid}"
                     if edge_key in seen_edges:
                         continue
@@ -634,9 +648,7 @@ def create_mcp_server(
                 instances = getattr(sm, "_server_instances", {})
                 session_count = len(instances)
                 terminated_count = sum(
-                    1
-                    for t in instances.values()
-                    if getattr(t, "is_terminated", False)
+                    1 for t in instances.values() if getattr(t, "is_terminated", False)
                 )
 
             ru = resource.getrusage(resource.RUSAGE_SELF)

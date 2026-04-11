@@ -58,24 +58,17 @@ class TestDualWrite:
         assert graph_obj is not None
         assert graph_obj["title"] == "Dual write"
 
-    def test_read_returns_content_with_relationships(
-        self, store: Store
-    ):
+    def test_read_returns_content_with_relationships(self, store: Store):
         id_a = _create_sample(store, title="A")
         id_b = _create_sample(store, title="B")
-        store.create_relationship(
-            from_id=id_a, rel_type="supports", to_id=id_b
-        )
+        store.create_relationship(from_id=id_a, rel_type="supports", to_id=id_b)
 
         result = store.read(id_a)
         assert result is not None
         assert result["title"] == "A"
         assert "relationships" in result
         rels = result["relationships"]
-        assert any(
-            r["rel_type"] == "supports" and r["other_id"] == id_b
-            for r in rels
-        )
+        assert any(r["rel_type"] == "supports" and r["other_id"] == id_b for r in rels)
 
     def test_update_propagates_to_both_stores(self, store: Store):
         obj_id = _create_sample(store, title="Before")
@@ -145,36 +138,26 @@ class TestRelationships:
         id_a = _create_sample(store, title="Cause")
         id_b = _create_sample(store, title="Effect")
 
-        assert store.create_relationship(
-            from_id=id_a, rel_type="causedBy", to_id=id_b
-        )
+        assert store.create_relationship(from_id=id_a, rel_type="causedBy", to_id=id_b)
 
         rels = store.get_relationships(id_a)
         assert any(
-            r["rel_type"] == "causedBy"
-            and r["other_id"] == id_b
-            and r["direction"] == "outgoing"
+            r["rel_type"] == "causedBy" and r["other_id"] == id_b and r["direction"] == "outgoing"
             for r in rels
         )
 
         # Incoming side
         rels_b = store.get_relationships(id_b)
         assert any(
-            r["rel_type"] == "causedBy"
-            and r["other_id"] == id_a
-            and r["direction"] == "incoming"
+            r["rel_type"] == "causedBy" and r["other_id"] == id_a and r["direction"] == "incoming"
             for r in rels_b
         )
 
     def test_delete_relationship(self, store: Store):
         id_a = _create_sample(store, title="X")
         id_b = _create_sample(store, title="Y")
-        store.create_relationship(
-            from_id=id_a, rel_type="supports", to_id=id_b
-        )
-        assert store.delete_relationship(
-            from_id=id_a, rel_type="supports", to_id=id_b
-        )
+        store.create_relationship(from_id=id_a, rel_type="supports", to_id=id_b)
+        assert store.delete_relationship(from_id=id_a, rel_type="supports", to_id=id_b)
         rels = store.get_relationships(id_a)
         assert not any(r["rel_type"] == "supports" for r in rels)
 
@@ -184,9 +167,7 @@ class TestRelationships:
 
 class TestEntities:
     def test_create_entity_and_list(self, store: Store):
-        eid = store.create_entity(
-            name="Python", entity_type="technology"
-        )
+        eid, _ = store.create_entity(name="Python", entity_type="technology")
         assert eid
 
         entities = store.list_entities()
@@ -194,9 +175,7 @@ class TestEntities:
 
     def test_add_mention_links_object_to_entity(self, store: Store):
         obj_id = _create_sample(store, title="Python guide")
-        eid = store.create_entity(
-            name="Python", entity_type="technology"
-        )
+        eid, _ = store.create_entity(name="Python", entity_type="technology")
         store.add_mention(obj_id=obj_id, entity_id=eid)
 
         mentions = store.graph.get_entity_mentions(eid)
@@ -231,14 +210,18 @@ class TestStatus:
 
 
 class TestCrossSystemConsistency:
-    def test_ids_and_types_match_after_mixed_operations(
-        self, store: Store
-    ):
+    def test_ids_and_types_match_after_mixed_operations(self, store: Store):
         """After 20 mixed ops, IDs and types stay in sync."""
         created_ids: list[str] = []
         types = [
-            "decision", "lesson", "fix", "session",
-            "research", "source", "synthesis", "idea",
+            "decision",
+            "lesson",
+            "fix",
+            "session",
+            "research",
+            "source",
+            "synthesis",
+            "idea",
         ]
 
         # 16 creates
@@ -268,12 +251,8 @@ class TestCrossSystemConsistency:
         for obj_id in remaining:
             sqlite_doc = store.content.get(obj_id)
             graph_obj = store.graph.read_object(obj_id)
-            assert sqlite_doc is not None, (
-                f"Missing from SQLite: {obj_id}"
-            )
-            assert graph_obj is not None, (
-                f"Missing from graph: {obj_id}"
-            )
+            assert sqlite_doc is not None, f"Missing from SQLite: {obj_id}"
+            assert graph_obj is not None, f"Missing from graph: {obj_id}"
             # Types must match (graph lowercases the class name)
             assert sqlite_doc["type"] == graph_obj["type"]
 

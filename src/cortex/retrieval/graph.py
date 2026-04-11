@@ -38,8 +38,12 @@ class GraphQueries:
         start = self.store.content.get(obj_id)
         if start:
             chain.append(self._summarize(start))
-        # Forward from starting object
-        self._traverse_causal(obj_id, chain, visited, max_depth, "forward")
+        # Fresh visited for forward — includes backward nodes (prevents
+        # duplicates) but excludes the start node so forward traversal
+        # can examine its outgoing ledTo edges.
+        forward_visited = set(visited)
+        forward_visited.discard(obj_id)
+        self._traverse_causal(obj_id, chain, forward_visited, max_depth, "forward")
         return chain
 
     def _traverse_causal(
@@ -70,13 +74,9 @@ class GraphQueries:
                 other = self.store.content.get(rel["other_id"])
                 if other and rel["other_id"] not in visited:
                     chain.append(self._summarize(other))
-                    self._traverse_causal(
-                        rel["other_id"], chain, visited, remaining - 1, direction
-                    )
+                    self._traverse_causal(rel["other_id"], chain, visited, remaining - 1, direction)
 
-    def contradiction_map(
-        self, scope: str | None = None
-    ) -> list[dict[str, Any]]:
+    def contradiction_map(self, scope: str | None = None) -> list[dict[str, Any]]:
         """Get all contradiction edges, optionally scoped to a project.
 
         Returns:
@@ -85,9 +85,7 @@ class GraphQueries:
         contradictions = []
         seen: set[tuple[str, str]] = set()
 
-        objects = self.store.list_objects(
-            obj_type=None, project=scope, limit=500
-        )
+        objects = self.store.list_objects(obj_type=None, project=scope, limit=500)
         for obj in objects:
             obj_id = obj.get("id", "")
             rels = self.store.get_relationships(obj_id)
@@ -97,17 +95,17 @@ class GraphQueries:
                     if pair not in seen:
                         seen.add(pair)
                         other = self.store.content.get(rel["other_id"])
-                        contradictions.append({
-                            "object_a": pair[0],
-                            "object_b": pair[1],
-                            "title_a": obj.get("title", ""),
-                            "title_b": other.get("title", "") if other else "",
-                        })
+                        contradictions.append(
+                            {
+                                "object_a": pair[0],
+                                "object_b": pair[1],
+                                "title_a": obj.get("title", ""),
+                                "title_b": other.get("title", "") if other else "",
+                            }
+                        )
         return contradictions
 
-    def entity_neighborhood(
-        self, entity_name: str, *, max_hops: int = 2
-    ) -> dict[str, Any]:
+    def entity_neighborhood(self, entity_name: str, *, max_hops: int = 2) -> dict[str, Any]:
         """Get everything connected to an entity within N hops.
 
         Returns:
@@ -144,11 +142,13 @@ class GraphQueries:
                         visited.add(other_id)
                         other = self.store.content.get(other_id)
                         if other:
-                            connections.append({
-                                **self._summarize(other),
-                                "via": mid,
-                                "via_rel": rel["rel_type"],
-                            })
+                            connections.append(
+                                {
+                                    **self._summarize(other),
+                                    "via": mid,
+                                    "via_rel": rel["rel_type"],
+                                }
+                            )
 
         return {
             "entity": entity,
@@ -167,15 +167,20 @@ class GraphQueries:
 
         # Go backward (find what this superseded)
         self._traverse_supersedes(obj_id, chain, visited, "backward")
-        chain.reverse()
 
         # Add current
         current = self.store.content.get(obj_id)
         if current:
             chain.append(self._summarize(current))
 
-        # Go forward (find what supersedes this)
-        self._traverse_supersedes(obj_id, chain, visited, "forward")
+        # Go forward (find what supersedes this) — fresh visited
+        # excludes start node so forward traversal can examine its edges
+        forward_visited = set(visited)
+        forward_visited.discard(obj_id)
+        self._traverse_supersedes(obj_id, chain, forward_visited, "forward")
+
+        # Sort chronologically instead of relying on DFS traversal order
+        chain.sort(key=lambda x: x.get("created_at", ""))
 
         return chain
 
@@ -201,9 +206,7 @@ class GraphQueries:
                     other = self.store.content.get(rel["other_id"])
                     if other:
                         chain.append(self._summarize(other))
-                        self._traverse_supersedes(
-                            rel["other_id"], chain, visited, direction
-                        )
+                        self._traverse_supersedes(rel["other_id"], chain, visited, direction)
             elif (
                 direction == "forward"
                 and rel["rel_type"] == "supersedes"
@@ -213,9 +216,7 @@ class GraphQueries:
                 other = self.store.content.get(rel["other_id"])
                 if other:
                     chain.append(self._summarize(other))
-                    self._traverse_supersedes(
-                        rel["other_id"], chain, visited, direction
-                    )
+                    self._traverse_supersedes(rel["other_id"], chain, visited, direction)
 
     def project_overview(self, project: str) -> dict[str, Any]:
         """Get all objects, entities, and relationships for a project.
@@ -232,11 +233,13 @@ class GraphQueries:
             rels = self.store.get_relationships(obj_id)
             for rel in rels:
                 if rel["direction"] == "outgoing":
-                    edges.append({
-                        "from": obj_id,
-                        "to": rel["other_id"],
-                        "type": rel["rel_type"],
-                    })
+                    edges.append(
+                        {
+                            "from": obj_id,
+                            "to": rel["other_id"],
+                            "type": rel["rel_type"],
+                        }
+                    )
 
         # Collect entities mentioned by project objects
         obj_ids = {obj.get("id", "") for obj in objects}

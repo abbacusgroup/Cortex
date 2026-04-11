@@ -170,10 +170,12 @@ def setup_logging(*, level: str = "INFO", json_output: bool = True) -> logging.L
     if json_output:
         handler.setFormatter(JSONFormatter(datefmt="%Y-%m-%dT%H:%M:%S"))
     else:
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s %(levelname)-8s [%(module)s] %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%S",
-        ))
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)-8s [%(module)s] %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S",
+            )
+        )
 
     logger.addHandler(handler)
     return logger

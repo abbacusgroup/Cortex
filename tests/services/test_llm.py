@@ -52,9 +52,7 @@ class TestAvailability:
 
 
 class TestClassify:
-    def test_classify_without_llm_returns_fallback(
-        self, client: LLMClient
-    ):
+    def test_classify_without_llm_returns_fallback(self, client: LLMClient):
         result = client.classify(title="Test", content="Some content")
         assert result["type"] == "idea"
         assert result["confidence"] == 0.0
@@ -64,8 +62,13 @@ class TestClassify:
     def test_classify_fallback_has_all_keys(self, client: LLMClient):
         result = client.classify(title="T", content="C")
         expected_keys = {
-            "type", "summary", "tags", "project",
-            "entities", "confidence", "properties",
+            "type",
+            "summary",
+            "tags",
+            "project",
+            "entities",
+            "confidence",
+            "properties",
         }
         assert set(result.keys()) == expected_keys
 
@@ -176,9 +179,9 @@ class TestValidateClassification:
             "entities": [
                 {"name": "Good", "type": "technology"},
                 "not a dict",
-                {"type": "technology"},           # missing name
-                {"name": "Bad", "type": "alien"}, # invalid type
-                {"name": "OK"},                   # no type -> concept
+                {"type": "technology"},  # missing name
+                {"name": "Bad", "type": "alien"},  # invalid type
+                {"name": "OK"},  # no type -> concept
             ],
         }
         result = LLMClient._validate_classification(data)

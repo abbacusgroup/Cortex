@@ -49,9 +49,7 @@ class TemporalVersioning:
         Returns:
             The version number, or None if document not found.
         """
-        row = self.db.execute(
-            "SELECT * FROM documents WHERE id = ?", (doc_id,)
-        ).fetchone()
+        row = self.db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
         if row is None:
             return None
 

@@ -35,6 +35,7 @@ class LearningLoop:
         self.store.content.set_config(count_key, str(current + 1))
 
         import datetime
+
         now = datetime.datetime.now(datetime.UTC).isoformat()
         self.store.content.set_config(f"{LAST_ACCESS_PREFIX}{obj_id}", now)
 
@@ -77,9 +78,7 @@ class LearningLoop:
 
         promoted = 0
         demoted = 0
-        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
-            days=inactivity_days
-        )
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=inactivity_days)
         cutoff_str = cutoff.isoformat()
 
         all_objects = self.store.list_objects(limit=1000)
@@ -87,9 +86,7 @@ class LearningLoop:
             obj_id = obj.get("id", "")
             tier = obj.get("tier", "archive")
             access_count = self.get_access_count(obj_id)
-            last_access = self.store.content.get_config(
-                f"{LAST_ACCESS_PREFIX}{obj_id}", ""
-            )
+            last_access = self.store.content.get_config(f"{LAST_ACCESS_PREFIX}{obj_id}", "")
 
             # Promote: high access count
             if tier != "reflex" and access_count >= 10:
@@ -121,9 +118,7 @@ class LearningLoop:
 
     def update_weights(self, weights: dict[str, float]) -> None:
         """Persist updated ranking weights."""
-        self.store.content.set_config(
-            WEIGHTS_CONFIG_KEY, json.dumps(weights)
-        )
+        self.store.content.set_config(WEIGHTS_CONFIG_KEY, json.dumps(weights))
 
     def reset_weights(self) -> dict[str, float]:
         """Reset ranking weights to defaults."""

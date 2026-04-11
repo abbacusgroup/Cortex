@@ -60,9 +60,7 @@ class FakeMCPClient:
             limit=limit,
         )
 
-    async def context(
-        self, topic: str, limit: int = 10
-    ) -> list[dict[str, Any]]:
+    async def context(self, topic: str, limit: int = 10) -> list[dict[str, Any]]:
         return self._call("cortex_context", topic=topic, limit=limit)
 
     async def dossier(self, topic: str) -> dict[str, Any]:
@@ -101,13 +99,9 @@ class FakeMCPClient:
     async def list_objects(
         self, doc_type: str = "", project: str = "", limit: int = 50
     ) -> list[dict[str, Any]]:
-        return self._call(
-            "cortex_list", doc_type=doc_type, project=project, limit=limit
-        )
+        return self._call("cortex_list", doc_type=doc_type, project=project, limit=limit)
 
-    async def graph(
-        self, obj_id: str = "", entity: str = ""
-    ) -> dict[str, Any]:
+    async def graph(self, obj_id: str = "", entity: str = "") -> dict[str, Any]:
         return self._call("cortex_graph", obj_id=obj_id, entity=entity)
 
     async def status(self) -> dict[str, Any]:
@@ -116,9 +110,7 @@ class FakeMCPClient:
     async def query_trail(self, limit: int = 50) -> list[dict[str, Any]]:
         return self._call("cortex_query_trail", limit=limit)
 
-    async def list_entities(
-        self, entity_type: str = ""
-    ) -> list[dict[str, Any]]:
+    async def list_entities(self, entity_type: str = "") -> list[dict[str, Any]]:
         return self._call("cortex_list_entities", entity_type=entity_type)
 
     async def graph_data(
@@ -141,31 +133,19 @@ class FakeMCPClient:
     async def pipeline(self, obj_id: str) -> dict[str, Any]:
         return self._call("cortex_pipeline", obj_id=obj_id)
 
-    async def synthesize(
-        self, period_days: int = 7, project: str = ""
-    ) -> dict[str, Any]:
-        return self._call(
-            "cortex_synthesize", period_days=period_days, project=project
-        )
+    async def synthesize(self, period_days: int = 7, project: str = "") -> dict[str, Any]:
+        return self._call("cortex_synthesize", period_days=period_days, project=project)
 
     async def reason(self) -> dict[str, Any]:
         return self._call("cortex_reason")
 
     # ─── Bundle 7 / Phase 4 methods (REST API routing) ─────────────────
 
-    async def link(
-        self, from_id: str, rel_type: str, to_id: str
-    ) -> dict[str, Any]:
-        return self._call(
-            "cortex_link", from_id=from_id, rel_type=rel_type, to_id=to_id
-        )
+    async def link(self, from_id: str, rel_type: str, to_id: str) -> dict[str, Any]:
+        return self._call("cortex_link", from_id=from_id, rel_type=rel_type, to_id=to_id)
 
-    async def feedback(
-        self, obj_id: str, relevant: bool = True
-    ) -> dict[str, Any]:
-        return self._call(
-            "cortex_feedback", obj_id=obj_id, relevant=relevant
-        )
+    async def feedback(self, obj_id: str, relevant: bool = True) -> dict[str, Any]:
+        return self._call("cortex_feedback", obj_id=obj_id, relevant=relevant)
 
     async def classify(
         self,

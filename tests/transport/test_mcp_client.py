@@ -109,21 +109,22 @@ def fake_client_session():
     # _http_client_session returns an async context manager yielding
     # (read_stream, write_stream, get_session_id_callback)
     transport_cm = MagicMock()
-    transport_cm.__aenter__ = AsyncMock(
-        return_value=(MagicMock(), MagicMock(), MagicMock())
-    )
+    transport_cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
     transport_cm.__aexit__ = AsyncMock(return_value=None)
 
     session_cm = MagicMock()
     session_cm.__aenter__ = AsyncMock(return_value=session_mock)
     session_cm.__aexit__ = AsyncMock(return_value=None)
 
-    with patch(
-        "cortex.transport.mcp.client._http_client_session",
-        return_value=transport_cm,
-    ), patch(
-        "cortex.transport.mcp.client.ClientSession",
-        return_value=session_cm,
+    with (
+        patch(
+            "cortex.transport.mcp.client._http_client_session",
+            return_value=transport_cm,
+        ),
+        patch(
+            "cortex.transport.mcp.client.ClientSession",
+            return_value=session_cm,
+        ),
     ):
         yield session_mock
 
@@ -190,9 +191,7 @@ class TestCortexMCPClientHappyPath:
     @pytest.mark.asyncio
     async def test_dossier_returns_dict(self, fake_client_session):
         fake_client_session.call_tool.return_value = _FakeCallToolResult(
-            text=json.dumps(
-                {"topic": "SQLite", "objects": [], "related_entities": []}
-            )
+            text=json.dumps({"topic": "SQLite", "objects": [], "related_entities": []})
         )
         client = CortexMCPClient("http://localhost:1314/mcp")
         result = await client.dossier("SQLite")
@@ -248,9 +247,7 @@ class TestCortexMCPClientErrors:
     async def test_connection_refused_raises_mcp_connection_error(self):
         # Patch the transport to raise httpx.ConnectError on enter
         bad_cm = MagicMock()
-        bad_cm.__aenter__ = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
+        bad_cm.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
         bad_cm.__aexit__ = AsyncMock(return_value=None)
         with patch(
             "cortex.transport.mcp.client._http_client_session",
@@ -264,9 +261,7 @@ class TestCortexMCPClientErrors:
     @pytest.mark.asyncio
     async def test_timeout_raises_mcp_timeout_error(self):
         slow_cm = MagicMock()
-        slow_cm.__aenter__ = AsyncMock(
-            side_effect=httpx.ReadTimeout("read timed out")
-        )
+        slow_cm.__aenter__ = AsyncMock(side_effect=httpx.ReadTimeout("read timed out"))
         slow_cm.__aexit__ = AsyncMock(return_value=None)
         with patch(
             "cortex.transport.mcp.client._http_client_session",
@@ -307,9 +302,7 @@ class TestCortexMCPClientErrors:
         assert issubclass(MCPToolError, MCPClientError)
 
     @pytest.mark.asyncio
-    async def test_invalid_tool_name_surfaces_as_tool_error(
-        self, fake_client_session
-    ):
+    async def test_invalid_tool_name_surfaces_as_tool_error(self, fake_client_session):
         """Phase 2.C: when an MCP method calls a tool that doesn't exist on
         the server (renamed, removed, version mismatch), the server returns
         an error result and the client surfaces it as MCPToolError, not as
@@ -384,9 +377,7 @@ class TestHttpClientSession:
     async def test_helper_propagates_connection_error(self):
         """When the inner transport raises ConnectError, it bubbles up."""
         inner_cm = MagicMock()
-        inner_cm.__aenter__ = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
+        inner_cm.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
         inner_cm.__aexit__ = AsyncMock(return_value=None)
         with (
             patch(
@@ -416,6 +407,7 @@ class TestHttpClientSession:
             "cortex.transport.mcp.client.streamable_http_client",
             side_effect=make_cm,
         ):
+
             async def one():
                 async with _http_client_session("http://test/mcp", 5.0):
                     await asyncio.sleep(0)
@@ -462,6 +454,7 @@ class TestNoDeprecationWarnings:
         module globals — we use streamable_http_client exclusively.
         """
         import cortex.transport.mcp.client as mod
+
         assert not hasattr(mod, "streamablehttp_client"), (
             "cortex.transport.mcp.client should NOT re-export the deprecated name"
         )
@@ -534,9 +527,7 @@ class TestCortexMCPClientConcurrency:
     """
 
     @pytest.mark.asyncio
-    async def test_50_concurrent_search_calls_via_mock(
-        self, fake_client_session
-    ):
+    async def test_50_concurrent_search_calls_via_mock(self, fake_client_session):
         """50 simultaneous search calls — none should deadlock or fail."""
         import asyncio
 
@@ -560,9 +551,7 @@ class TestCortexMCPClientConcurrency:
         """
         import asyncio
 
-        fake_client_session.call_tool.return_value = _FakeCallToolResult(
-            text=json.dumps([])
-        )
+        fake_client_session.call_tool.return_value = _FakeCallToolResult(text=json.dumps([]))
         client = CortexMCPClient("http://localhost:1314/mcp")
         coros = []
         for i in range(20):
@@ -575,9 +564,7 @@ class TestCortexMCPClientConcurrency:
             assert not isinstance(r, Exception), f"unexpected failure: {r!r}"
 
     @pytest.mark.asyncio
-    async def test_one_failure_does_not_corrupt_others(
-        self, fake_client_session
-    ):
+    async def test_one_failure_does_not_corrupt_others(self, fake_client_session):
         """If one of N concurrent calls raises a connection error, the
         remaining calls still complete successfully.
         """
@@ -634,20 +621,21 @@ class TestCortexMCPClientCancellation:
         fake_session.call_tool = AsyncMock(side_effect=hang_forever)
 
         transport_cm = MagicMock()
-        transport_cm.__aenter__ = AsyncMock(
-            return_value=(MagicMock(), MagicMock(), MagicMock())
-        )
+        transport_cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
         transport_cm.__aexit__ = AsyncMock(return_value=None)
         session_cm = MagicMock()
         session_cm.__aenter__ = AsyncMock(return_value=fake_session)
         session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch(
-            "cortex.transport.mcp.client._http_client_session",
-            return_value=transport_cm,
-        ), patch(
-            "cortex.transport.mcp.client.ClientSession",
-            return_value=session_cm,
+        with (
+            patch(
+                "cortex.transport.mcp.client._http_client_session",
+                return_value=transport_cm,
+            ),
+            patch(
+                "cortex.transport.mcp.client.ClientSession",
+                return_value=session_cm,
+            ),
         ):
             client = CortexMCPClient("http://localhost:1314/mcp")
             task = asyncio.create_task(client.search("hello"))

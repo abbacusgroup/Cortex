@@ -15,11 +15,13 @@ class TestCaptureTemplateRender:
 
     def test_session_render_all_fields(self):
         """Session template with all fields renders full content."""
-        result = SESSION_TEMPLATE.render({
-            "goal": "Implement auth",
-            "worked": "JWT tokens",
-            "failed": "Session expiry",
-        })
+        result = SESSION_TEMPLATE.render(
+            {
+                "goal": "Implement auth",
+                "worked": "JWT tokens",
+                "failed": "Session expiry",
+            }
+        )
 
         content = result["content"]
         assert "## Goal" in content
@@ -31,10 +33,12 @@ class TestCaptureTemplateRender:
 
     def test_fix_render_properties_are_camelcase(self):
         """Fix template properties use camelCase keys."""
-        result = FIX_TEMPLATE.render({
-            "symptom": "500 on /api/login",
-            "root_cause": "Missing DB index",
-        })
+        result = FIX_TEMPLATE.render(
+            {
+                "symptom": "500 on /api/login",
+                "root_cause": "Missing DB index",
+            }
+        )
 
         props = result["properties"]
         assert "symptom" in props
@@ -63,10 +67,12 @@ class TestCaptureTemplateRender:
 
     def test_extra_fields_ignored(self):
         """Fields not in required or optional are ignored."""
-        result = SESSION_TEMPLATE.render({
-            "goal": "Ship v1",
-            "extra_field": "Should be ignored",
-        })
+        result = SESSION_TEMPLATE.render(
+            {
+                "goal": "Ship v1",
+                "extra_field": "Should be ignored",
+            }
+        )
 
         # Only goal shows up
         assert "## Goal" in result["content"]
@@ -93,12 +99,8 @@ class TestGetTemplate:
 
     def test_get_all_known_templates(self):
         """All six pre-defined templates are registered."""
-        for name in (
-            "session", "fix", "decision", "lesson", "research", "idea"
-        ):
-            assert get_template(name) is not None, (
-                f"Template '{name}' missing"
-            )
+        for name in ("session", "fix", "decision", "lesson", "research", "idea"):
+            assert get_template(name) is not None, f"Template '{name}' missing"
 
 
 class TestPropertyKeyConversion:
@@ -111,12 +113,7 @@ class TestPropertyKeyConversion:
         assert CaptureTemplate._to_property_key("goal") == "goal"
 
     def test_multi_part_snake(self):
-        assert (
-            CaptureTemplate._to_property_key("files_affected_count")
-            == "filesAffectedCount"
-        )
+        assert CaptureTemplate._to_property_key("files_affected_count") == "filesAffectedCount"
 
     def test_two_part_snake(self):
-        assert (
-            CaptureTemplate._to_property_key("next_steps") == "nextSteps"
-        )
+        assert CaptureTemplate._to_property_key("next_steps") == "nextSteps"

@@ -31,6 +31,26 @@ const REL_STYLES = {
 var currentOffset = 0;
 
 function initGraph(elements) {
+    // Pick layout based on graph size — cose is accurate but slow on large graphs
+    var nodeCount = elements.filter(function(e) { return e.group === 'nodes' || (e.data && !e.data.source); }).length;
+    var layoutConfig = (nodeCount > 200)
+        ? { name: 'circle', fit: true, padding: 30, animate: false }
+        : {
+            name: 'cose',
+            idealEdgeLength: 120,
+            nodeOverlap: 20,
+            refresh: 20,
+            fit: true,
+            padding: 30,
+            randomize: false,
+            componentSpacing: 100,
+            nodeRepulsion: 8000,
+            edgeElasticity: 100,
+            nestingFactor: 5,
+            gravity: 80,
+            numIter: 1000,
+        };
+
     cy = cytoscape({
         container: document.getElementById('cy'),
         elements: elements,
@@ -90,21 +110,7 @@ function initGraph(elements) {
                 },
             },
         ],
-        layout: {
-            name: 'cose',
-            idealEdgeLength: 120,
-            nodeOverlap: 20,
-            refresh: 20,
-            fit: true,
-            padding: 30,
-            randomize: false,
-            componentSpacing: 100,
-            nodeRepulsion: 8000,
-            edgeElasticity: 100,
-            nestingFactor: 5,
-            gravity: 80,
-            numIter: 1000,
-        },
+        layout: layoutConfig,
     });
 
     // Click handler
@@ -125,7 +131,7 @@ function initGraph(elements) {
 function loadGraph(append) {
     var project = document.getElementById('gf-project').value;
     var type = document.getElementById('gf-type').value;
-    var limit = 500;
+    var limit = 100;
     var offset = append ? currentOffset : 0;
     var url = '/api/graph-data?project=' + encodeURIComponent(project) +
               '&doc_type=' + encodeURIComponent(type) +
@@ -140,7 +146,10 @@ function loadGraph(append) {
                 initGraph(elements);
             } else {
                 cy.add(elements);
-                cy.layout({name: 'cose', animate: false, fit: true}).run();
+                var layout = (cy.nodes().length > 200)
+                    ? { name: 'circle', fit: true, padding: 30, animate: false }
+                    : { name: 'cose', animate: false, fit: true };
+                cy.layout(layout).run();
             }
             currentOffset = offset + data.nodes.length;
             var btn = document.getElementById('load-more');

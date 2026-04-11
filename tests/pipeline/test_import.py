@@ -56,14 +56,10 @@ def _create_vault(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
     (path / "fixes").mkdir()
-    (path / "fixes" / "bug-fix.md").write_text(
-        "---\ntype: fix\nproject: app\n---\nFixed a crash"
-    )
+    (path / "fixes" / "bug-fix.md").write_text("---\ntype: fix\nproject: app\n---\nFixed a crash")
 
     (path / "ideas").mkdir()
-    (path / "ideas" / "new-feature.md").write_text(
-        "# New Feature\nLet's build X"
-    )
+    (path / "ideas" / "new-feature.md").write_text("# New Feature\nLet's build X")
 
 
 def _create_vault_file(vault_dir: Path, filename: str, frontmatter_dict: dict, body: str) -> None:
@@ -134,9 +130,7 @@ class TestCortexV1Import:
             ("t3", "Guide", "body", "guide", "", "", "2026-01-03"),
             ("t4", "Workflow", "body", "workflow", "", "", "2026-01-04"),
         ]
-        db.executemany(
-            "INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?)", rows
-        )
+        db.executemany("INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
         db.commit()
         db.close()
 
@@ -210,8 +204,7 @@ class TestObsidianImport:
         vault = tmp_path / "fm_vault"
         vault.mkdir()
         (vault / "tagged.md").write_text(
-            "---\ntype: lesson\nproject: cortex\ntags: [a, b]\n"
-            "---\nLesson learned"
+            "---\ntype: lesson\nproject: cortex\ntags: [a, b]\n---\nLesson learned"
         )
 
         ObsidianImporter(store).run(vault)
@@ -228,9 +221,7 @@ class TestObsidianImport:
         """When frontmatter has no type, directory name is used."""
         vault = tmp_path / "dir_vault"
         (vault / "decisions").mkdir(parents=True)
-        (vault / "decisions" / "pick-db.md").write_text(
-            "We chose SQLite."
-        )
+        (vault / "decisions" / "pick-db.md").write_text("We chose SQLite.")
 
         ObsidianImporter(store).run(vault)
 
@@ -242,9 +233,7 @@ class TestObsidianImport:
         """Top-level directory name becomes the project when not set."""
         vault = tmp_path / "proj_vault"
         (vault / "myproject" / "ideas").mkdir(parents=True)
-        (vault / "myproject" / "ideas" / "cool.md").write_text(
-            "A cool idea"
-        )
+        (vault / "myproject" / "ideas" / "cool.md").write_text("A cool idea")
 
         ObsidianImporter(store).run(vault)
 
@@ -286,11 +275,16 @@ class TestImportFiltering:
         """Files with source: ingest:* are skipped."""
         vault = tmp_path / "vault_ingest"
         vault.mkdir()
-        _create_vault_file(vault, "re-imported.md", {
-            "title": "Re-imported",
-            "type": "idea",
-            "source": "ingest:foo",
-        }, "This was re-imported and should be skipped")
+        _create_vault_file(
+            vault,
+            "re-imported.md",
+            {
+                "title": "Re-imported",
+                "type": "idea",
+                "source": "ingest:foo",
+            },
+            "This was re-imported and should be skipped",
+        )
 
         result = ObsidianImporter(store).run(vault)
 
@@ -301,10 +295,15 @@ class TestImportFiltering:
         """Files with type: index are skipped."""
         vault = tmp_path / "vault_index"
         vault.mkdir()
-        _create_vault_file(vault, "index-file.md", {
-            "title": "Index Page",
-            "type": "index",
-        }, "This is an index page")
+        _create_vault_file(
+            vault,
+            "index-file.md",
+            {
+                "title": "Index Page",
+                "type": "index",
+            },
+            "This is an index page",
+        )
 
         result = ObsidianImporter(store).run(vault)
 
@@ -324,14 +323,24 @@ class TestContentOnlyDedup:
         """Two files with different titles but same body -> only 1 imported."""
         vault = tmp_path / "vault_dedup"
         vault.mkdir()
-        _create_vault_file(vault, "file-a.md", {
-            "title": "Title A",
-            "type": "idea",
-        }, "Identical body content here")
-        _create_vault_file(vault, "file-b.md", {
-            "title": "Title B",
-            "type": "idea",
-        }, "Identical body content here")
+        _create_vault_file(
+            vault,
+            "file-a.md",
+            {
+                "title": "Title A",
+                "type": "idea",
+            },
+            "Identical body content here",
+        )
+        _create_vault_file(
+            vault,
+            "file-b.md",
+            {
+                "title": "Title B",
+                "type": "idea",
+            },
+            "Identical body content here",
+        )
 
         result = ObsidianImporter(store).run(vault)
 
@@ -351,11 +360,16 @@ class TestFrontmatterPreservation:
         """File with created: YYYY-MM-DD has that date in stored doc."""
         vault = tmp_path / "vault_ts"
         vault.mkdir()
-        _create_vault_file(vault, "dated.md", {
-            "title": "Dated Doc",
-            "type": "idea",
-            "created": "'2026-03-23'",
-        }, "Content with a date")
+        _create_vault_file(
+            vault,
+            "dated.md",
+            {
+                "title": "Dated Doc",
+                "type": "idea",
+                "created": "'2026-03-23'",
+            },
+            "Content with a date",
+        )
 
         ObsidianImporter(store).run(vault)
 
@@ -367,11 +381,16 @@ class TestFrontmatterPreservation:
         """File with summary field has it stored."""
         vault = tmp_path / "vault_sum"
         vault.mkdir()
-        _create_vault_file(vault, "summarized.md", {
-            "title": "Summarized",
-            "type": "idea",
-            "summary": '"Test summary text"',
-        }, "Content with summary")
+        _create_vault_file(
+            vault,
+            "summarized.md",
+            {
+                "title": "Summarized",
+                "type": "idea",
+                "summary": '"Test summary text"',
+            },
+            "Content with summary",
+        )
 
         ObsidianImporter(store).run(vault)
 
@@ -406,14 +425,24 @@ class TestWikiLinks:
         """Two files where first references second -> relationship created."""
         vault = tmp_path / "vault_wl"
         vault.mkdir()
-        _create_vault_file(vault, "first.md", {
-            "title": "First",
-            "type": "idea",
-        }, "See [[second]] for details")
-        _create_vault_file(vault, "second.md", {
-            "title": "Second",
-            "type": "idea",
-        }, "Details here")
+        _create_vault_file(
+            vault,
+            "first.md",
+            {
+                "title": "First",
+                "type": "idea",
+            },
+            "See [[second]] for details",
+        )
+        _create_vault_file(
+            vault,
+            "second.md",
+            {
+                "title": "Second",
+                "type": "idea",
+            },
+            "Details here",
+        )
 
         result = ObsidianImporter(store).run(vault)
 
@@ -424,10 +453,15 @@ class TestWikiLinks:
         """File with [[Nonexistent]] does not crash."""
         vault = tmp_path / "vault_wl_miss"
         vault.mkdir()
-        _create_vault_file(vault, "orphan.md", {
-            "title": "Orphan",
-            "type": "idea",
-        }, "See [[Nonexistent]] for nothing")
+        _create_vault_file(
+            vault,
+            "orphan.md",
+            {
+                "title": "Orphan",
+                "type": "idea",
+            },
+            "See [[Nonexistent]] for nothing",
+        )
 
         result = ObsidianImporter(store).run(vault)
 
@@ -455,11 +489,16 @@ class TestPipelineRouting:
 
         vault = tmp_path / "vault_pipe"
         vault.mkdir()
-        _create_vault_file(vault, "piped.md", {
-            "title": "Piped Doc",
-            "type": "idea",
-            "tags": "[python, testing]",
-        }, "This should go through the pipeline")
+        _create_vault_file(
+            vault,
+            "piped.md",
+            {
+                "title": "Piped Doc",
+                "type": "idea",
+                "tags": "[python, testing]",
+            },
+            "This should go through the pipeline",
+        )
 
         result = ObsidianImporter(pipe_store, pipeline=pipeline).run(vault)
 

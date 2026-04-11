@@ -47,6 +47,7 @@ class CortexError(Exception):
 
 # --- Config ---
 
+
 class ConfigError(CortexError):
     code = "CORTEX_CONFIG_ERROR"
 
@@ -60,6 +61,7 @@ class ConfigPermissionError(ConfigError):
 
 
 # --- Store ---
+
 
 class StoreError(CortexError):
     code = "CORTEX_STORE_ERROR"
@@ -205,6 +207,7 @@ class StoreLockedError(StoreError):
 
 # --- Ontology ---
 
+
 class OntologyError(CortexError):
     code = "CORTEX_ONTOLOGY_ERROR"
 
@@ -214,6 +217,7 @@ class ValidationError(CortexError):
 
 
 # --- Pipeline ---
+
 
 class PipelineError(CortexError):
     code = "CORTEX_PIPELINE_ERROR"
@@ -228,6 +232,7 @@ class LLMError(PipelineError):
 
 
 # --- Transport ---
+
 
 class TransportError(CortexError):
     code = "CORTEX_TRANSPORT_ERROR"

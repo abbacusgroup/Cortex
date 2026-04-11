@@ -27,7 +27,7 @@ In a regular terminal (NOT Claude Code — Oxigraph needs exclusive access):
 cd ~/Lab/cortex
 rm -f ~/.cortex/cortex.db ~/.cortex/cortex.db-shm ~/.cortex/cortex.db-wal ~/.cortex/graph.db
 .venv/bin/cortex init
-.venv/bin/cortex import-vault ~/Dev/tools/dev-brain/
+.venv/bin/cortex import-vault ~/path/to/your/vault/
 ```
 
 Expected output from import:
@@ -115,7 +115,7 @@ cd /Users/fabrizzio/Lab/cortex && .venv/bin/python -m pytest tests/ --tb=short -
 Use `cortex_capture` with:
 - title: "Cortex v2 import pipeline fix validated"
 - obj_type: "lesson"
-- content: "Full dev-brain re-import with fixed pipeline verified. Results: ~160 unique docs imported (193 filtered: 169 source:ingest re-imports + 24 index/dedup). Original timestamps preserved from frontmatter. Real summaries stored (109/160 have summaries). 233 wiki-link relationships created via second-pass fuzzy title matching. Entities extracted from tags + key_topics. Pipeline runs normalize→link→enrich→reason on each doc. 549 tests passing."
+- content: "Full vault re-import with fixed pipeline verified. Results: ~160 unique docs imported (193 filtered: 169 source:ingest re-imports + 24 index/dedup). Original timestamps preserved from frontmatter. Real summaries stored (109/160 have summaries). 233 wiki-link relationships created via second-pass fuzzy title matching. Entities extracted from tags + key_topics. Pipeline runs normalize→link→enrich→reason on each doc. 549 tests passing."
 - summary: "Import pipeline fix validated: timestamps, summaries, dedup, wiki-links, entities all working correctly after full re-import."
 - entities: [{"name": "Cortex", "type": "project"}, {"name": "Oxigraph", "type": "technology"}, {"name": "SQLite", "type": "technology"}, {"name": "MCP", "type": "technology"}]
 - tags: "cortex,import-pipeline,validation,fix"
@@ -134,7 +134,7 @@ type: project
 Cortex v2 MCP is live, all tools operational, data quality verified after import pipeline fix.
 
 **Status:** 549 tests. ~160 docs, entities populated, wiki-link relationships active.
-**Data:** ~160 unique docs from dev-brain vault, real timestamps (2026-03-19 to 2026-04-06), 109 with summaries, ~233 wiki-link relationships, entities from tags+key_topics.
+**Data:** ~160 unique docs from Obsidian vault, real timestamps (2026-03-19 to 2026-04-06), 109 with summaries, ~233 wiki-link relationships, entities from tags+key_topics.
 **Repo:** ~/Lab/cortex — https://github.com/abbacusgroup/Cortex.git
 
 ## Import pipeline (fixed 2026-04-06)
@@ -171,7 +171,7 @@ to:
 | Python venv | `~/Lab/cortex/.venv/` |
 | Data directory | `~/.cortex/` (cortex.db + graph.db) |
 | Ontology | `~/Lab/cortex/ontology/cortex.ttl` |
-| Dev-brain vault | `~/Dev/tools/dev-brain/` (source data) |
+| Obsidian vault | `~/path/to/your/vault/` (source data) |
 | MCP config | `~/.claude.json` (mcpServers.cortex) |
 | MCP command | `/Users/fabrizzio/Lab/cortex/.venv/bin/cortex serve --transport stdio` |
 | Build plan | `~/Lab/cortex/` — see cortex_search "Cortex v2 build plan" |

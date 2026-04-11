@@ -31,9 +31,7 @@ def linker(store: Store) -> LinkStage:
     return LinkStage(store, llm)
 
 
-def _create_obj(
-    store: Store, *, title: str = "Test", obj_type: str = "idea"
-) -> str:
+def _create_obj(store: Store, *, title: str = "Test", obj_type: str = "idea") -> str:
     return store.create(obj_type=obj_type, title=title, content="Body")
 
 
@@ -41,9 +39,7 @@ def _create_obj(
 
 
 class TestEntityResolution:
-    def test_entities_created_in_graph(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_entities_created_in_graph(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store, title="Python guide")
         entities = [
             {"name": "Python", "type": "technology"},
@@ -59,9 +55,7 @@ class TestEntityResolution:
         assert "Python" in names
         assert "CQRS" in names
 
-    def test_mentions_added_for_entities(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_mentions_added_for_entities(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store, title="Mentions test")
         entities = [{"name": "Docker", "type": "technology"}]
 
@@ -71,9 +65,7 @@ class TestEntityResolution:
         mentions = store.graph.get_entity_mentions(entity_id)
         assert obj_id in mentions
 
-    def test_duplicate_entity_names_deduped(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_duplicate_entity_names_deduped(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store, title="Dedup test")
         entities = [
             {"name": "React", "type": "technology"},
@@ -85,22 +77,15 @@ class TestEntityResolution:
         ids = [e["entity_id"] for e in result["entities"]]
         assert ids[0] == ids[1]
 
-    def test_entity_from_previous_run_is_reused(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_entity_from_previous_run_is_reused(self, store: Store, linker: LinkStage):
         obj_a = _create_obj(store, title="First")
         obj_b = _create_obj(store, title="Second")
 
         linker.run(obj_a, [{"name": "Kubernetes", "type": "technology"}])
-        result = linker.run(
-            obj_b, [{"name": "Kubernetes", "type": "technology"}]
-        )
+        result = linker.run(obj_b, [{"name": "Kubernetes", "type": "technology"}])
 
         # Same entity reused — only one entity with that name
-        k8s_entities = [
-            e for e in store.list_entities()
-            if e["name"] == "Kubernetes"
-        ]
+        k8s_entities = [e for e in store.list_entities() if e["name"] == "Kubernetes"]
         assert len(k8s_entities) == 1
 
         # Second object also linked
@@ -113,17 +98,13 @@ class TestEntityResolution:
 
 
 class TestEmptyEntities:
-    def test_no_entities_created_with_empty_list(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_no_entities_created_with_empty_list(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store)
         result = linker.run(obj_id, [])
         assert result["entities_resolved"] == 0
         assert result["entities"] == []
 
-    def test_entities_with_blank_name_skipped(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_entities_with_blank_name_skipped(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store)
         entities = [{"name": "", "type": "technology"}]
         result = linker.run(obj_id, entities)
@@ -134,9 +115,7 @@ class TestEmptyEntities:
 
 
 class TestEntityTypeDefault:
-    def test_unknown_entity_type_defaults_to_concept(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_unknown_entity_type_defaults_to_concept(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store, title="Type default")
         entities = [{"name": "Something", "type": "alien"}]
 
@@ -144,9 +123,7 @@ class TestEntityTypeDefault:
         # GraphStore.create_entity normalizes unknown types to "concept"
         assert result["entities_resolved"] == 1
 
-    def test_missing_type_defaults_to_concept(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_missing_type_defaults_to_concept(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store, title="No type field")
         entities = [{"name": "Widget"}]
 
@@ -159,9 +136,7 @@ class TestEntityTypeDefault:
 
 
 class TestNoLlmRelationships:
-    def test_no_relationships_without_llm(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_no_relationships_without_llm(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store, title="Lonely object")
         result = linker.run(obj_id, [])
         assert result["relationships_created"] == 0
@@ -172,9 +147,7 @@ class TestNoLlmRelationships:
 
 
 class TestPipelineStage:
-    def test_pipeline_stage_updated_to_linked(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_pipeline_stage_updated_to_linked(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store, title="Stage test")
         linker.run(obj_id, [])
 
@@ -182,9 +155,7 @@ class TestPipelineStage:
         assert doc is not None
         assert doc["pipeline_stage"] == "linked"
 
-    def test_result_status_is_linked(
-        self, store: Store, linker: LinkStage
-    ):
+    def test_result_status_is_linked(self, store: Store, linker: LinkStage):
         obj_id = _create_obj(store)
         result = linker.run(obj_id, [])
         assert result["status"] == "linked"

@@ -19,12 +19,12 @@ wheels/
 .env
 .env.local
 
-# Cortex data (user-specific, not committed)
-.cortex-data/
-
 # OS
 .DS_Store
 Thumbs.db
+
+# MCP Registry (local publishing artifact)
+server.json
 
 # Testing
 .pytest_cache/

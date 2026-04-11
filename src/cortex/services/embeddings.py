@@ -191,9 +191,7 @@ def check_embedding_model_consistency(
 
     Returns a warning message if there's a mismatch, None if consistent.
     """
-    row = content_store._db.execute(
-        "SELECT model, dimensions FROM embeddings LIMIT 1"
-    ).fetchone()
+    row = content_store._db.execute("SELECT model, dimensions FROM embeddings LIMIT 1").fetchone()
     if row is None:
         return None
     stored_model = row["model"]

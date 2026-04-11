@@ -54,9 +54,7 @@ def _wait_for_http(url: str, *, timeout: float = 15.0) -> None:
         except (urllib.error.URLError, OSError) as e:
             last_error = e
             time.sleep(0.2)
-    raise TimeoutError(
-        f"HTTP endpoint {url} never became ready: {last_error}"
-    )
+    raise TimeoutError(f"HTTP endpoint {url} never became ready: {last_error}")
 
 
 def _spawn_mcp_http_server(
@@ -216,9 +214,7 @@ class TestRestApiAndMcpHttpCoexist:
         assert mcp_proc.poll() is None
         assert rest_proc.poll() is None
         # REST /health responds
-        with urllib.request.urlopen(
-            f"{rest_url}/health", timeout=5
-        ) as resp:
+        with urllib.request.urlopen(f"{rest_url}/health", timeout=5) as resp:
             assert resp.status == 200
 
     def test_rest_api_search_forwards_to_mcp(self, mcp_plus_rest_api):
@@ -265,9 +261,7 @@ class TestRestApiAndMcpHttpCoexist:
         assert isinstance(result, dict)
         assert result["title"] == "Phase4 test"
 
-    def test_only_mcp_server_holds_graph_db(
-        self, mcp_plus_rest_api, tmp_path: Path
-    ):
+    def test_only_mcp_server_holds_graph_db(self, mcp_plus_rest_api, tmp_path: Path):
         """lsof verification: the REST API PID must NOT appear among the
         processes holding files under ``graph.db``. Only the MCP server
         should. This is the Phase 4 contract made concrete.
@@ -279,9 +273,7 @@ class TestRestApiAndMcpHttpCoexist:
 
         # Drive some traffic through the REST API so it definitely
         # exercises its MCP client path.
-        req = urllib.request.Request(
-            f"{rest_url}/status", headers={"X-API-Key": "dev"}
-        )
+        req = urllib.request.Request(f"{rest_url}/status", headers={"X-API-Key": "dev"})
         urllib.request.urlopen(req, timeout=5).read()
 
         result = subprocess.run(
@@ -310,9 +302,7 @@ class TestRestApiStartupProbe:
     at startup and fails fast if it's unreachable.
     """
 
-    def test_rest_api_fails_fast_when_mcp_unreachable(
-        self, tmp_path: Path
-    ):
+    def test_rest_api_fails_fast_when_mcp_unreachable(self, tmp_path: Path):
         """With no MCP HTTP server running, the REST API CLI should exit
         1 with an actionable error pointing at
         ``cortex serve --transport mcp-http``.
@@ -347,17 +337,13 @@ class TestRestApiStartupProbe:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
-            pytest.fail(
-                "REST API did not exit within 15s despite MCP unreachable"
-            )
+            pytest.fail("REST API did not exit within 15s despite MCP unreachable")
 
         stdout = proc.stdout.read() if proc.stdout else ""
         stderr = proc.stderr.read() if proc.stderr else ""
         combined = stdout + stderr
 
-        assert rc != 0, (
-            f"expected non-zero exit; got rc={rc}, combined={combined!r}"
-        )
+        assert rc != 0, f"expected non-zero exit; got rc={rc}, combined={combined!r}"
         assert "Cannot reach Cortex MCP server" in combined or "MCP" in combined
         # Actionable hint
         assert "cortex serve --transport mcp-http" in combined

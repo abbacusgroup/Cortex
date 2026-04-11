@@ -79,9 +79,7 @@ class EnrichStage:
 
         return "archive"
 
-    def _compute_staleness(
-        self, obj_id: str, relationships: list[dict[str, str]]
-    ) -> float:
+    def _compute_staleness(self, obj_id: str, relationships: list[dict[str, str]]) -> float:
         """Compute a staleness score (0.0 = fresh, 1.0 = very stale).
 
         An object is stale if:

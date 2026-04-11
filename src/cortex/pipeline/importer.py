@@ -21,15 +21,48 @@ from cortex.pipeline.orchestrator import PipelineOrchestrator
 
 logger = get_logger("pipeline.importer")
 
-_TECHNOLOGIES = frozenset({
-    "python", "javascript", "typescript", "rust", "go", "java",
-    "react", "fastapi", "django", "flask", "express", "node",
-    "docker", "kubernetes", "postgresql", "mysql", "sqlite", "redis",
-    "mongodb", "neo4j", "elasticsearch", "kafka",
-    "git", "github", "linux", "graphql", "pytorch", "tensorflow",
-    "anthropic", "openai", "langchain", "oxigraph", "sparql",
-    "nginx", "aws", "gcp", "azure", "terraform",
-})
+_TECHNOLOGIES = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "rust",
+        "go",
+        "java",
+        "react",
+        "fastapi",
+        "django",
+        "flask",
+        "express",
+        "node",
+        "docker",
+        "kubernetes",
+        "postgresql",
+        "mysql",
+        "sqlite",
+        "redis",
+        "mongodb",
+        "neo4j",
+        "elasticsearch",
+        "kafka",
+        "git",
+        "github",
+        "linux",
+        "graphql",
+        "pytorch",
+        "tensorflow",
+        "anthropic",
+        "openai",
+        "langchain",
+        "oxigraph",
+        "sparql",
+        "nginx",
+        "aws",
+        "gcp",
+        "azure",
+        "terraform",
+    }
+)
 
 
 def _extract_entities_from_tags(store: Store, obj_id: str, tags: str) -> None:
@@ -37,7 +70,7 @@ def _extract_entities_from_tags(store: Store, obj_id: str, tags: str) -> None:
     tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
     for tag in tag_list:
         entity_type = "technology" if tag in _TECHNOLOGIES else "concept"
-        entity_id = store.create_entity(name=tag, entity_type=entity_type)
+        entity_id, _created = store.create_entity(name=tag, entity_type=entity_type)
         store.add_mention(obj_id=obj_id, entity_id=entity_id)
 
 
@@ -140,9 +173,7 @@ class CortexV1Importer:
 
     def _is_duplicate(self, title: str, content: str) -> bool:
         """Check if content already exists via hash."""
-        content_hash = hashlib.sha256(
-            f"{title}:{content}".encode()
-        ).hexdigest()
+        content_hash = hashlib.sha256(f"{title}:{content}".encode()).hexdigest()
 
         existing = self.store.content.get_config(f"import_hash:{content_hash}", "")
         if existing:
@@ -307,7 +338,9 @@ class ObsidianImporter:
 
         logger.info(
             "Obsidian import: %d imported, %d skipped, %d failed",
-            imported, skipped, failed,
+            imported,
+            skipped,
+            failed,
         )
         return {
             "status": "ok",
@@ -377,9 +410,7 @@ class ObsidianImporter:
                 else:
                     # Scalar ended — save it
                     if scalar_folded:
-                        meta[current_key] = " ".join(
-                            current_scalar.strip().split("\n")
-                        ).strip()
+                        meta[current_key] = " ".join(current_scalar.strip().split("\n")).strip()
                     else:
                         meta[current_key] = current_scalar.strip()
                     current_scalar = None
@@ -410,10 +441,7 @@ class ObsidianImporter:
                     current_list = None
                 elif value.startswith("[") and value.endswith("]"):
                     # Inline list: [a, b, c]
-                    meta[key] = [
-                        v.strip().strip("'\"")
-                        for v in value[1:-1].split(",")
-                    ]
+                    meta[key] = [v.strip().strip("'\"") for v in value[1:-1].split(",")]
                 else:
                     meta[key] = value.strip("'\"")
                     current_key = None
@@ -421,9 +449,7 @@ class ObsidianImporter:
         # Save final accumulated scalar
         if current_scalar is not None and current_key is not None:
             if scalar_folded:
-                meta[current_key] = " ".join(
-                    current_scalar.strip().split("\n")
-                ).strip()
+                meta[current_key] = " ".join(current_scalar.strip().split("\n")).strip()
             else:
                 meta[current_key] = current_scalar.strip()
 
@@ -487,7 +513,7 @@ class ObsidianImporter:
     @staticmethod
     def _extract_wiki_links(content: str) -> list[str]:
         """Extract [[Title]] wiki-links from content."""
-        matches = re.findall(r'\[\[([^\]]+)\]\]', content)
+        matches = re.findall(r"\[\[([^\]]+)\]\]", content)
         return list(dict.fromkeys(matches))  # unique, preserving order
 
     def _resolve_wiki_links(self, wiki_link_map: dict[str, list[str]]) -> int:
@@ -505,8 +531,8 @@ class ObsidianImporter:
             if doc_title and doc_id:
                 title_index[doc_title] = doc_id
                 # Normalize: lowercase, strip date prefix (YYYY-MM-DD-), strip special chars
-                norm = re.sub(r'^\d{4}-\d{2}-\d{2}-?', '', doc_title.lower())
-                norm = re.sub(r'[^a-z0-9\s]', '', norm).strip()
+                norm = re.sub(r"^\d{4}-\d{2}-\d{2}-?", "", doc_title.lower())
+                norm = re.sub(r"[^a-z0-9\s]", "", norm).strip()
                 normalized_index[norm] = doc_id
 
         created = 0
@@ -519,8 +545,8 @@ class ObsidianImporter:
                     matched_id = title_index[target]
                 else:
                     # Try normalized fuzzy match
-                    norm_target = re.sub(r'^\d{4}-\d{2}-\d{2}-?', '', target.lower())
-                    norm_target = re.sub(r'[^a-z0-9\s]', '', norm_target).strip()
+                    norm_target = re.sub(r"^\d{4}-\d{2}-\d{2}-?", "", target.lower())
+                    norm_target = re.sub(r"[^a-z0-9\s]", "", norm_target).strip()
 
                     if norm_target in normalized_index:
                         matched_id = normalized_index[norm_target]
@@ -529,9 +555,7 @@ class ObsidianImporter:
                         best_ratio = 0.0
                         best_id = None
                         for norm_title, doc_id in normalized_index.items():
-                            ratio = difflib.SequenceMatcher(
-                                None, norm_target, norm_title
-                            ).ratio()
+                            ratio = difflib.SequenceMatcher(None, norm_target, norm_title).ratio()
                             if ratio > best_ratio and ratio > 0.8:
                                 best_ratio = ratio
                                 best_id = doc_id
