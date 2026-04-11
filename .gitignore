@@ -26,6 +26,10 @@ Thumbs.db
 # MCP Registry (local publishing artifact)
 server.json
 
+# Internal session docs (not for public repo)
+REIMPORT_INSTRUCTIONS.md
+RESUME_INSTRUCTIONS.md
+
 # Testing
 .pytest_cache/
 .coverage
