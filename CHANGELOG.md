@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-04-12
+
+### Changed
+
+- **Setup wizard enhanced** — `cortex setup` now installs the background service (LaunchAgent/systemd), registers with Claude Code, and offers to add `cortex` to PATH. Two commands is all a new user needs: `brew install` + `cortex setup`.
+- **Homebrew formula fixed** — installs from PyPI wheel instead of building from source (avoids Rust toolchain requirement). Added `include Language::Python::Virtualenv` and `ensurepip` bootstrap.
+
 ## [0.2.2] — 2026-04-11
 
 ### Fixed
@@ -538,6 +545,7 @@ If you're upgrading from a pre-2026-04-07 install:
 > (MCP, dashboard, REST API) plus the CLI now route through the
 > canonical MCP HTTP server.
 
-[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/abbacusgroup/Cortex/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/abbacusgroup/Cortex/compare/v0.2.0...v0.2.2
 [0.2.0]: https://github.com/abbacusgroup/Cortex/releases/tag/v0.2.0

@@ -1,6 +1,6 @@
 [project]
 name = "abbacus-cortex"
-version = "0.2.2"
+version = "0.2.3"
 description = "Cognitive knowledge system with formal ontology, reasoning, and intelligence serving"
 readme = "README.md"
 authors = [
@@ -74,7 +74,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["uv_build>=0.10.12,<0.11.0"]
+requires = ["uv_build>=0.10.12,<1.0.0"]
 build-backend = "uv_build"
 
 [tool.uv]

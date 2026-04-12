@@ -1,15 +1,22 @@
 class AbbacusCortex < Formula
+  include Language::Python::Virtualenv
+
   desc "AI knowledge pipeline -- capture, search, and reason over your knowledge"
   homepage "https://github.com/abbacusgroup/Cortex"
-  url "https://files.pythonhosted.org/packages/source/a/abbacus-cortex/abbacus_cortex-0.2.1.tar.gz"
-  sha256 "0cebbd3846b7e8d90cb3c4ecc4f44805f05616c066371f09810fb71217c53f47"
+  url "https://files.pythonhosted.org/packages/source/a/abbacus-cortex/abbacus_cortex-0.2.2.tar.gz"
+  sha256 "88f3ce14c64e3c5826fa2ee3ee273f2b6216b737835a99d3d53146106444dc5a"
   license "BUSL-1.1"
 
   depends_on "python@3.12"
 
   def install
-    venv = virtualenv_create(libexec, "python3.12")
-    venv.pip_install_and_link buildpath
+    python3 = "python3.12"
+    venv = virtualenv_create(libexec, python3)
+    # Install from PyPI wheel (avoids building from source)
+    system libexec/"bin/python", "-m", "ensurepip", "--default-pip"
+    system libexec/"bin/python", "-m", "pip", "install", "--upgrade", "pip"
+    system libexec/"bin/python", "-m", "pip", "install", "abbacus-cortex==#{version}"
+    bin.install_symlink libexec/"bin/cortex"
   end
 
   def post_install

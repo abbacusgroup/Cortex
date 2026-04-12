@@ -1101,9 +1101,78 @@ def setup(
     else:
         typer.echo("  LLM: not configured (set CORTEX_LLM_MODEL and CORTEX_LLM_API_KEY)")
 
-    typer.echo(f"\nCortex ready at {config.data_dir}")
-    typer.echo("  Run `cortex status` to verify.")
-    typer.echo("  Run `cortex serve` to start the server.")
+    # 5. Install background service
+    if not auto:
+        install_svc = typer.confirm(
+            "\n  Install as background service? (auto-starts on login)", default=True
+        )
+    else:
+        install_svc = True
+
+    if install_svc:
+        try:
+            from cortex.cli.install import do_install
+
+            do_install(config=config, service="mcp")
+        except Exception as e:
+            typer.echo(f"  Service install failed: {e}")
+            typer.echo("  You can start manually: cortex serve --transport mcp-http")
+    else:
+        typer.echo("  Skipped. Start manually: cortex serve --transport mcp-http")
+
+    # 6. Register with Claude Code
+    register_cc = typer.confirm("  Register with Claude Code?", default=True) if not auto else True
+
+    if register_cc:
+        try:
+            import json
+
+            settings_path = Path.home() / ".claude" / "settings.json"
+            settings: dict[str, Any] = {}
+            if settings_path.exists():
+                settings = json.loads(settings_path.read_text())
+            mcp_servers = settings.setdefault("mcpServers", {})
+            mcp_servers["cortex"] = {
+                "type": "http",
+                "url": config.mcp_server_url,
+            }
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
+            settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+            typer.echo(f"  Registered with Claude Code ({config.mcp_server_url})")
+        except Exception as e:
+            typer.echo(f"  Registration failed: {e}")
+            typer.echo("  You can register later: cortex register")
+
+    # 7. PATH check
+    import shutil
+
+    if not shutil.which("cortex"):
+        cortex_bin = Path(sys.executable).parent / "cortex"
+        if cortex_bin.exists():
+            link_path = Path("/usr/local/bin/cortex")
+            if not auto:
+                add_path = typer.confirm(
+                    "  Add `cortex` to your PATH? (creates symlink in /usr/local/bin)",
+                    default=True,
+                )
+            else:
+                add_path = True
+
+            if add_path:
+                try:
+                    link_path.symlink_to(cortex_bin)
+                    typer.echo(f"  Linked: {link_path} -> {cortex_bin}")
+                except PermissionError:
+                    typer.echo(f"  Needs sudo. Run: sudo ln -sf {cortex_bin} {link_path}")
+                except FileExistsError:
+                    typer.echo(f"  {link_path} already exists — skipping")
+            else:
+                typer.echo(f"  Skipped. Run: sudo ln -sf {cortex_bin} /usr/local/bin/cortex")
+
+    typer.echo("\nCortex is ready!")
+    typer.echo(f"  Data:   {config.data_dir}")
+    typer.echo(f"  Server: http://{config.host}:{config.port}/mcp")
+    typer.echo('\n  Try: cortex capture "My first note" --type idea --content "Hello Cortex!"')
 
     global _store
     _store = store
