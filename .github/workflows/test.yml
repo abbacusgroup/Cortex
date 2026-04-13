@@ -95,6 +95,8 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: latest
+          enable-cache: true
+          cache-suffix: "macos-full"
 
       - name: Set up Python
         run: uv python install 3.13
@@ -109,8 +111,5 @@ jobs:
           NO_COLOR: "1"
           COLUMNS: "200"
           CORTEX_PROBE_TIMEOUT_SECONDS: "30"
-          # Bundle 10.6: see Linux job comment — 60s singleton timeout
-          # keeps cold-start capture pipeline calls inside the budget
-          # even when three xdist workers are competing for CPU.
           CORTEX_MCP_CLIENT_TIMEOUT_SECONDS: "60"
         run: uv run pytest tests/ -q -n auto --tb=short
