@@ -5,7 +5,7 @@ class AbbacusCortex < Formula
   homepage "https://github.com/abbacusgroup/Cortex"
   url "https://files.pythonhosted.org/packages/source/a/abbacus-cortex/abbacus_cortex-0.2.2.tar.gz"
   sha256 "88f3ce14c64e3c5826fa2ee3ee273f2b6216b737835a99d3d53146106444dc5a"
-  license "BUSL-1.1"
+  license "MIT"
 
   depends_on "python@3.12"
 

@@ -5,7 +5,7 @@
 [![CI](https://github.com/abbacusgroup/Cortex/actions/workflows/test.yml/badge.svg)](https://github.com/abbacusgroup/Cortex/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/abbacus-cortex)](https://pypi.org/project/abbacus-cortex/)
 [![Python](https://img.shields.io/pypi/pyversions/abbacus-cortex)](https://pypi.org/project/abbacus-cortex/)
-[![License](https://img.shields.io/badge/license-BUSL--1.1-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Cognitive knowledge system with formal ontology, reasoning, and intelligence serving.
 
@@ -204,13 +204,7 @@ Cortex stores all data locally. No telemetry, no analytics, no phone-home. If yo
 
 ## License
 
-Copyright (c) 2026 Abbacus Group. Licensed under the [Business Source License 1.1](LICENSE).
-
-- **Additional Use Grant:** You may use the Licensed Work for your internal business purposes.
-- **Change Date:** 2030-04-11
-- **Change License:** MIT
-
-After the Change Date, this software converts to the MIT license.
+Copyright (c) 2026 Abbacus Group. Licensed under the [MIT License](LICENSE).
 
 ## Trademark Notice
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **License changed from BSL 1.1 to MIT** — the project is now released under the MIT License. All BSL 1.1 terms (Additional Use Grant, Change Date, Change License) no longer apply.
+
 ## [0.2.3] — 2026-04-12
 
 ### Changed
