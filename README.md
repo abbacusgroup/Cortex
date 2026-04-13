@@ -18,31 +18,46 @@ Cortex captures knowledge objects (decisions, lessons, fixes, sessions, research
 ## Install
 
 ```bash
-# Full install (semantic + keyword search)
 pip install abbacus-cortex[embeddings]
-
-# Lightweight (keyword search only, no PyTorch)
-pip install abbacus-cortex
-
-# From source
-git clone https://github.com/abbacusgroup/Cortex.git
-cd Cortex
-uv sync --extra embeddings
+cortex setup
 ```
+
+The setup wizard configures everything: LLM provider, embeddings, dashboard password, background services, and Claude Code registration.
+
+<details>
+<summary>Other install methods</summary>
+
+**Lightweight** (no PyTorch — wizard offers to install embeddings):
+```bash
+pip install abbacus-cortex
+cortex setup
+```
+
+**Homebrew**:
+```bash
+brew install abbacusgroup/tap/abbacus-cortex
+cortex setup
+```
+
+**From source**:
+```bash
+git clone https://github.com/abbacusgroup/Cortex.git && cd Cortex
+uv sync --extra embeddings
+cortex setup
+```
+
+**Docker**:
+```bash
+docker compose up -d
+```
+
+</details>
+
+For non-interactive installs (CI, scripts): `cortex setup --auto` uses environment variables.
 
 ## Quick Start
 
 ```bash
-# 1. Initialize — creates ~/.cortex/, loads ontology, warms up embedding model
-cortex init
-
-# 2. Install background services (auto-start on login)
-cortex install
-
-# 3. Register with Claude Code
-cortex register
-
-# 4. Use
 cortex capture "Fix: Neo4j pool exhaustion" --type fix --content "Root cause was..."
 cortex search "Neo4j"
 cortex list
@@ -52,13 +67,12 @@ cortex dashboard                    # web UI at http://localhost:1315
 
 ## Configuration
 
-Set via environment variables (prefix `CORTEX_`) or `.env` file:
+`cortex setup` writes configuration to `~/.cortex/.env`. You can also edit it directly:
 
 ```env
-CORTEX_DATA_DIR=~/.cortex
+CORTEX_LLM_PROVIDER=anthropic
 CORTEX_LLM_MODEL=claude-sonnet-4-20250514
 CORTEX_LLM_API_KEY=sk-...
-CORTEX_DASHBOARD_PASSWORD=           # set via `cortex setup`
 CORTEX_EMBEDDING_MODEL=all-mpnet-base-v2
 ```
 

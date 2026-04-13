@@ -16,8 +16,8 @@ COPY src/ src/
 COPY ontology/ ontology/
 COPY llms.txt ./
 
-# Install dependencies
-RUN uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
+# Install dependencies (including embeddings for semantic search)
+RUN uv sync --no-dev --frozen --extra embeddings 2>/dev/null || uv sync --no-dev --extra embeddings
 
 # Create data directory and initialize
 RUN mkdir -p /data
@@ -32,5 +32,5 @@ EXPOSE 1314
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
     CMD python -c "import urllib.request,json; r=urllib.request.Request('http://localhost:1314/mcp',data=json.dumps({'jsonrpc':'2.0','id':1,'method':'ping'}).encode(),headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'},method='POST'); urllib.request.urlopen(r)" || exit 1
 
-# Init data dir if empty (handles mounted volumes), then start server
-CMD ["sh", "-c", "uv run cortex init 2>/dev/null; uv run cortex serve --transport mcp-http --host 0.0.0.0 --port 1314"]
+# Setup (auto mode: writes .env from env vars, inits stores), then start server
+CMD ["sh", "-c", "uv run cortex setup --auto 2>/dev/null; uv run cortex serve --transport mcp-http --host 0.0.0.0 --port 1314"]

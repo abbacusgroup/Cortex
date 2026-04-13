@@ -9,7 +9,7 @@ services:
       - CORTEX_DATA_DIR=/data
       - CORTEX_HOST=0.0.0.0
       - CORTEX_PORT=1314
-      # Uncomment and set your LLM config:
+      # Set your LLM provider for classification (optional):
       # - CORTEX_LLM_PROVIDER=anthropic
       # - CORTEX_LLM_MODEL=claude-sonnet-4-20250514
       # - CORTEX_LLM_API_KEY=sk-...

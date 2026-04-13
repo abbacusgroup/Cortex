@@ -342,7 +342,7 @@ def _get_store(*, must_init: bool = True) -> Store:
         store.initialize(ontology_path)
     except FileNotFoundError:
         if must_init:
-            typer.echo("Error: Cortex not initialized. Run `cortex init` first.", err=True)
+            typer.echo("Error: Cortex not initialized. Run `cortex setup` first.", err=True)
             raise typer.Exit(1) from None
 
     _store = store
@@ -382,32 +382,15 @@ def _warmup_embeddings(config: CortexConfig) -> None:
         typer.echo("  Embeddings: warm-up failed — will retry on first use")
 
 
-@app.command()
+@app.command(hidden=True)
 def init(
     data_dir: str | None = typer.Option(None, "--data-dir", "-d", help="Data directory path"),
 ) -> None:
-    """Initialize Cortex — create data directory, load ontology, set up stores."""
-    config = load_config(data_dir=Path(data_dir) if data_dir else None)
-    setup_logging(level=config.log_level, json_output=False)
+    """Initialize Cortex (deprecated — use ``cortex setup`` instead)."""
+    typer.secho("Note: `cortex init` is deprecated. Use `cortex setup` instead.", fg=typer.colors.YELLOW)
+    from cortex.cli.setup_wizard import run_setup_wizard
 
-    store = _open_store_or_exit(config)
-
-    try:
-        ontology_path = find_ontology()
-    except FileNotFoundError:
-        typer.echo("Error: Ontology file not found", err=True)
-        raise typer.Exit(1) from None
-
-    triples = store.graph.load_ontology(ontology_path)
-
-    typer.echo(f"Cortex initialized at {config.data_dir}")
-    typer.echo(f"  Ontology: {triples} triples loaded")
-    typer.echo(f"  Graph DB: {config.graph_db_path}")
-    typer.echo(f"  SQLite:   {config.sqlite_db_path}")
-    _warmup_embeddings(config)
-
-    global _store
-    _store = store
+    run_setup_wizard(auto=True)
 
 
 @app.command()
@@ -1050,132 +1033,9 @@ def setup(
     auto: bool = typer.Option(False, "--auto", help="Non-interactive with defaults"),
 ) -> None:
     """Set up Cortex — interactive wizard or auto mode."""
-    import bcrypt
+    from cortex.cli.setup_wizard import run_setup_wizard
 
-    config = load_config()
-    setup_logging(level=config.log_level, json_output=False)
-
-    typer.echo("Cortex Setup\n")
-
-    # 1. Data directory
-    typer.echo(f"  Data directory: {config.data_dir}")
-    if config.data_dir.exists():
-        typer.echo("  (already exists)")
-    else:
-        config.data_dir.mkdir(parents=True, exist_ok=True)
-        typer.echo("  (created)")
-
-    # 2. Initialize stores
-    store = _open_store_or_exit(config)
-    try:
-        ontology_path = find_ontology()
-        store.initialize(ontology_path)
-        typer.echo("  Ontology loaded")
-    except FileNotFoundError:
-        typer.echo("  Ontology not found — skipping")
-
-    _warmup_embeddings(config)
-
-    # 3. Dashboard password
-    if not auto:
-        set_pw = typer.confirm("  Set a dashboard password?", default=False)
-        if set_pw:
-            pw = typer.prompt("  Password", hide_input=True)
-            pw_hash = bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
-            store.content.set_config("dashboard_password_hash", pw_hash)
-            typer.echo("  Password set")
-    else:
-        typer.echo("  Dashboard: open access (no password)")
-
-    # 4. LLM test
-    if config.llm_model and config.llm_api_key:
-        typer.echo(f"  LLM: {config.llm_model}")
-        try:
-            from cortex.services.llm import LLMClient
-
-            llm = LLMClient(config)
-            llm.complete("Say 'connected' in one word.")
-            typer.echo("  LLM: Connected")
-        except Exception as e:
-            typer.echo(f"  LLM: Failed — {e}")
-    else:
-        typer.echo("  LLM: not configured (set CORTEX_LLM_MODEL and CORTEX_LLM_API_KEY)")
-
-    # 5. Install background service
-    if not auto:
-        install_svc = typer.confirm(
-            "\n  Install as background service? (auto-starts on login)", default=True
-        )
-    else:
-        install_svc = True
-
-    if install_svc:
-        try:
-            from cortex.cli.install import do_install
-
-            do_install(config=config, service="mcp")
-        except Exception as e:
-            typer.echo(f"  Service install failed: {e}")
-            typer.echo("  You can start manually: cortex serve --transport mcp-http")
-    else:
-        typer.echo("  Skipped. Start manually: cortex serve --transport mcp-http")
-
-    # 6. Register with Claude Code
-    register_cc = typer.confirm("  Register with Claude Code?", default=True) if not auto else True
-
-    if register_cc:
-        try:
-            import json
-
-            settings_path = Path.home() / ".claude" / "settings.json"
-            settings: dict[str, Any] = {}
-            if settings_path.exists():
-                settings = json.loads(settings_path.read_text())
-            mcp_servers = settings.setdefault("mcpServers", {})
-            mcp_servers["cortex"] = {
-                "type": "http",
-                "url": config.mcp_server_url,
-            }
-            settings_path.parent.mkdir(parents=True, exist_ok=True)
-            settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-            typer.echo(f"  Registered with Claude Code ({config.mcp_server_url})")
-        except Exception as e:
-            typer.echo(f"  Registration failed: {e}")
-            typer.echo("  You can register later: cortex register")
-
-    # 7. PATH check
-    import shutil
-
-    if not shutil.which("cortex"):
-        cortex_bin = Path(sys.executable).parent / "cortex"
-        if cortex_bin.exists():
-            link_path = Path("/usr/local/bin/cortex")
-            if not auto:
-                add_path = typer.confirm(
-                    "  Add `cortex` to your PATH? (creates symlink in /usr/local/bin)",
-                    default=True,
-                )
-            else:
-                add_path = True
-
-            if add_path:
-                try:
-                    link_path.symlink_to(cortex_bin)
-                    typer.echo(f"  Linked: {link_path} -> {cortex_bin}")
-                except PermissionError:
-                    typer.echo(f"  Needs sudo. Run: sudo ln -sf {cortex_bin} {link_path}")
-                except FileExistsError:
-                    typer.echo(f"  {link_path} already exists — skipping")
-            else:
-                typer.echo(f"  Skipped. Run: sudo ln -sf {cortex_bin} /usr/local/bin/cortex")
-
-    typer.echo("\nCortex is ready!")
-    typer.echo(f"  Data:   {config.data_dir}")
-    typer.echo(f"  Server: http://{config.host}:{config.port}/mcp")
-    typer.echo('\n  Try: cortex capture "My first note" --type idea --content "Hello Cortex!"')
-
-    global _store
-    _store = store
+    run_setup_wizard(auto=auto)
 
 
 @app.command(name="import-v1")
@@ -2053,7 +1913,7 @@ def doctor_check() -> None:
             f"  Stores:     FAIL — missing: {', '.join(missing)}",
             fg=typer.colors.RED,
         )
-        typer.echo("  Run `cortex init` to create data stores.")
+        typer.echo("  Run `cortex setup` to create data stores.")
         raise typer.Exit(1)
 
     # 2. FTS5 consistency
@@ -2144,7 +2004,7 @@ def doctor_repair() -> None:
     # Verify stores exist
     if not config.sqlite_db_path.exists():
         typer.secho(
-            "cortex.db not found. Run `cortex init` first.",
+            "cortex.db not found. Run `cortex setup` first.",
             fg=typer.colors.RED,
             err=True,
         )

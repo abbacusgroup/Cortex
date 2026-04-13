@@ -52,6 +52,8 @@ _MACOS_MCP_PLIST = """\
         <string>{bin_dir}:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
         <string>{home}</string>
+        <key>CORTEX_DATA_DIR</key>
+        <string>{data_dir}</string>
     </dict>
 
     <key>RunAtLoad</key>
@@ -97,6 +99,8 @@ _MACOS_DASHBOARD_PLIST = """\
         <string>{bin_dir}:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
         <string>{home}</string>
+        <key>CORTEX_DATA_DIR</key>
+        <string>{data_dir}</string>
     </dict>
 
     <key>RunAtLoad</key>

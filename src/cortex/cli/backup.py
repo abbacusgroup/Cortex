@@ -125,7 +125,7 @@ def do_backup(config: CortexConfig, output: Path | None = None) -> Path:
     if not config.sqlite_db_path.exists():
         typer.secho(
             f"Cortex not initialized — {config.sqlite_db_path} not found.\n"
-            "Run `cortex init` first.",
+            "Run `cortex setup` first.",
             fg=typer.colors.RED,
             err=True,
         )

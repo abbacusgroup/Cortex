@@ -26,22 +26,14 @@ class AbbacusCortex < Formula
 
   def caveats
     <<~EOS
-      To start the Cortex MCP server as a background service:
-        brew services start abbacus-cortex
+      Run the setup wizard (first time only):
+        cortex setup
 
-      Or run manually:
+      The wizard configures your LLM provider, installs embeddings,
+      sets up background services, and registers with Claude Code.
+
+      Or start manually:
         cortex serve --transport mcp-http
-
-      Initialize Cortex (first time only):
-        cortex init
-
-      For semantic search, install the embeddings extra:
-        #{libexec}/bin/pip install sentence-transformers
-
-      Or configure an API-based embedding provider:
-        export CORTEX_EMBEDDING_PROVIDER=litellm
-        export CORTEX_EMBEDDING_MODEL=openai/text-embedding-3-small
-        export CORTEX_EMBEDDING_API_KEY=sk-...
     EOS
   end
 

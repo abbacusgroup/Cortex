@@ -63,27 +63,24 @@ def _extract_id(output: str) -> str:
 
 
 class TestInit:
-    def test_init_succeeds(self):
+    """Test that ``cortex init`` (deprecated) delegates to the setup wizard."""
+
+    def test_init_shows_deprecation_notice(self):
         result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
-        assert "initialized" in result.output.lower()
+        assert "deprecated" in result.output
 
-    def test_init_idempotent(self):
-        first = runner.invoke(app, ["init"])
-        assert first.exit_code == 0
-        # Close and reset store so second init can acquire the graph lock
-        if cli_mod._store is not None:
-            cli_mod._store.close()
-        cli_mod._store = None
-        second = runner.invoke(app, ["init"])
-        assert second.exit_code == 0
-        assert "initialized" in second.output.lower()
+    def test_init_runs_wizard(self):
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code == 0
+        assert "Cortex Setup" in result.output
+        assert "Cortex is ready" in result.output
 
     def test_init_shows_embeddings_status(self):
         result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
-        # Should mention embeddings — either "ready" or "not installed"
-        assert "Embeddings:" in result.output
+        # Wizard mentions embeddings — either model name or "NOT installed"
+        assert "Embeddings" in result.output
 
     def test_init_warmup_reports_not_installed(self, monkeypatch):
         """When sentence-transformers is absent, init reports it gracefully."""
@@ -99,7 +96,7 @@ class TestInit:
         monkeypatch.setattr(builtins, "__import__", _block_st)
         result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
-        assert "not available" in result.output
+        assert "not installed" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
