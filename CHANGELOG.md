@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-04-13
+
+### Changed
+
+- **Author pseudonym** — PyPI metadata now uses `grayisnotacolor` instead of real name.
+
 ## [0.2.4] — 2026-04-13
 
 ### Added
@@ -566,7 +572,8 @@ If you're upgrading from a pre-2026-04-07 install:
 > (MCP, dashboard, REST API) plus the CLI now route through the
 > canonical MCP HTTP server.
 
-[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/abbacusgroup/Cortex/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/abbacusgroup/Cortex/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/abbacusgroup/Cortex/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/abbacusgroup/Cortex/compare/v0.2.0...v0.2.2

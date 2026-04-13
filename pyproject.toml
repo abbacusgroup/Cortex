@@ -1,10 +1,10 @@
 [project]
 name = "abbacus-cortex"
-version = "0.2.4"
+version = "0.2.5"
 description = "Cognitive knowledge system with formal ontology, reasoning, and intelligence serving"
 readme = "README.md"
 authors = [
-    { name = "Fabrizzio Silveira", email = "74255714+grayisnotacolor@users.noreply.github.com" }
+    { name = "grayisnotacolor", email = "74255714+grayisnotacolor@users.noreply.github.com" }
 ]
 license = "MIT"
 license-files = ["LICENSE"]
