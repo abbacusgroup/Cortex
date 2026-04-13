@@ -82,12 +82,15 @@ jobs:
         run: uv run pytest tests/ -q -n auto --tb=short
 
   test-macos:
-    name: macOS (3.13) — full suite incl. integration
+    name: macOS (3.13) — integration only
     # Only run on schedule, manual dispatch, or push to main. Skip for
     # PRs from forks (which can't access the macOS runner pool cheaply).
+    #
+    # This job runs ONLY macOS-specific tests (LaunchAgent, lsof, signal
+    # handling, concurrency). The full suite already runs on Linux above.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -96,7 +99,7 @@ jobs:
         with:
           version: latest
           enable-cache: true
-          cache-suffix: "macos-full"
+          cache-suffix: "macos-integration"
 
       - name: Set up Python
         run: uv python install 3.13
@@ -104,12 +107,16 @@ jobs:
       - name: Install dependencies
         run: |
           uv venv
-          uv sync --group dev --extra embeddings
+          uv sync --group dev
 
-      - name: Run pytest (full suite, incl. macOS-only integration)
+      - name: Run pytest (macOS-only integration tests)
         env:
           NO_COLOR: "1"
           COLUMNS: "200"
           CORTEX_PROBE_TIMEOUT_SECONDS: "30"
           CORTEX_MCP_CLIENT_TIMEOUT_SECONDS: "60"
-        run: uv run pytest tests/ -q -n auto --tb=short
+        run: >
+          uv run pytest
+          tests/integration/
+          tests/cli/test_install.py
+          -q --tb=short
