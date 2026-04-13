@@ -10,7 +10,6 @@ import pytest
 
 from cortex.cli.env_writer import read_env, write_env
 
-
 # ---------------------------------------------------------------------------
 # env_writer — read_env
 # ---------------------------------------------------------------------------
@@ -89,12 +88,12 @@ class TestWriteEnv:
         """If rename fails, original file should be untouched."""
         env_file = tmp_path / ".env"
         env_file.write_text("ORIGINAL=yes\n")
-        tmp_file = env_file.with_suffix(".env.tmp")
-
-        with patch("cortex.cli.env_writer.os.chmod"):
-            with patch.object(Path, "rename", side_effect=OSError("disk full")):
-                with pytest.raises(OSError):
-                    write_env(env_file, {"NEW": "val"})
+        with (
+            patch("cortex.cli.env_writer.os.chmod"),
+            patch.object(Path, "rename", side_effect=OSError("disk full")),
+            pytest.raises(OSError),
+        ):
+            write_env(env_file, {"NEW": "val"})
         # Original untouched
         assert env_file.read_text() == "ORIGINAL=yes\n"
 
@@ -199,9 +198,11 @@ class TestStepVerify:
         from cortex.core.config import CortexConfig
 
         config = CortexConfig(data_dir=tmp_path, host="127.0.0.1", port=19999)
-        with patch("cortex.cli.setup_wizard.time.sleep"):
-            with patch("cortex.cli.setup_wizard._probe_http", return_value=False):
-                _step_verify(config)  # should not raise
+        with (
+            patch("cortex.cli.setup_wizard.time.sleep"),
+            patch("cortex.cli.setup_wizard._probe_http", return_value=False),
+        ):
+            _step_verify(config)  # should not raise
 
 
 # ---------------------------------------------------------------------------

@@ -387,7 +387,10 @@ def init(
     data_dir: str | None = typer.Option(None, "--data-dir", "-d", help="Data directory path"),
 ) -> None:
     """Initialize Cortex (deprecated — use ``cortex setup`` instead)."""
-    typer.secho("Note: `cortex init` is deprecated. Use `cortex setup` instead.", fg=typer.colors.YELLOW)
+    typer.secho(
+        "Note: `cortex init` is deprecated. Use `cortex setup` instead.",
+        fg=typer.colors.YELLOW,
+    )
     from cortex.cli.setup_wizard import run_setup_wizard
 
     run_setup_wizard(auto=True)

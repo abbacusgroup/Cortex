@@ -98,7 +98,7 @@ def _test_llm(config: CortexConfig, model: str, api_key: str, provider: str) -> 
             return False, "LLM client not available (check litellm installation)"
         client.complete("Say 'connected' in one word.")
         return True, "connected"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return False, str(e)
 
 
@@ -124,7 +124,7 @@ def _probe_http(url: str, retries: int = 5, delay: float = 1.0) -> bool:
 
 def _step_data_dir(config: CortexConfig) -> None:
     """Step 1: Ensure data directory exists."""
-    _echo(f"[1/7] Data directory")
+    _echo("[1/7] Data directory")
     if config.data_dir.exists():
         _echo(f"      {config.data_dir}/ (exists)")
     else:
@@ -134,12 +134,12 @@ def _step_data_dir(config: CortexConfig) -> None:
 
 def _step_stores(config: CortexConfig) -> Store:
     """Step 2: Initialize stores and load ontology."""
-    _echo(f"\n[2/7] Stores & ontology")
+    _echo("\n[2/7] Stores & ontology")
     store = _open_store_or_exit(config)
     try:
         ontology_path = find_ontology()
         store.initialize(ontology_path)
-        _echo(f"      Ontology loaded")
+        _echo("      Ontology loaded")
     except FileNotFoundError:
         _echo("      Ontology not found — skipping")
     _echo(f"      Graph:  {config.graph_db_path}")
@@ -149,14 +149,10 @@ def _step_stores(config: CortexConfig) -> Store:
 
 def _step_llm(config: CortexConfig, auto: bool) -> dict[str, str]:
     """Step 3: Configure LLM provider. Returns env vars to persist."""
-    from cortex.cli.env_writer import read_env
-
-    _echo(f"\n[3/7] LLM provider")
+    _echo("\n[3/7] LLM provider")
 
     env_updates: dict[str, str] = {}
 
-    # Check if already configured (from env vars or existing .env)
-    existing_env = read_env(config.data_dir / ".env")
     has_llm = bool(config.llm_model and config.llm_api_key)
 
     if has_llm and not auto:
@@ -215,7 +211,7 @@ def _step_llm(config: CortexConfig, auto: bool) -> dict[str, str]:
     if provider_info["default_model"] is None:
         model = typer.prompt("      Model (e.g. 'together/meta-llama/Llama-3-70b')")
     else:
-        model = typer.prompt(f"      Model", default=provider_info["default_model"])
+        model = typer.prompt("      Model", default=provider_info["default_model"])
 
     # API key
     api_key = ""
@@ -226,13 +222,16 @@ def _step_llm(config: CortexConfig, auto: bool) -> dict[str, str]:
                 break
             if provider_info["key_url"]:
                 _echo(f"      Get a key at {provider_info['key_url']}")
-            skip = typer.prompt("      Press Enter to try again, or type 'skip' to continue without LLM", default="")
+            skip = typer.prompt(
+                "      Press Enter to try again, or type 'skip' to continue without LLM",
+                default="",
+            )
             if skip.lower() == "skip":
                 _echo("      Skipped LLM configuration.")
                 return env_updates
 
     # Test connection
-    _echo(f"      Testing...")
+    _echo("      Testing...")
     ok, msg = _test_llm(config, model, api_key, provider_str)
     if ok:
         _echo(f"      Connected ({model})")
@@ -253,7 +252,7 @@ def _step_llm(config: CortexConfig, auto: bool) -> dict[str, str]:
                 api_key = typer.prompt("      API key", hide_input=True, default="")
                 if not api_key:
                     continue
-                _echo(f"      Testing...")
+                _echo("      Testing...")
                 ok, msg = _test_llm(config, model, api_key, provider_str)
                 if ok:
                     _echo(f"      Connected ({model})")
@@ -294,7 +293,8 @@ def _step_embeddings(config: CortexConfig, auto: bool) -> None:
                 _echo("      Installed.")
                 provider = create_embedding_provider(config)
             else:
-                last_line = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "unknown error"
+                stderr = result.stderr.strip()
+                last_line = stderr.splitlines()[-1] if stderr else "unknown error"
                 _echo(f"      Install failed: {last_line}")
                 _echo("      Install manually later: pip install sentence-transformers")
                 return
@@ -314,7 +314,7 @@ def _step_dashboard_password(store: Store, auto: bool) -> None:
     """Step 5: Set dashboard password."""
     import bcrypt
 
-    _echo(f"\n[5/7] Dashboard password")
+    _echo("\n[5/7] Dashboard password")
 
     existing = store.content.get_config("dashboard_password_hash")
 
@@ -325,10 +325,9 @@ def _step_dashboard_password(store: Store, auto: bool) -> None:
             _echo("      Open access (no password)")
         return
 
-    if existing:
-        if not typer.confirm("      Password already set. Change it?", default=False):
-            _echo("      Kept.")
-            return
+    if existing and not typer.confirm("      Password already set. Change it?", default=False):
+        _echo("      Kept.")
+        return
 
     if not typer.confirm("      Set a dashboard password?", default=False):
         _echo("      Open access (no password)")
@@ -345,7 +344,7 @@ def _step_services(config: CortexConfig, env_updates: dict[str, str], auto: bool
     from cortex.cli.env_writer import write_env
     from cortex.cli.install import do_install
 
-    _echo(f"\n[6/7] Background services")
+    _echo("\n[6/7] Background services")
 
     if not auto:
         install_svc = typer.confirm(
@@ -365,14 +364,18 @@ def _step_services(config: CortexConfig, env_updates: dict[str, str], auto: bool
     if install_svc:
         try:
             do_install(config=config, service="all")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             _echo(f"      Service install failed: {e}")
             _echo("      You can start manually: cortex serve --transport mcp-http")
     else:
         _echo("      Skipped services. Start manually: cortex serve --transport mcp-http")
 
     # 6c. Register with Claude Code
-    register_cc = typer.confirm("      Register with Claude Code?", default=True) if not auto else True
+    register_cc = (
+        typer.confirm("      Register with Claude Code?", default=True)
+        if not auto
+        else True
+    )
     if register_cc:
         try:
             settings_path = Path.home() / ".claude" / "settings.json"
@@ -387,7 +390,7 @@ def _step_services(config: CortexConfig, env_updates: dict[str, str], auto: bool
             settings_path.parent.mkdir(parents=True, exist_ok=True)
             settings_path.write_text(json.dumps(settings, indent=2) + "\n")
             _echo(f"      Registered with Claude Code ({config.mcp_server_url})")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             _echo(f"      Registration failed: {e}")
             _echo("      You can register later: cortex register")
 
@@ -418,7 +421,7 @@ def _step_services(config: CortexConfig, env_updates: dict[str, str], auto: bool
 
 def _step_verify(config: CortexConfig) -> None:
     """Step 7: Verify services are running."""
-    _echo(f"\n[7/7] Verification")
+    _echo("\n[7/7] Verification")
     _echo("      Waiting for services to start...")
     time.sleep(2)
 
@@ -507,9 +510,9 @@ def run_setup_wizard(auto: bool = False) -> None:
     cli_mod._store = store
 
     # Done
-    _echo(f"\nCortex is ready.")
+    _echo("\nCortex is ready.")
     _echo(f"  MCP:       http://{config.host}:{config.port}/mcp")
     _echo(f"  Dashboard: http://{config.host}:{config.port + 1}/")
     _echo(f"  Data:      {config.data_dir}/")
-    _echo(f'\n  Try: cortex capture "My first note" --type idea --content "Hello Cortex!"')
-    _echo(f"\n  Restart Claude Code to activate the MCP connection.")
+    _echo('\n  Try: cortex capture "My first note" --type idea --content "Hello Cortex!"')
+    _echo("\n  Restart Claude Code to activate the MCP connection.")

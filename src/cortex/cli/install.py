@@ -5,6 +5,7 @@ Supports macOS (LaunchAgent) and Linux (systemd user unit).
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -248,38 +249,63 @@ def render_dashboard_unit(config: CortexConfig, binary: str) -> str:
 _LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
 
-def _install_launchagent(label: str, content: str) -> Path:
-    """Write a plist and load it via launchctl."""
-    _LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
-    plist_path = _LAUNCH_AGENTS_DIR / f"{label}.plist"
+def _guard_test_mode() -> None:
+    """Refuse to write real service files during test runs."""
+    if os.environ.get("CORTEX_TEST_MODE"):
+        raise RuntimeError(
+            "Refusing to install system services in test mode. "
+            "Mock do_install() in your test or unset CORTEX_TEST_MODE."
+        )
+
+
+def _install_launchagent(
+    label: str,
+    content: str,
+    *,
+    launch_agents_dir: Path = _LAUNCH_AGENTS_DIR,
+    skip_load: bool = False,
+) -> Path:
+    """Write a plist and optionally load it via launchctl."""
+    _guard_test_mode()
+    launch_agents_dir.mkdir(parents=True, exist_ok=True)
+    plist_path = launch_agents_dir / f"{label}.plist"
 
     if plist_path.exists():
         typer.echo(f"  Updating {plist_path.name} (already exists)")
+        if not skip_load:
+            subprocess.run(
+                ["launchctl", "unload", str(plist_path)],
+                check=False,
+                capture_output=True,
+            )
+    else:
+        typer.echo(f"  Creating {plist_path.name}")
+
+    plist_path.write_text(content)
+    if not skip_load:
+        subprocess.run(["launchctl", "load", str(plist_path)], check=True)
+    typer.echo(f"  Loaded {label}")
+    return plist_path
+
+
+def _uninstall_launchagent(
+    label: str,
+    *,
+    launch_agents_dir: Path = _LAUNCH_AGENTS_DIR,
+    skip_load: bool = False,
+) -> None:
+    """Unload and remove a LaunchAgent plist."""
+    _guard_test_mode()
+    plist_path = launch_agents_dir / f"{label}.plist"
+    if not plist_path.exists():
+        typer.echo(f"  {label}: not installed")
+        return
+    if not skip_load:
         subprocess.run(
             ["launchctl", "unload", str(plist_path)],
             check=False,
             capture_output=True,
         )
-    else:
-        typer.echo(f"  Creating {plist_path.name}")
-
-    plist_path.write_text(content)
-    subprocess.run(["launchctl", "load", str(plist_path)], check=True)
-    typer.echo(f"  Loaded {label}")
-    return plist_path
-
-
-def _uninstall_launchagent(label: str) -> None:
-    """Unload and remove a LaunchAgent plist."""
-    plist_path = _LAUNCH_AGENTS_DIR / f"{label}.plist"
-    if not plist_path.exists():
-        typer.echo(f"  {label}: not installed")
-        return
-    subprocess.run(
-        ["launchctl", "unload", str(plist_path)],
-        check=False,
-        capture_output=True,
-    )
     plist_path.unlink()
     typer.echo(f"  Removed {label}")
 
@@ -298,6 +324,7 @@ def _unit_name(label: str) -> str:
 
 def _install_systemd_unit(label: str, content: str) -> Path:
     """Write a unit file and enable it."""
+    _guard_test_mode()
     if not shutil.which("systemctl"):
         typer.echo(
             "  Error: systemctl not found — systemd is required for service install on Linux"
@@ -328,6 +355,7 @@ def _install_systemd_unit(label: str, content: str) -> Path:
 
 def _uninstall_systemd_unit(label: str) -> None:
     """Disable and remove a systemd user unit."""
+    _guard_test_mode()
     unit_path = _SYSTEMD_USER_DIR / _unit_name(label)
     unit_name = unit_path.name
     if not unit_path.exists():

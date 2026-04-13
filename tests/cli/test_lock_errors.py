@@ -45,6 +45,7 @@ def _isolate(tmp_path, monkeypatch):
     cli_mod._mcp_client = None
     cli_mod._mcp_probe_done = False
     monkeypatch.setenv("CORTEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CORTEX_TEST_MODE", "1")
     # Phase 3: lock-error tests verify the direct-store path. Force direct
     # mode so commands like `cortex list` exercise the StoreLockedError flow
     # instead of routing through the live MCP HTTP server.
