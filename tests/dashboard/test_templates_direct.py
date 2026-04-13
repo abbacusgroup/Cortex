@@ -157,18 +157,20 @@ class TestDocumentsTemplate:
             query="hello",
             doc_type="fix",
             project="cortex",
+            project_names=["cortex", "artemis"],
         )
         # Query input value reflects current search
         assert 'value="hello"' in html
-        # Project input value reflects filter
-        assert 'value="cortex"' in html
+        # Project dropdown has selected option
+        assert 'value="cortex" selected' in html
         # selected option reflects doc_type
         assert 'value="fix" selected' in html
         assert "0 result(s)" in html
 
     def test_renders_empty_state(self, env: Environment) -> None:
         html = env.get_template("documents.html").render(
-            documents=[], query="", doc_type="", project=""
+            documents=[], query="", doc_type="", project="",
+            project_names=[],
         )
         assert "No documents found." in html
 
@@ -305,7 +307,7 @@ class TestSettingsTemplate:
             log_level="INFO",
         )
         html = env.get_template("settings.html").render(
-            config=config, weights={"recency": 0.3, "similarity": 0.7}
+            config=config, weights={}, msg="", msg_type="info",
         )
         assert "127.0.0.1" in html
         assert "1314" in html
@@ -313,17 +315,16 @@ class TestSettingsTemplate:
         assert "claude-opus-4-6" in html
         assert "all-MiniLM-L6-v2" in html
         assert "INFO" in html
-        assert "Recency" in html
-        assert "0.3" in html
-        assert "Similarity" in html
-        assert "0.7" in html
+        assert "Import from Obsidian" in html
+        assert "Export to Obsidian" in html
 
     def test_renders_with_empty_weights(self, env: Environment, tmp_path: Path) -> None:
         config = CortexConfig(data_dir=tmp_path)
-        html = env.get_template("settings.html").render(config=config, weights={})
-        # Must not crash when weights is empty
-        assert "Retrieval Weights" in html
+        html = env.get_template("settings.html").render(
+            config=config, weights={}, msg="", msg_type="info",
+        )
         assert "Configuration" in html
+        assert "Import from Obsidian" in html
 
 
 # ==========================================================================

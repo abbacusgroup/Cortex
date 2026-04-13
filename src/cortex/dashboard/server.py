@@ -471,11 +471,11 @@ def create_dashboard(
             )
 
         try:
-            from cortex.db.store import Store
-            from cortex.pipeline.importer import ObsidianImporter
+            import cortex.db.store as _store_mod
+            import cortex.pipeline.importer as _importer_mod
 
-            store = Store(config.data_dir)
-            importer = ObsidianImporter(store, pipeline=None)
+            store = _store_mod.Store(config.data_dir)
+            importer = _importer_mod.ObsidianImporter(store, pipeline=None)
             result = importer.run(vault)
             store.close()
 
