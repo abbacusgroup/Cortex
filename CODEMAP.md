@@ -37,17 +37,17 @@ cortex/
 │   ├── services/
 │   │   └── llm.py               # litellm wrapper, classification, relationship prompts
 │   ├── transport/
-│   │   ├── mcp/server.py        # MCP server (14 tools, stdio + HTTP)
+│   │   ├── mcp/server.py        # MCP server (22 tools, stdio + HTTP)
 │   │   └── api/server.py        # REST API (FastAPI, auth, rate limiting)
 │   ├── cli/
-│   │   └── main.py              # Typer CLI (18 commands)
+│   │   └── main.py              # Typer CLI (23 commands + doctor subcommands)
 │   └── dashboard/
 │       ├── server.py            # Dashboard server (FastAPI + Jinja2)
-│       ├── templates/           # 9 HTML templates
+│       ├── templates/           # 11 HTML templates
 │       └── static/              # CSS + JS (Cytoscape.js)
 ├── ontology/
 │   └── cortex.ttl               # OWL ontology (304 triples)
-├── tests/                       # ~490 tests mirroring src/ structure
+├── tests/                       # ~993 tests mirroring src/ structure
 ├── pyproject.toml
 ├── Dockerfile
 ├── docker-compose.yml

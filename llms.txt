@@ -56,7 +56,7 @@ Re-run the intelligence pipeline on an existing object.
 ### cortex_link
 Create a typed relationship between two knowledge objects.
 - from_id (str, required): Source object ID
-- rel_type (str, required): causedBy, contradicts, supports, supersedes, dependsOn, implements
+- rel_type (str, required): causedBy, contradicts, supports, supersedes, dependsOn, ledTo, implements, mentions
 - to_id (str, required): Target object ID
 
 ### cortex_feedback

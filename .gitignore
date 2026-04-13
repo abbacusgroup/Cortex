@@ -30,6 +30,9 @@ server.json
 REIMPORT_INSTRUCTIONS.md
 RESUME_INSTRUCTIONS.md
 
+# Dev sandbox data
+.cortex-dev/
+
 # Testing
 .pytest_cache/
 .coverage

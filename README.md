@@ -85,6 +85,11 @@ See `.env.example` for all options.
 | `cortex entities` | List resolved entities |
 | `cortex serve` | Start MCP or HTTP server |
 | `cortex dashboard` | Start web dashboard |
+| `cortex backup` | Backup data directory to archive |
+| `cortex restore` | Restore from backup archive |
+| `cortex doctor` | Diagnostics: `check`, `unlock`, `logs`, `repair` |
+| `cortex pipeline` | Re-run intelligence pipeline on an object |
+| `cortex reason` | Run advanced reasoning (contradictions, patterns, gaps) |
 | `cortex import-v1` | Import from Cortex v1 database |
 | `cortex import-vault` | Import from Obsidian vault |
 
