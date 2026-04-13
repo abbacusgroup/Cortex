@@ -7,9 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-04-13
+
+### Added
+
+- **Explore page** — new page replacing the graph view as the primary way to browse connections. Topic search with dossier summaries, typed relationship lists, and an entity browser with connection-weighted chips.
+- **Project hub home page** — home page now shows a grid of project cards with document counts and last activity dates, plus a recent activity table below.
+- **Project detail view** — clicking a project card shows recent activity filtered to that project (`/project/<name>`).
+- **Import/export in settings** — Obsidian vault import and markdown export controls added to the settings page.
+
 ### Changed
 
-- **License changed from BSL 1.1 to MIT** — the project is now released under the MIT License. All BSL 1.1 terms (Additional Use Grant, Change Date, Change License) no longer apply.
+- **License changed from BSL 1.1 to MIT** — the project is now released under the MIT License.
+- **Project filter is now a dropdown** — documents and graph pages use a dropdown populated from existing projects instead of a free-text input.
+- **Entities merged into Explore** — the standalone entities page is now part of the Explore page as a browsable entity grid.
+- **Graph page marked as under development** — with a link directing users to the Explore page.
+- **Template cleanup** — inline styles replaced with CSS utility classes across all templates.
+
+### Fixed
+
+- **Project cards showing empty** — projects are now derived from document `project` fields instead of entity records, which vault imports don't create.
 
 ## [0.2.3] — 2026-04-12
 
@@ -549,7 +566,8 @@ If you're upgrading from a pre-2026-04-07 install:
 > (MCP, dashboard, REST API) plus the CLI now route through the
 > canonical MCP HTTP server.
 
-[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/abbacusgroup/Cortex/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/abbacusgroup/Cortex/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/abbacusgroup/Cortex/compare/v0.2.0...v0.2.2
 [0.2.0]: https://github.com/abbacusgroup/Cortex/releases/tag/v0.2.0
