@@ -7,13 +7,20 @@
 {% endblock %}
 
 {% block content %}
-<h2 style="margin-bottom: 1rem;">Knowledge Graph</h2>
+<h2 class="page-title">Knowledge Graph</h2>
 
-<div class="card" style="margin-bottom: 1rem;">
-    <div style="display: flex; gap: 0.5rem; align-items: end;">
+<div class="alert alert-warning">This page is currently under development. For a better way to explore connections, try the <a href="/explore">Explore</a> page.</div>
+
+<div class="card">
+    <div class="form-row">
         <div>
             <label for="gf-project">Project</label>
-            <input type="text" id="gf-project" placeholder="Filter by project...">
+            <select id="gf-project">
+                <option value="">All</option>
+                {% for p in project_names %}
+                <option value="{{ p }}">{{ p }}</option>
+                {% endfor %}
+            </select>
         </div>
         <div>
             <label for="gf-type">Type</label>
@@ -31,11 +38,11 @@
     </div>
 </div>
 
-<button id="load-more" class="btn btn-sm" style="display:none; margin-bottom: 1rem;" onclick="loadGraph(true)">Load more nodes</button>
+<button id="load-more" class="btn btn-sm hidden" style="margin-bottom: 1rem;" onclick="loadGraph(true)">Load more nodes</button>
 
 <div id="cy"></div>
 
-<div id="node-detail" class="card" style="display:none; margin-top: 1rem;">
+<div id="node-detail" class="card hidden" style="margin-top: 1rem;">
     <div class="card-header">Selected Node</div>
     <div id="node-info"></div>
 </div>

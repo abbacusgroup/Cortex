@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% set active = "explore" %}
+{% block title %}Cortex — Explore{% endblock %}
+
+{% block content %}
+<h2 class="page-title page-title-lg">Explore</h2>
+
+<div class="card card-spaced">
+    <form method="GET" action="/explore" class="form-row">
+        <div>
+            <label for="topic">Search topic</label>
+            <input type="text" id="topic" name="topic" value="{{ topic }}" placeholder="Enter a topic to explore...">
+        </div>
+        <button type="submit" class="btn btn-primary">Explore</button>
+    </form>
+</div>
+
+{% if topic and dossier %}
+
+{# ── Dossier Summary ─────────────────────────────── #}
+<div class="card card-spaced">
+    <div class="card-header">
+        {{ dossier.topic }}
+        {% if dossier.entity %}
+        <span class="badge badge-{{ dossier.entity.type }}">{{ dossier.entity.type }}</span>
+        {% endif %}
+    </div>
+    <div class="explore-stat-row">
+        <div class="explore-stat">
+            <span class="explore-stat-value">{{ dossier.object_count }}</span>
+            <span class="explore-stat-label">related objects</span>
+        </div>
+        {% if connections %}
+        <div class="explore-stat">
+            <span class="explore-stat-value">{{ connections|length }}</span>
+            <span class="explore-stat-label">connections</span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{# ── Connections ──────────────────────────────────── #}
+{% if connections %}
+<div class="card card-spaced">
+    <div class="card-header">Connections</div>
+    <div class="connection-list">
+        {% for conn in connections %}
+        <div class="connection-item">
+            <span class="connection-direction {{ 'connection-outgoing' if conn.direction == 'outgoing' else 'connection-incoming' }}">
+                {{ '→' if conn.direction == 'outgoing' else '←' }}
+            </span>
+            <span class="connection-rel">{{ conn.rel_type }}</span>
+            <a href="/documents/{{ conn.other_id }}" class="connection-target">
+                <span class="badge badge-{{ conn.other_type }}">{{ conn.other_type }}</span>
+                {{ conn.other_title }}
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{# ── Related Objects ──────────────────────────────── #}
+{% if dossier.objects %}
+<div class="card card-spaced">
+    <div class="card-header">Related Objects</div>
+    <table>
+        <thead><tr><th>Type</th><th>Title</th><th>Summary</th></tr></thead>
+        <tbody>
+        {% for obj in dossier.objects %}
+        <tr>
+            <td><span class="badge badge-{{ obj.type }}">{{ obj.type }}</span></td>
+            <td><a href="/documents/{{ obj.id }}">{{ obj.title }}</a></td>
+            <td class="text-muted text-xs truncate-wide">{{ obj.summary[:120] }}{{ '...' if obj.summary|length > 120 else '' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% elif topic and not dossier %}
+<div class="card card-spaced">
+    <p class="table-empty">No results found for "{{ topic }}". Try a different topic or browse entities below.</p>
+</div>
+{% endif %}
+
+{# ── Entity Browser ───────────────────────────────── #}
+<div class="card">
+    <div class="card-header">Entities</div>
+    <form method="GET" action="/explore" class="entity-filter-row">
+        {% if topic %}
+        <input type="hidden" name="topic" value="{{ topic }}">
+        {% endif %}
+        <button type="submit" name="entity_type" value="" class="entity-tab {{ 'entity-tab-active' if not entity_type }}">All</button>
+        <button type="submit" name="entity_type" value="technology" class="entity-tab {{ 'entity-tab-active' if entity_type == 'technology' }}">Technology</button>
+        <button type="submit" name="entity_type" value="concept" class="entity-tab {{ 'entity-tab-active' if entity_type == 'concept' }}">Concept</button>
+        <button type="submit" name="entity_type" value="pattern" class="entity-tab {{ 'entity-tab-active' if entity_type == 'pattern' }}">Pattern</button>
+        <button type="submit" name="entity_type" value="project" class="entity-tab {{ 'entity-tab-active' if entity_type == 'project' }}">Project</button>
+    </form>
+    {% if entities %}
+    <div class="entity-grid">
+        {% for e in entities %}
+        <a href="/explore?topic={{ e.name | urlencode }}" class="entity-chip entity-chip-{{ e.size }}" title="{{ e.connection_count }} connections">
+            <span class="entity-chip-type">{{ e.type }}</span>
+            <span class="entity-chip-name">{{ e.name }}</span>
+            {% if e.connection_count %}<span class="entity-chip-count">{{ e.connection_count }}</span>{% endif %}
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="table-empty">No entities found{{ ' for type "' + entity_type + '"' if entity_type else '' }}.</p>
+    {% endif %}
+</div>
+{% endblock %}

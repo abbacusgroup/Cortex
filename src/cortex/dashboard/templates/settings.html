@@ -3,33 +3,55 @@
 {% block title %}Cortex — Settings{% endblock %}
 
 {% block content %}
-<h2 style="margin-bottom: 1rem;">Settings</h2>
+<h2 class="page-title">Settings</h2>
 
-<div class="card">
+{% if msg %}
+<div class="alert alert-{{ msg_type }}">{{ msg }}</div>
+{% endif %}
+
+<div class="card card-spaced">
     <div class="card-header">Configuration</div>
     <table>
         <tbody>
-        <tr><td style="font-weight: 600;">Data Directory</td><td>{{ config.data_dir }}</td></tr>
-        <tr><td style="font-weight: 600;">Host</td><td>{{ config.host }}</td></tr>
-        <tr><td style="font-weight: 600;">Port</td><td>{{ config.port }}</td></tr>
-        <tr><td style="font-weight: 600;">LLM Provider</td><td>{{ config.llm_provider or '(not configured)' }}</td></tr>
-        <tr><td style="font-weight: 600;">LLM Model</td><td>{{ config.llm_model or '(not configured)' }}</td></tr>
-        <tr><td style="font-weight: 600;">Embedding Provider</td><td>{{ config.embedding_provider }}</td></tr>
-        <tr><td style="font-weight: 600;">Embedding Model</td><td>{{ config.embedding_model }}</td></tr>
-        <tr><td style="font-weight: 600;">Log Level</td><td>{{ config.log_level }}</td></tr>
+        <tr><td class="text-strong">Data Directory</td><td>{{ config.data_dir }}</td></tr>
+        <tr><td class="text-strong">Host</td><td>{{ config.host }}</td></tr>
+        <tr><td class="text-strong">Port</td><td>{{ config.port }}</td></tr>
+        <tr><td class="text-strong">LLM Provider</td><td>{{ config.llm_provider or '(not configured)' }}</td></tr>
+        <tr><td class="text-strong">LLM Model</td><td>{{ config.llm_model or '(not configured)' }}</td></tr>
+        <tr><td class="text-strong">Embedding Provider</td><td>{{ config.embedding_provider }}</td></tr>
+        <tr><td class="text-strong">Embedding Model</td><td>{{ config.embedding_model }}</td></tr>
+        <tr><td class="text-strong">Log Level</td><td>{{ config.log_level }}</td></tr>
         </tbody>
     </table>
 </div>
 
-<div class="card">
-    <div class="card-header">Retrieval Weights</div>
-    <table>
-        <thead><tr><th>Signal</th><th>Weight</th></tr></thead>
-        <tbody>
-        {% for key, val in weights.items() %}
-        <tr><td>{{ key|capitalize }}</td><td>{{ val }}</td></tr>
-        {% endfor %}
-        </tbody>
-    </table>
+<div class="settings-io-grid">
+    <div class="card">
+        <div class="card-header">Import from Obsidian</div>
+        <p class="text-muted text-xs" style="margin-bottom: 0.75rem;">
+            Import markdown files from an Obsidian vault. Wiki-links between notes are converted to Cortex relationships. Duplicate content is automatically skipped.
+        </p>
+        <form method="POST" action="/settings/import">
+            <div class="form-group">
+                <label for="vault_path">Vault path</label>
+                <input type="text" id="vault_path" name="vault_path" placeholder="/path/to/obsidian/vault" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Import</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Export to Obsidian</div>
+        <p class="text-muted text-xs" style="margin-bottom: 0.75rem;">
+            Export all Cortex documents as markdown files with YAML frontmatter. Compatible with Obsidian, Logseq, or any markdown-based tool.
+        </p>
+        <form method="POST" action="/settings/export">
+            <div class="form-group">
+                <label for="export_path">Export path</label>
+                <input type="text" id="export_path" name="export_path" placeholder="/path/to/export/folder" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Export</button>
+        </form>
+    </div>
 </div>
 {% endblock %}

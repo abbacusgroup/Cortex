@@ -3,10 +3,10 @@
 {% block title %}Cortex — Entities{% endblock %}
 
 {% block content %}
-<h2 style="margin-bottom: 1rem;">Entities</h2>
+<h2 class="page-title">Entities</h2>
 
-<div class="card" style="margin-bottom: 1rem;">
-    <form method="GET" action="/entities" style="display: flex; gap: 0.5rem; align-items: end;">
+<div class="card">
+    <form method="GET" action="/entities" class="form-row">
         <div>
             <label for="entity_type">Type</label>
             <select id="entity_type" name="entity_type">
@@ -29,10 +29,10 @@
         <tr>
             <td><strong>{{ e.name }}</strong></td>
             <td><span class="badge">{{ e.type }}</span></td>
-            <td style="color: var(--text-muted); font-size: 0.75rem;">{{ e.id[:12] }}</td>
+            <td class="text-muted text-xs">{{ e.id[:12] }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="3" style="text-align:center; color: var(--text-muted);">No entities found.</td></tr>
+        <tr><td colspan="3" class="table-empty">No entities found.</td></tr>
         {% endfor %}
         </tbody>
     </table>

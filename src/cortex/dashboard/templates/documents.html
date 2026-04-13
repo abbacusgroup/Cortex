@@ -3,11 +3,11 @@
 {% block title %}Cortex — Documents{% endblock %}
 
 {% block content %}
-<h2 style="margin-bottom: 1rem;">Documents</h2>
+<h2 class="page-title">Documents</h2>
 
-<div class="card" style="margin-bottom: 1.5rem;">
-    <form method="GET" action="/documents" style="display: flex; gap: 0.5rem; align-items: end;">
-        <div style="flex: 1;">
+<div class="card card-spaced">
+    <form method="GET" action="/documents" class="form-row">
+        <div>
             <label for="q">Search</label>
             <input type="text" id="q" name="q" value="{{ query }}" placeholder="Search knowledge...">
         </div>
@@ -22,7 +22,12 @@
         </div>
         <div>
             <label for="project">Project</label>
-            <input type="text" id="project" name="project" value="{{ project }}" placeholder="Project...">
+            <select id="project" name="project">
+                <option value="">All</option>
+                {% for p in project_names %}
+                <option value="{{ p }}" {{ 'selected' if project == p }}>{{ p }}</option>
+                {% endfor %}
+            </select>
         </div>
         <button type="submit" class="btn btn-primary">Search</button>
     </form>
@@ -41,7 +46,7 @@
             <td>{{ doc.tags }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="4" style="text-align:center; color: var(--text-muted);">No documents found.</td></tr>
+        <tr><td colspan="4" class="table-empty">No documents found.</td></tr>
         {% endfor %}
         </tbody>
     </table>

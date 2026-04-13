@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% set active = "home" %}
+{% block title %}Cortex — {{ project_name }}{% endblock %}
+
+{% block content %}
+<h2 class="page-title page-title-lg">
+    <a href="/" class="breadcrumb-link">Projects</a>
+    <span class="breadcrumb-sep">/</span>
+    {{ project_name }}
+</h2>
+
+<div class="card">
+    <div class="card-header">Recent Activity</div>
+    {% if documents %}
+    <table>
+        <thead><tr><th>Type</th><th>Title</th><th>Created</th></tr></thead>
+        <tbody>
+        {% for doc in documents %}
+        <tr>
+            <td><span class="badge badge-{{ doc.type }}">{{ doc.type }}</span></td>
+            <td><a href="/documents/{{ doc.id }}">{{ doc.title }}</a></td>
+            <td>{{ doc.created_at[:10] if doc.created_at else '' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="table-empty">No documents in this project yet.</p>
+    {% endif %}
+</div>
+{% endblock %}
