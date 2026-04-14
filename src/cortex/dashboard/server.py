@@ -533,9 +533,12 @@ def create_dashboard(
             )
 
         try:
+            import re as _re
+
             all_docs = await mcp_client.list_objects(limit=5000)
 
             # Pass 1: collect all docs and build id -> filename lookup.
+            # Filenames include relative path for folder structure.
             id_to_filename: dict[str, str] = {}
             doc_cache: list[tuple[str, str, dict]] = []
 
@@ -546,12 +549,19 @@ def create_dashboard(
                     continue
                 title = full.get("title", obj_id[:8])
                 safe_name = _sanitize_filename(title, obj_id[:8])
-                id_to_filename[obj_id] = safe_name
-                doc_cache.append((obj_id, safe_name, full))
+
+                # Build relative path: project/type/filename
+                project = full.get("project", "") or "_unscoped"
+                doc_type = full.get("type", "") or "other"
+                safe_project = _sanitize_filename(project, "unknown")
+                rel_path = f"{safe_project}/{doc_type}/{safe_name}"
+
+                id_to_filename[obj_id] = rel_path
+                doc_cache.append((obj_id, rel_path, full))
 
             # Pass 2: render markdown with relationships and write files.
             exported = 0
-            for obj_id, safe_name, full in doc_cache:
+            for obj_id, rel_path, full in doc_cache:
                 title = full.get("title", obj_id[:8])
 
                 # Build markdown with YAML frontmatter.
@@ -560,12 +570,26 @@ def create_dashboard(
                 md += f"type: {full.get('type', '')}\n"
                 md += f"project: {full.get('project', '')}\n"
                 raw_tags = full.get("tags", "")
-                tag_list = [t.strip() for t in raw_tags.split(",") if t.strip()] if raw_tags else []
+                tag_list = [
+                    t.strip() for t in raw_tags.split(",") if t.strip()
+                ] if raw_tags else []
                 md += f"tags: {tag_list}\n"
                 md += f"created: {full.get('created_at', '')}\n"
+                summary = full.get("summary", "")
+                if summary:
+                    # Escape multiline summaries for YAML
+                    md += f"summary: \"{summary}\"\n"
                 md += "---\n\n"
-                md += f"# {title}\n\n"
-                md += full.get("content", "")
+
+                # Strip old ## Related sections from content (legacy imports)
+                # to avoid duplicate sections and broken wiki-links.
+                content = full.get("content", "")
+                content = _re.split(r"\n## Related\b", content)[0].rstrip()
+
+                # Avoid duplicate title heading
+                if not content.lstrip().startswith("# "):
+                    md += f"# {title}\n\n"
+                md += content
 
                 # Append relationships as Obsidian wiki-links.
                 relationships = full.get("relationships", [])
@@ -589,15 +613,51 @@ def create_dashboard(
 
                 if entities:
                     entity_tags = ", ".join(
-                        f"#{e['name'].replace(' ', '_')}"
+                        f"#{e.get('type', 'concept')}/{e['name'].replace(' ', '_')}"
                         for e in entities
                         if e.get("name")
                     )
                     if entity_tags:
                         md += f"\n**Entities:** {entity_tags}\n"
 
-                filepath = target / f"{safe_name}.md"
+                filepath = target / f"{rel_path}.md"
+                filepath.parent.mkdir(parents=True, exist_ok=True)
                 filepath.write_text(md, encoding="utf-8")
+                exported += 1
+
+            # Pass 3: generate project index/hub files.
+            projects: dict[str, list[tuple[str, str, str]]] = {}
+            for _obj_id, rel_path, full in doc_cache:
+                proj = full.get("project", "")
+                if proj:
+                    projects.setdefault(proj, []).append(
+                        (full.get("title", ""), rel_path, full.get("type", ""))
+                    )
+
+            for proj_name, docs in projects.items():
+                by_type: dict[str, list[tuple[str, str]]] = {}
+                for doc_title, doc_path, dtype in docs:
+                    by_type.setdefault(dtype or "other", []).append(
+                        (doc_title, doc_path)
+                    )
+
+                hub_md = "---\n"
+                hub_md += "type: source\n"
+                hub_md += f"project: {proj_name}\n"
+                hub_md += "tags: [project-index]\n"
+                hub_md += "---\n\n"
+                hub_md += f"# {proj_name}\n\n"
+                hub_md += f"Project index — {len(docs)} documents\n\n"
+                for dtype, items in sorted(by_type.items()):
+                    hub_md += f"## {dtype.capitalize()}s ({len(items)})\n\n"
+                    for doc_title, doc_path in sorted(items):
+                        hub_md += f"- [[{doc_path}|{doc_title}]]\n"
+                    hub_md += "\n"
+
+                safe_proj = _sanitize_filename(proj_name, proj_name)
+                hub_path = target / safe_proj / f"{safe_proj}.md"
+                hub_path.parent.mkdir(parents=True, exist_ok=True)
+                hub_path.write_text(hub_md, encoding="utf-8")
                 exported += 1
 
             msg = f"Exported {exported} documents to {target}"
