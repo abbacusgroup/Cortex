@@ -1,6 +1,6 @@
 [project]
 name = "abbacus-cortex"
-version = "0.2.5"
+version = "0.3.0"
 description = "Cognitive knowledge system with formal ontology, reasoning, and intelligence serving"
 readme = "README.md"
 authors = [
