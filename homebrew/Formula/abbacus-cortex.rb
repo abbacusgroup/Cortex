@@ -3,8 +3,8 @@ class AbbacusCortex < Formula
 
   desc "AI knowledge pipeline -- capture, search, and reason over your knowledge"
   homepage "https://github.com/abbacusgroup/Cortex"
-  url "https://files.pythonhosted.org/packages/source/a/abbacus-cortex/abbacus_cortex-0.2.2.tar.gz"
-  sha256 "88f3ce14c64e3c5826fa2ee3ee273f2b6216b737835a99d3d53146106444dc5a"
+  url "https://files.pythonhosted.org/packages/source/a/abbacus-cortex/abbacus_cortex-0.3.2.tar.gz"
+  sha256 "c91d3bdf1078b70d75539ab07aa6f52982c6bc59196cf7b34d9ee55a80e14a34"
   license "MIT"
 
   depends_on "python@3.12"
