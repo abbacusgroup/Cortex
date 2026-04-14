@@ -151,7 +151,14 @@ class Store:
             except NotFoundError:
                 pass  # Graph might not have all properties — OK
             except Exception as e:
-                logger.warning("Graph update failed for %s: %s", obj_id, e)
+                logger.warning(
+                    "Graph update failed for %s (SQLite update succeeded): %s",
+                    obj_id, e,
+                )
+                raise SyncError(
+                    f"SQLite updated but graph update failed for {obj_id}",
+                    cause=e,
+                ) from e
 
         return True
 
@@ -239,5 +246,5 @@ class Store:
             "graph_triples": self.graph.triple_count,
             "counts_by_type": content_counts,
             "graph_counts_by_type": graph_counts,
-            "entities": len(self.graph.list_entities()),
+            "entities": self.graph.count_entities(),
         }

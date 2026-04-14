@@ -93,16 +93,16 @@ class LearningLoop:
                 try:
                     self.store.content.update(obj_id, tier="reflex")
                     promoted += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to promote %s to reflex: %s", obj_id, e)
 
             # Demote: reflex but not accessed recently
             elif tier == "reflex" and last_access and last_access < cutoff_str:
                 try:
                     self.store.content.update(obj_id, tier="recall")
                     demoted += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to demote %s from reflex: %s", obj_id, e)
 
         return {"promoted": promoted, "demoted": demoted}
 
@@ -133,5 +133,5 @@ class LearningLoop:
             try:
                 self.store.content.update(obj_id, tier="reflex")
                 logger.info("Promoted %s to reflex tier", obj_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to promote %s to reflex tier: %s", obj_id, e)

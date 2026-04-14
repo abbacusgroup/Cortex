@@ -897,17 +897,19 @@ class GraphStore:
 
     def _find_entity_by_name(self, name: str) -> str | None:
         """Find entity by name (case-insensitive)."""
+        safe_name = name.replace("\\", "\\\\").replace('"', '\\"')
         query = f"""
         {SPARQL_PREFIXES}
-        SELECT ?s ?name WHERE {{
+        SELECT ?s WHERE {{
             ?s a cortex:Entity .
             ?s cortex:entityName ?name .
+            FILTER(LCASE(?name) = LCASE("{safe_name}"))
         }}
+        LIMIT 1
         """
         for row in self._store.query(query):
-            if row["name"].value.lower() == name.lower():
-                subj = str(row["s"].value)
-                return subj.split("/")[-1] if "entity/" in subj else subj
+            subj = str(row["s"].value)
+            return subj.split("/")[-1] if "entity/" in subj else subj
         return None
 
     def add_mention(self, *, obj_id: str, entity_id: str) -> None:
@@ -955,6 +957,18 @@ class GraphStore:
                 }
             )
         return entities
+
+    def count_entities(self) -> int:
+        """Return the total number of entities without materializing the full list."""
+        query = f"""
+        {SPARQL_PREFIXES}
+        SELECT (COUNT(DISTINCT ?s) AS ?count) WHERE {{
+            ?s a cortex:Entity .
+        }}
+        """
+        for row in self._store.query(query):
+            return int(row["count"].value)
+        return 0
 
     # -------------------------------------------------------------------------
     # SPARQL Query

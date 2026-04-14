@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Request, Security
 from fastapi.security import APIKeyHeader
 
+from cortex import __version__
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.logging import get_logger, setup_logging
 from cortex.transport.mcp.client import (
@@ -93,7 +94,7 @@ def create_api(
         description=(
             "Cognitive knowledge system — REST surface over the canonical MCP HTTP server."
         ),
-        version="0.2.0",
+        version=__version__,
     )
 
     app.state.config = config

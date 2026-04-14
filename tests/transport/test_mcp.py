@@ -47,6 +47,7 @@ EXPECTED_ADMIN_TOOLS = frozenset(
         "cortex_list_entities",
         "cortex_debug_sessions",
         "cortex_debug_memory",
+        "cortex_import",
     }
 )
 
@@ -71,7 +72,7 @@ class TestToolCounts:
 
     def test_all_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=True)
-        assert len(_tool_names(mcp)) == 24
+        assert len(_tool_names(mcp)) == 25
 
     def test_public_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=False)
@@ -84,7 +85,7 @@ class TestToolCounts:
             include_admin=False,
         )
         diff = _tool_names(all_mcp) - _tool_names(pub_mcp)
-        assert len(diff) == 13
+        assert len(diff) == 14
         assert diff == EXPECTED_ADMIN_TOOLS
 
 

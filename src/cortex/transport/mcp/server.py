@@ -52,6 +52,7 @@ ADMIN_TOOLS = frozenset(
         "cortex_list_entities",
         "cortex_debug_sessions",
         "cortex_debug_memory",
+        "cortex_import",
     }
 )
 
@@ -826,6 +827,24 @@ def create_mcp_server(
                 "pid": os.getpid(),
                 "top_allocations": top,
             }
+
+        @mcp.tool()
+        def cortex_import(vault_path: str) -> dict[str, Any]:
+            """Import documents from an Obsidian vault into Cortex.
+
+            Args:
+                vault_path: Absolute path to the Obsidian vault directory.
+            """
+            from pathlib import Path as _Path
+
+            from cortex.pipeline.importer import ObsidianImporter
+
+            vp = _Path(vault_path).expanduser().resolve()
+            if not vp.is_dir():
+                return {"status": "error", "message": f"Not a directory: {vault_path}"}
+
+            importer = ObsidianImporter(store, pipeline)
+            return importer.run(vp)
 
     return mcp
 

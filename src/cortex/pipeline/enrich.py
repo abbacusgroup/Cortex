@@ -47,9 +47,13 @@ class EnrichStage:
         }
         try:
             self.store.content.update(obj_id, **updates)
+        except Exception as e:
+            logger.warning("Content update failed during enrichment for %s: %s", obj_id, e)
+
+        try:
             self.store.graph.update_object(obj_id, tier=tier)
         except Exception as e:
-            logger.warning("Failed to update enrichment for %s: %s", obj_id, e)
+            logger.warning("Graph tier update failed during enrichment for %s: %s", obj_id, e)
 
         return {
             "status": "enriched",
@@ -101,16 +105,24 @@ class EnrichStage:
         """Explicitly promote an object to the reflex tier."""
         try:
             self.store.content.update(obj_id, tier="reflex")
-            self.store.graph.update_object(obj_id, tier="reflex")
-            return True
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to promote %s to reflex in content store: %s", obj_id, e)
             return False
+        try:
+            self.store.graph.update_object(obj_id, tier="reflex")
+        except Exception as e:
+            logger.warning("Failed to promote %s to reflex in graph store: %s", obj_id, e)
+        return True
 
     def demote_from_reflex(self, obj_id: str) -> bool:
         """Demote an object from reflex back to recall."""
         try:
             self.store.content.update(obj_id, tier="recall")
-            self.store.graph.update_object(obj_id, tier="recall")
-            return True
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to demote %s from reflex in content store: %s", obj_id, e)
             return False
+        try:
+            self.store.graph.update_object(obj_id, tier="recall")
+        except Exception as e:
+            logger.warning("Failed to demote %s from reflex in graph store: %s", obj_id, e)
+        return True

@@ -13,6 +13,7 @@ process memory.
 
 from __future__ import annotations
 
+import html as html_mod
 import secrets
 from pathlib import Path
 from typing import Any
@@ -482,14 +483,7 @@ def create_dashboard(
             )
 
         try:
-            import cortex.db.store as _store_mod
-            import cortex.pipeline.importer as _importer_mod
-
-            store = _store_mod.Store(config.data_dir)
-            importer = _importer_mod.ObsidianImporter(store, pipeline=None)
-            result = importer.run(vault)
-            store.close()
-
+            result = await mcp_client.import_obsidian(str(vault))
             imported = result.get("imported", 0)
             skipped = result.get("skipped", 0)
             failed = result.get("failed", 0)
@@ -923,21 +917,22 @@ def create_dashboard(
             return HTMLResponse("")
         results = await mcp_client.search(q, limit=8)
         # Return HTML fragment for HTMX
-        html = ""
+        html_out = ""
         for doc in results:
-            obj_id = doc.get("id", "")
-            title = doc.get("title", obj_id[:12])
-            doc_type = doc.get("type", "")
-            html += (
+            obj_id = html_mod.escape(doc.get("id", ""), quote=True)
+            title = html_mod.escape(doc.get("title", obj_id[:12]), quote=True)
+            doc_type = html_mod.escape(doc.get("type", ""), quote=True)
+            html_out += (
                 f'<div class="search-item" '
-                f"onclick=\"document.getElementById('target_id').value='{obj_id}'; "
+                f'data-id="{obj_id}" '
+                f"onclick=\"document.getElementById('target_id').value=this.dataset.id; "
                 f"document.getElementById('search-results').innerHTML='';\">"
                 f'<span class="badge badge-{doc_type}" style="font-size:0.7rem;">{doc_type}</span> '
                 f"{title[:60]}"
                 f'<small style="color:var(--text-muted);"> {obj_id[:8]}</small>'
                 f"</div>"
             )
-        return HTMLResponse(html)
+        return HTMLResponse(html_out)
 
     @app.post("/api/feedback")
     async def api_feedback(request: Request):

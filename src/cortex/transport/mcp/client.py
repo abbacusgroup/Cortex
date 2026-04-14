@@ -519,3 +519,7 @@ class CortexMCPClient:
             "cortex_export",
             {"obj_id": obj_id, "format": format},
         )
+
+    async def import_obsidian(self, vault_path: str) -> dict[str, Any]:
+        """Import documents from an Obsidian vault."""
+        return await self._call("cortex_import", {"vault_path": vault_path}, timeout=120.0)

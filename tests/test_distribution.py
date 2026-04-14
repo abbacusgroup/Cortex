@@ -23,7 +23,7 @@ class TestDockerfile:
 
     def test_base_image(self):
         content = (PROJECT_ROOT / "Dockerfile").read_text()
-        assert "python:3.12" in content
+        assert "python:3.13" in content
 
     def test_healthcheck(self):
         content = (PROJECT_ROOT / "Dockerfile").read_text()

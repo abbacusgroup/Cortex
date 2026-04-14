@@ -1,13 +1,14 @@
 """SQLite-backed content store for Cortex.
 
 Handles content storage, FTS5 full-text search, config, and query logging.
-Uses synchronous sqlite3 (async wrapper can be added later via aiosqlite).
+Uses synchronous sqlite3.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,33 @@ CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at);
 CREATE INDEX IF NOT EXISTS idx_query_log_timestamp ON query_log(timestamp);
 """
 
+# Columns that callers may update via ContentStore.update().
+# When a migration adds a new column, add it here too.
+UPDATABLE_COLUMNS: frozenset[str] = frozenset({
+    "title",
+    "content",
+    "raw_markdown",
+    "type",
+    "project",
+    "tags",
+    "summary",
+    "tier",
+    "pipeline_stage",
+    "confidence",
+    "captured_by",
+    "updated_at",
+})
+
+_IMMUTABLE_COLUMNS: frozenset[str] = frozenset({"id", "created_at"})
+
+# Schema versioning — bump SCHEMA_VERSION and add a migration function
+# when the schema changes. See MIGRATIONS below.
+SCHEMA_VERSION = 1
+
+# List of (target_version, migration_function) tuples.
+# Each function receives a sqlite3.Connection and mutates the schema.
+MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = []
+
 
 class ContentStore:
     """SQLite store for document content, FTS5 search, config, and query logs."""
@@ -121,8 +149,32 @@ class ContentStore:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        self._db.executescript(SCHEMA_SQL)
-        self._db.commit()
+        current_version = self._db.execute("PRAGMA user_version").fetchone()[0]
+
+        if current_version == 0:
+            # Check if tables already exist (pre-migration install)
+            has_tables = self._db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='documents'"
+            ).fetchone() is not None
+
+            if not has_tables:
+                # Brand new database: create full schema
+                self._db.executescript(SCHEMA_SQL)
+                self._db.commit()
+
+            # Stamp as version 1 (baseline)
+            self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            self._db.commit()
+            current_version = SCHEMA_VERSION
+
+        # Run any pending migrations
+        for target_version, migrate_fn in MIGRATIONS:
+            if current_version < target_version:
+                migrate_fn(self._db)
+                self._db.execute(f"PRAGMA user_version = {target_version}")
+                self._db.commit()
+                current_version = target_version
+                logger.info("Migrated schema to version %d", target_version)
 
     def close(self) -> None:
         self._db.close()
@@ -213,6 +265,21 @@ class ContentStore:
             return True
 
         updates["updated_at"] = datetime.now(UTC).isoformat()
+
+        # Validate column names against allowlist
+        invalid_keys = set(updates.keys()) - UPDATABLE_COLUMNS
+        if invalid_keys:
+            immutable = invalid_keys & _IMMUTABLE_COLUMNS
+            if immutable:
+                raise StoreError(
+                    f"Cannot update immutable column(s): {', '.join(sorted(immutable))}",
+                    context={"columns": sorted(immutable)},
+                )
+            raise StoreError(
+                f"Unknown column(s): {', '.join(sorted(invalid_keys))}",
+                context={"columns": sorted(invalid_keys)},
+            )
+
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = [*updates.values(), doc_id]
 
@@ -360,6 +427,21 @@ class ContentStore:
             "SELECT embedding FROM embeddings WHERE doc_id = ?", (doc_id,)
         ).fetchone()
         return row["embedding"] if row else None
+
+    def get_all_embeddings(self, *, limit: int = 10000) -> list[dict[str, Any]]:
+        """Return all embeddings for similarity search.
+
+        Args:
+            limit: Maximum number of embeddings to return (safety cap).
+
+        Returns:
+            List of dicts with keys: doc_id, embedding (bytes), dimensions (int).
+        """
+        rows = self._db.execute(
+            "SELECT doc_id, embedding, dimensions FROM embeddings LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # -------------------------------------------------------------------------
     # Config

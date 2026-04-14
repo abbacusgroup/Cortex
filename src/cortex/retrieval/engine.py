@@ -157,13 +157,15 @@ class RetrievalEngine:
             return []
 
         # Get all embeddings and compute cosine similarity
-        rows = self.store.content._db.execute(
-            "SELECT doc_id, embedding, dimensions FROM embeddings"
-        ).fetchall()
+        rows = self.store.content.get_all_embeddings(limit=10000)
 
         scored: list[tuple[str, float]] = []
         for row in rows:
-            doc_embedding = struct.unpack(f"{row['dimensions']}f", row["embedding"])
+            try:
+                doc_embedding = struct.unpack(f"{row['dimensions']}f", row["embedding"])
+            except struct.error:
+                logger.warning("Corrupted embedding for doc_id=%s, skipping", row["doc_id"])
+                continue
             sim = self._cosine_similarity(query_embedding, doc_embedding)
             scored.append((row["doc_id"], sim))
 
