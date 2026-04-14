@@ -7,57 +7,220 @@
     <a href="/documents">&larr; Back to documents</a>
 </div>
 
-<h2 style="margin-bottom: 0.5rem;">{{ doc.title }}</h2>
-<span class="badge badge-{{ doc.type }}">{{ doc.type }}</span>
+{% if msg %}
+<div class="alert alert-{{ msg_type or 'info' }}">{{ msg }}</div>
+{% endif %}
 
-<div class="card" style="margin-top: 1rem;">
-    <div class="meta-grid">
-        <div class="meta-item">
-            <label>ID</label>
-            <span>{{ doc.id }}</span>
+{# ── View Mode ── #}
+<div id="view-mode">
+    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+        <h2 style="margin: 0;">{{ doc.title }}</h2>
+        <span class="badge badge-{{ doc.type }}">{{ doc.type }}</span>
+    </div>
+
+    <div class="detail-actions">
+        <button class="btn btn-sm" onclick="toggleEdit()">Edit</button>
+        <form method="POST" action="/documents/{{ doc.id }}/pipeline" style="display:inline;">
+            <button type="submit" class="btn btn-sm" onclick="this.textContent='Running...'; this.disabled=true;">Re-run Pipeline</button>
+        </form>
+        <a href="/documents/{{ doc.id }}/export" class="btn btn-sm">Export</a>
+        <button class="btn btn-sm btn-danger" onclick="showDeleteModal()">Delete</button>
+    </div>
+
+    <div class="card" style="margin-top: 1rem;">
+        <div class="meta-grid">
+            <div class="meta-item">
+                <label>ID</label>
+                <span>{{ doc.id }}</span>
+            </div>
+            <div class="meta-item">
+                <label>Project</label>
+                <span>{{ doc.project or '—' }}</span>
+            </div>
+            <div class="meta-item">
+                <label>Tags</label>
+                <span>{{ doc.tags or '—' }}</span>
+            </div>
+            <div class="meta-item">
+                <label>Tier</label>
+                <span>{{ doc.tier or '—' }}</span>
+            </div>
+            <div class="meta-item">
+                <label>Confidence</label>
+                <span>{{ doc.confidence }}</span>
+            </div>
+            <div class="meta-item">
+                <label>Created</label>
+                <span>{{ doc.created_at[:19] if doc.created_at else '—' }}</span>
+            </div>
         </div>
-        <div class="meta-item">
-            <label>Project</label>
-            <span>{{ doc.project or '—' }}</span>
-        </div>
-        <div class="meta-item">
-            <label>Tags</label>
-            <span>{{ doc.tags or '—' }}</span>
-        </div>
-        <div class="meta-item">
-            <label>Tier</label>
-            <span>{{ doc.tier or '—' }}</span>
-        </div>
-        <div class="meta-item">
-            <label>Confidence</label>
-            <span>{{ doc.confidence }}</span>
-        </div>
-        <div class="meta-item">
-            <label>Created</label>
-            <span>{{ doc.created_at[:19] if doc.created_at else '—' }}</span>
-        </div>
+    </div>
+
+    {% if doc.summary %}
+    <div class="card">
+        <div class="card-header">Summary</div>
+        <div class="content-body">{{ doc.summary }}</div>
+    </div>
+    {% endif %}
+
+    {% if doc.content %}
+    <div class="card">
+        <div class="card-header">Content</div>
+        <div class="content-body">{{ doc.content }}</div>
+    </div>
+    {% endif %}
+</div>
+
+{# ── Edit Mode ── #}
+<div id="edit-mode" style="display: none;">
+    <h2 style="margin-bottom: 0.5rem;">Editing: {{ doc.title }}</h2>
+
+    <div class="card" style="margin-top: 1rem;">
+        <form method="POST" action="/documents/{{ doc.id }}/edit">
+            <div class="form-group">
+                <label for="edit-title">Title</label>
+                <input type="text" id="edit-title" name="title" value="{{ doc.title }}">
+            </div>
+            <div class="form-group">
+                <label for="edit-content">Content</label>
+                <textarea id="edit-content" name="content" rows="12">{{ doc.content or '' }}</textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="edit-project">Project</label>
+                    <input type="text" id="edit-project" name="project" value="{{ doc.project or '' }}">
+                </div>
+                <div class="form-group">
+                    <label for="edit-tags">Tags</label>
+                    <input type="text" id="edit-tags" name="tags" value="{{ doc.tags or '' }}">
+                </div>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-sm" onclick="toggleEdit()">Cancel</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card" style="margin-top: 1rem;">
+        <div class="card-header">Classification</div>
+        <form method="POST" action="/documents/{{ doc.id }}/classify">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="edit-type">Type</label>
+                    <select id="edit-type" name="obj_type">
+                        {% for t in ['idea','decision','lesson','fix','session','research','source','synthesis'] %}
+                        <option value="{{ t }}" {{ 'selected' if doc.type == t else '' }}>{{ t|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 2;">
+                    <label for="edit-summary">Summary</label>
+                    <input type="text" id="edit-summary" name="summary" value="{{ doc.summary or '' }}">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-sm">Update Classification</button>
+        </form>
     </div>
 </div>
 
-{% if doc.content %}
-<div class="card">
-    <div class="card-header">Content</div>
-    <div class="content-body">{{ doc.content }}</div>
-</div>
-{% endif %}
-
-{% if doc.relationships %}
 <div class="card">
     <div class="card-header">Relationships</div>
+    {% if doc.relationships %}
     <ul class="rel-list">
     {% for rel in doc.relationships %}
-        <li>
-            {{ '→' if rel.direction == 'outgoing' else '←' }}
-            <strong>{{ rel.rel_type }}</strong>
-            <a href="/documents/{{ rel.other_id }}">{{ rel.other_id[:12] }}...</a>
+        <li style="display: flex; align-items: center; justify-content: space-between;">
+            <span>
+                {{ '→' if rel.direction == 'outgoing' else '←' }}
+                <strong>{{ rel.rel_type }}</strong>
+                <a href="/documents/{{ rel.other_id }}">{{ rel.other_id[:12] }}...</a>
+            </span>
+            <form method="POST" action="/documents/{{ doc.id }}/unlink" style="display:inline; margin:0;">
+                <input type="hidden" name="from_id" value="{{ rel.other_id if rel.direction == 'incoming' else doc.id }}">
+                <input type="hidden" name="rel_type" value="{{ rel.rel_type }}">
+                <input type="hidden" name="to_id" value="{{ doc.id if rel.direction == 'incoming' else rel.other_id }}">
+                <button type="submit" class="btn-icon" title="Remove relationship" onclick="return confirm('Remove this relationship?');">&times;</button>
+            </form>
         </li>
     {% endfor %}
     </ul>
+    {% else %}
+    <p style="color: var(--text-muted); font-size: 0.875rem;">No relationships yet.</p>
+    {% endif %}
+    <div class="card-footer">
+        <details>
+            <summary style="cursor: pointer; font-size: 0.875rem; color: var(--accent);">+ Add Relationship</summary>
+            <form method="POST" action="/documents/{{ doc.id }}/link" style="margin-top: 0.75rem;">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="rel_type">Type</label>
+                        <select id="rel_type" name="rel_type">
+                            <option value="relatedTo">relatedTo</option>
+                            <option value="supports">supports</option>
+                            <option value="contradicts">contradicts</option>
+                            <option value="causedBy">causedBy</option>
+                            <option value="ledTo">ledTo</option>
+                            <option value="supersedes">supersedes</option>
+                            <option value="dependsOn">dependsOn</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="direction">Direction</label>
+                        <select id="direction" name="direction">
+                            <option value="outgoing">This → Target</option>
+                            <option value="incoming">Target → This</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="target_id">Target Object ID</label>
+                    <input type="text" id="target_id" name="target_id" required
+                           placeholder="Paste object ID or search..."
+                           hx-get="/api/search" hx-trigger="keyup changed delay:300ms"
+                           hx-target="#search-results" hx-swap="innerHTML"
+                           hx-vals='js:{"q": document.getElementById("target_id").value}'
+                           autocomplete="off">
+                    <div id="search-results" class="search-dropdown"></div>
+                </div>
+                <button type="submit" class="btn btn-sm">Add Link</button>
+            </form>
+        </details>
+    </div>
 </div>
-{% endif %}
+
+{# ── Delete Confirmation Modal ── #}
+<div id="delete-modal" class="modal-overlay" style="display: none;">
+    <div class="modal">
+        <h3>Delete Document</h3>
+        <p>Are you sure you want to delete <strong>{{ doc.title }}</strong>? This cannot be undone.</p>
+        <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+            <form method="POST" action="/documents/{{ doc.id }}/delete">
+                <button type="submit" class="btn btn-danger">Delete</button>
+            </form>
+            <button class="btn btn-sm" onclick="hideDeleteModal()">Cancel</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleEdit() {
+    const view = document.getElementById('view-mode');
+    const edit = document.getElementById('edit-mode');
+    if (view.style.display === 'none') {
+        view.style.display = '';
+        edit.style.display = 'none';
+    } else {
+        view.style.display = 'none';
+        edit.style.display = '';
+    }
+}
+function showDeleteModal() {
+    document.getElementById('delete-modal').style.display = 'flex';
+}
+function hideDeleteModal() {
+    document.getElementById('delete-modal').style.display = 'none';
+}
+</script>
 {% endblock %}

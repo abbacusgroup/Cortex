@@ -116,9 +116,45 @@ def _human_size(nbytes: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+def create_backup(config: CortexConfig, output: Path | None = None) -> Path:
+    """Create a tar.gz backup of cortex.db and graph.db/.
+
+    Pure function — no CLI output.  Returns the path to the created archive.
+    Raises FileNotFoundError if stores don't exist.
+    """
+    if not config.sqlite_db_path.exists():
+        raise FileNotFoundError(f"SQLite not found: {config.sqlite_db_path}")
+
+    if not config.graph_db_path.exists() or not config.graph_db_path.is_dir():
+        raise FileNotFoundError(f"Graph store not found: {config.graph_db_path}")
+
+    # Checkpoint SQLite WAL
+    _checkpoint_sqlite(config.sqlite_db_path)
+
+    # Build archive
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%S")
+    filename = f"cortex-backup-{stamp}.tar.gz"
+    out_dir = output if output else Path.cwd()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = out_dir / filename
+
+    data_dir = config.data_dir
+    with tarfile.open(archive_path, "w:gz") as tar:
+        for path in sorted(data_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = str(path.relative_to(data_dir))
+            if _should_exclude(rel):
+                continue
+            tar.add(str(path), arcname=rel)
+
+    return archive_path
+
+
 def do_backup(config: CortexConfig, output: Path | None = None) -> Path:
     """Create a tar.gz backup of cortex.db and graph.db/.
 
+    CLI wrapper around :func:`create_backup` — adds typer output.
     Returns the path to the created archive.
     """
     # 1. Verify stores exist
@@ -148,29 +184,12 @@ def do_backup(config: CortexConfig, output: Path | None = None) -> Path:
             fg=typer.colors.YELLOW,
         )
 
-    # 3. Checkpoint SQLite WAL
+    # 3. Create backup using core logic
     typer.echo("  Checkpointing SQLite WAL...")
-    _checkpoint_sqlite(config.sqlite_db_path)
+    archive_path = create_backup(config, output)
 
-    # 4. Build archive
-    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%S")
-    filename = f"cortex-backup-{stamp}.tar.gz"
-    out_dir = output if output else Path.cwd()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = out_dir / filename
-
+    # 4. Report
     typer.echo(f"  Archiving to {archive_path}...")
-    data_dir = config.data_dir
-    with tarfile.open(archive_path, "w:gz") as tar:
-        for path in sorted(data_dir.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = str(path.relative_to(data_dir))
-            if _should_exclude(rel):
-                continue
-            tar.add(str(path), arcname=rel)
-
-    # 5. Report
     size = archive_path.stat().st_size
     doc_count = _quick_doc_count(config.sqlite_db_path)
     typer.secho(f"\nBackup complete: {archive_path}", fg=typer.colors.GREEN)

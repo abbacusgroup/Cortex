@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% set active = "synthesis" %}
+{% block title %}Cortex — Synthesis{% endblock %}
+
+{% block content %}
+<h2 class="page-title">Synthesis</h2>
+<p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+    Generate an AI summary of recent knowledge activity.
+</p>
+
+<div class="card">
+    <form method="POST" action="/synthesis">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="period_days">Period</label>
+                <select id="period_days" name="period_days">
+                    <option value="3" {{ 'selected' if period_days == 3 else '' }}>Last 3 days</option>
+                    <option value="7" {{ 'selected' if period_days == 7 or not period_days else '' }}>Last 7 days</option>
+                    <option value="14" {{ 'selected' if period_days == 14 else '' }}>Last 14 days</option>
+                    <option value="30" {{ 'selected' if period_days == 30 else '' }}>Last 30 days</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="project">Project (optional)</label>
+                <input type="text" id="project" name="project" placeholder="All projects" value="{{ project or '' }}">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary" onclick="this.textContent='Generating...'; this.disabled=true; this.form.submit();">Generate Synthesis</button>
+    </form>
+</div>
+
+{% if synthesis %}
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">Synthesis Result</div>
+    <div class="content-body">{{ synthesis.get('synthesis', synthesis.get('text', synthesis | string)) }}</div>
+</div>
+{% endif %}
+{% endblock %}

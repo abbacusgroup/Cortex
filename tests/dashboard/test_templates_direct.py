@@ -233,8 +233,10 @@ class TestDetailTemplate:
         assert "—" in html
         # No Content card
         assert "Content</div>" not in html
-        # No Relationships card
-        assert "Relationships</div>" not in html
+        # Relationships card always shown (so users can add the first link)
+        assert "Relationships</div>" in html
+        assert "No relationships yet." in html
+        assert "+ Add Relationship" in html
 
 
 # ==========================================================================

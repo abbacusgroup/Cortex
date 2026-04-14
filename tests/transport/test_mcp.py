@@ -37,6 +37,8 @@ EXPECTED_ADMIN_TOOLS = frozenset(
         "cortex_status",
         "cortex_synthesize",
         "cortex_delete",
+        "cortex_update",
+        "cortex_unlink",
         "cortex_export",
         "cortex_safety_check",
         "cortex_reason",
@@ -69,20 +71,20 @@ class TestToolCounts:
 
     def test_all_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=True)
-        assert len(_tool_names(mcp)) == 22
+        assert len(_tool_names(mcp)) == 24
 
     def test_public_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=False)
         assert len(_tool_names(mcp)) == 11
 
-    def test_admin_exclusion_removes_exactly_eleven(self, config: CortexConfig):
+    def test_admin_exclusion_removes_exactly_thirteen(self, config: CortexConfig):
         all_mcp = create_mcp_server(config, include_admin=True)
         pub_mcp = create_mcp_server(
             CortexConfig(data_dir=config.data_dir / "pub"),
             include_admin=False,
         )
         diff = _tool_names(all_mcp) - _tool_names(pub_mcp)
-        assert len(diff) == 11
+        assert len(diff) == 13
         assert diff == EXPECTED_ADMIN_TOOLS
 
 

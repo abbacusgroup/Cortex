@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% set active = "insights" %}
+{% block title %}Cortex — Insights{% endblock %}
+
+{% block content %}
+<h2 class="page-title">Insights</h2>
+<p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+    Run AI-powered analysis to find contradictions, patterns, knowledge gaps, and stale content.
+</p>
+
+<div class="card">
+    <form method="POST" action="/insights">
+        <button type="submit" class="btn btn-primary" onclick="this.textContent='Analyzing...'; this.disabled=true; this.form.submit();">Run Analysis</button>
+    </form>
+</div>
+
+{% if analysis %}
+{% set contradictions = analysis.get('contradictions', []) %}
+{% set patterns = analysis.get('patterns', []) %}
+{% set gaps = analysis.get('gaps', []) %}
+{% set staleness = analysis.get('staleness', []) %}
+
+{% if contradictions %}
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">Contradictions ({{ contradictions|length }})</div>
+    <ul class="insight-list">
+    {% for item in contradictions %}
+        <li>
+            {% if item is mapping %}
+                {{ item.get('summary', item.get('description', item | string)) }}
+                {% if item.get('obj_ids') %}
+                    <br><small>
+                    {% for oid in item.obj_ids %}
+                        <a href="/documents/{{ oid }}">{{ oid[:12] }}</a>{{ ', ' if not loop.last else '' }}
+                    {% endfor %}
+                    </small>
+                {% endif %}
+            {% else %}
+                {{ item }}
+            {% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if patterns %}
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header">Patterns ({{ patterns|length }})</div>
+    <ul class="insight-list">
+    {% for item in patterns %}
+        <li>
+            {% if item is mapping %}
+                {{ item.get('summary', item.get('description', item | string)) }}
+            {% else %}
+                {{ item }}
+            {% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if gaps %}
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header">Knowledge Gaps ({{ gaps|length }})</div>
+    <ul class="insight-list">
+    {% for item in gaps %}
+        <li>
+            {% if item is mapping %}
+                {{ item.get('summary', item.get('description', item | string)) }}
+            {% else %}
+                {{ item }}
+            {% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if staleness %}
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header">Stale Content ({{ staleness|length }})</div>
+    <ul class="insight-list">
+    {% for item in staleness %}
+        <li>
+            {% if item is mapping %}
+                {% if item.get('obj_id') %}
+                    <a href="/documents/{{ item.obj_id }}">{{ item.get('title', item.obj_id[:12]) }}</a> —
+                {% endif %}
+                {{ item.get('reason', item.get('summary', item | string)) }}
+            {% else %}
+                {{ item }}
+            {% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if not contradictions and not patterns and not gaps and not staleness %}
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="content-body">No notable insights found. Your knowledge base looks consistent.</div>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

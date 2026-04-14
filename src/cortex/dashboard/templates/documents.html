@@ -5,6 +5,10 @@
 {% block content %}
 <h2 class="page-title">Documents</h2>
 
+{% if msg %}
+<div class="alert alert-{{ msg_type or 'info' }}">{{ msg }}</div>
+{% endif %}
+
 <div class="card card-spaced">
     <form method="GET" action="/documents" class="form-row">
         <div>
@@ -36,7 +40,7 @@
 <div class="card">
     <div class="card-header">{{ documents|length }} result(s)</div>
     <table>
-        <thead><tr><th>Type</th><th>Title</th><th>Project</th><th>Tags</th></tr></thead>
+        <thead><tr><th>Type</th><th>Title</th><th>Project</th><th>Tags</th><th></th></tr></thead>
         <tbody>
         {% for doc in documents %}
         <tr>
@@ -44,9 +48,19 @@
             <td><a href="/documents/{{ doc.id }}">{{ doc.title }}</a></td>
             <td>{{ doc.project }}</td>
             <td>{{ doc.tags }}</td>
+            <td style="white-space: nowrap;">
+                <button class="btn-icon" hx-post="/api/feedback"
+                        hx-vals='{"obj_id": "{{ doc.id }}", "relevant": true}'
+                        hx-swap="none" title="Relevant"
+                        onclick="this.style.color='var(--success)';">&#9650;</button>
+                <button class="btn-icon" hx-post="/api/feedback"
+                        hx-vals='{"obj_id": "{{ doc.id }}", "relevant": false}'
+                        hx-swap="none" title="Not relevant"
+                        onclick="this.style.color='var(--danger)';">&#9660;</button>
+            </td>
         </tr>
         {% else %}
-        <tr><td colspan="4" class="table-empty">No documents found.</td></tr>
+        <tr><td colspan="5" class="table-empty">No documents found.</td></tr>
         {% endfor %}
         </tbody>
     </table>

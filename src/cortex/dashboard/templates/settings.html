@@ -54,4 +54,15 @@
         </form>
     </div>
 </div>
+
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">Backup</div>
+    <p class="text-muted text-xs" style="margin-bottom: 0.75rem;">
+        Download a complete backup of your Cortex data (cortex.db + graph.db) as a compressed archive.
+        Restore from CLI: <code>cortex restore &lt;archive.tar.gz&gt;</code>
+    </p>
+    <form method="POST" action="/settings/backup">
+        <button type="submit" class="btn btn-primary" onclick="this.textContent='Creating backup...'; this.disabled=true; this.form.submit();">Download Backup</button>
+    </form>
+</div>
 {% endblock %}

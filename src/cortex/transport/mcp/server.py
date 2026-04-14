@@ -42,6 +42,8 @@ ADMIN_TOOLS = frozenset(
         "cortex_status",
         "cortex_synthesize",
         "cortex_delete",
+        "cortex_update",
+        "cortex_unlink",
         "cortex_export",
         "cortex_safety_check",
         "cortex_reason",
@@ -450,6 +452,67 @@ def create_mcp_server(
             }
 
         @mcp.tool()
+        def cortex_update(
+            obj_id: str,
+            title: str = "",
+            content: str = "",
+            tags: str = "",
+            project: str = "",
+        ) -> dict[str, Any]:
+            """Update a knowledge object's fields.
+
+            Only non-empty values are applied. Use cortex_classify for
+            classification metadata (type, summary, entities).
+
+            Args:
+                obj_id: Object ID to update.
+                title: New title (leave empty to keep current).
+                content: New content (leave empty to keep current).
+                tags: New tags, comma-separated (leave empty to keep current).
+                project: New project name (leave empty to keep current).
+            """
+            updates = {}
+            if title:
+                updates["title"] = title
+            if content:
+                updates["content"] = content
+            if tags:
+                updates["tags"] = tags
+            if project:
+                updates["project"] = project
+            if not updates:
+                return {"status": "no_changes", "obj_id": obj_id}
+            store.update(obj_id, **updates)
+            return {
+                "status": "updated",
+                "obj_id": obj_id,
+                "fields_updated": list(updates.keys()),
+            }
+
+        @mcp.tool()
+        def cortex_unlink(
+            from_id: str,
+            rel_type: str,
+            to_id: str,
+        ) -> dict[str, Any]:
+            """Remove a relationship between two knowledge objects.
+
+            Args:
+                from_id: Source object ID.
+                rel_type: Relationship type (e.g. causedBy, supports).
+                to_id: Target object ID.
+            """
+            deleted = store.delete_relationship(
+                from_id=from_id, rel_type=rel_type, to_id=to_id,
+            )
+            return {
+                "status": "unlinked" if deleted else "not_found",
+                "from_id": from_id,
+                "rel_type": rel_type,
+                "to_id": to_id,
+            }
+
+        @mcp.tool()
         def cortex_export(
             obj_id: str,
             format: str = "markdown",
@@ -460,7 +523,8 @@ def create_mcp_server(
                 obj_id: Object ID to export.
                 format: Export format (markdown).
             """
-            doc = store.read(obj_id)
+            presenter = DocumentPresenter(store)
+            doc = presenter.render(obj_id)
             if doc is None:
                 return {"status": "not_found", "obj_id": obj_id}
 
@@ -471,6 +535,23 @@ def create_mcp_server(
                 md += f"**Tags:** {doc.get('tags', '')}\n"
                 md += f"**Created:** {doc.get('created_at', '')}\n\n"
                 md += doc.get("content", "")
+
+                # Append relationships and entities.
+                relationships = doc.get("relationships", [])
+                entities = doc.get("entities", [])
+                if relationships or entities:
+                    md += "\n\n## Related\n\n"
+                    for rel in relationships:
+                        other_id = rel.get("other_id", "")
+                        rel_type = rel.get("rel_type", "related")
+                        direction = rel.get("direction", "outgoing")
+                        label = rel_type if direction == "outgoing" else f"{rel_type} (from)"
+                        md += f"- {label}: {other_id}\n"
+                    if entities:
+                        md += "\n**Entities:** "
+                        md += ", ".join(e["name"] for e in entities if e.get("name"))
+                        md += "\n"
+
                 return {"status": "exported", "format": format, "content": md}
 
             return {"status": "error", "message": f"Unknown format: {format}"}

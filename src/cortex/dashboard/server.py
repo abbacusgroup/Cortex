@@ -236,6 +236,8 @@ def create_dashboard(
         doc_type: str = "",
         project: str = "",
         q: str = "",
+        msg: str = "",
+        msg_type: str = "",
     ):
         session = _require_auth(request)
         if session is None:
@@ -268,11 +270,18 @@ def create_dashboard(
                 doc_type=doc_type,
                 project=project,
                 project_names=project_names,
+                msg=msg,
+                msg_type=msg_type,
             ),
         )
 
     @app.get("/documents/{obj_id}", response_class=HTMLResponse)
-    async def document_detail(request: Request, obj_id: str):
+    async def document_detail(
+        request: Request,
+        obj_id: str,
+        msg: str = "",
+        msg_type: str = "",
+    ):
         session = _require_auth(request)
         if session is None:
             return RedirectResponse("/login", status_code=302)
@@ -282,7 +291,9 @@ def create_dashboard(
         if isinstance(doc, str) or doc is None:
             raise HTTPException(status_code=404, detail="Not found")
         # Access tracking happens server-side inside cortex_read.
-        return templates.TemplateResponse(request, "detail.html", _ctx(doc=doc))
+        return templates.TemplateResponse(
+            request, "detail.html", _ctx(doc=doc, msg=msg, msg_type=msg_type),
+        )
 
     @app.get("/explore", response_class=HTMLResponse)
     async def explore_page(
@@ -496,6 +507,13 @@ def create_dashboard(
                 status_code=302,
             )
 
+    def _sanitize_filename(title: str, fallback: str) -> str:
+        """Sanitize a title into an Obsidian-safe filename (no extension)."""
+        safe = "".join(
+            c if c.isalnum() or c in " -_" else "_" for c in title
+        ).strip()[:100]
+        return safe if safe else fallback
+
     @app.post("/settings/export")
     async def settings_export(request: Request, export_path: str = Form(...)):
         """Export all Cortex documents as an Obsidian-compatible vault."""
@@ -516,31 +534,67 @@ def create_dashboard(
 
         try:
             all_docs = await mcp_client.list_objects(limit=5000)
-            exported = 0
+
+            # Pass 1: collect all docs and build id -> filename lookup.
+            id_to_filename: dict[str, str] = {}
+            doc_cache: list[tuple[str, str, dict]] = []
+
             for doc in all_docs:
                 obj_id = doc.get("id", "")
                 full = await mcp_client.read(obj_id)
                 if isinstance(full, str) or full is None:
                     continue
-
                 title = full.get("title", obj_id[:8])
-                # Sanitize filename.
-                safe_name = "".join(
-                    c if c.isalnum() or c in " -_" else "_" for c in title
-                ).strip()[:100]
-                if not safe_name:
-                    safe_name = obj_id[:8]
+                safe_name = _sanitize_filename(title, obj_id[:8])
+                id_to_filename[obj_id] = safe_name
+                doc_cache.append((obj_id, safe_name, full))
+
+            # Pass 2: render markdown with relationships and write files.
+            exported = 0
+            for obj_id, safe_name, full in doc_cache:
+                title = full.get("title", obj_id[:8])
 
                 # Build markdown with YAML frontmatter.
                 md = "---\n"
                 md += f"id: {obj_id}\n"
                 md += f"type: {full.get('type', '')}\n"
                 md += f"project: {full.get('project', '')}\n"
-                md += f"tags: {full.get('tags', '')}\n"
+                raw_tags = full.get("tags", "")
+                tag_list = [t.strip() for t in raw_tags.split(",") if t.strip()] if raw_tags else []
+                md += f"tags: {tag_list}\n"
                 md += f"created: {full.get('created_at', '')}\n"
                 md += "---\n\n"
                 md += f"# {title}\n\n"
                 md += full.get("content", "")
+
+                # Append relationships as Obsidian wiki-links.
+                relationships = full.get("relationships", [])
+                entities = full.get("entities", [])
+
+                if relationships or entities:
+                    md += "\n\n## Related\n\n"
+
+                if relationships:
+                    for rel in relationships:
+                        other_id = rel.get("other_id", "")
+                        other_name = id_to_filename.get(other_id)
+                        if other_name is None:
+                            continue
+                        rel_type = rel.get("rel_type", "related")
+                        direction = rel.get("direction", "outgoing")
+                        if direction == "outgoing":
+                            md += f"- {rel_type} [[{other_name}]]\n"
+                        else:
+                            md += f"- {rel_type} (from) [[{other_name}]]\n"
+
+                if entities:
+                    entity_tags = ", ".join(
+                        f"#{e['name'].replace(' ', '_')}"
+                        for e in entities
+                        if e.get("name")
+                    )
+                    if entity_tags:
+                        md += f"\n**Entities:** {entity_tags}\n"
 
                 filepath = target / f"{safe_name}.md"
                 filepath.write_text(md, encoding="utf-8")
@@ -555,6 +609,221 @@ def create_dashboard(
                 f"/settings?msg=Export error: {e}&msg_type=danger",
                 status_code=302,
             )
+
+    # ─── Backup & Single-Object Export ────────────────────────────
+
+    @app.post("/settings/backup")
+    async def settings_backup(request: Request):
+        """Download a backup archive of all Cortex data."""
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        import tempfile
+
+        from cortex.cli.backup import create_backup
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                from pathlib import Path as _Path
+
+                archive_path = create_backup(config, output=_Path(tmp_dir))
+                content = archive_path.read_bytes()
+                filename = archive_path.name
+
+            from fastapi.responses import Response
+
+            return Response(
+                content=content,
+                media_type="application/gzip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                },
+            )
+        except FileNotFoundError as e:
+            return RedirectResponse(
+                f"/settings?msg=Backup failed: {e}&msg_type=danger",
+                status_code=302,
+            )
+        except Exception as e:
+            return RedirectResponse(
+                f"/settings?msg=Backup error: {e}&msg_type=danger",
+                status_code=302,
+            )
+
+    @app.get("/documents/{obj_id}/export")
+    async def document_export(request: Request, obj_id: str):
+        """Export a single knowledge object as a markdown file."""
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        result = await mcp_client.export_object(obj_id)
+        content = result.get("content", "") if isinstance(result, dict) else str(result)
+
+        from fastapi.responses import Response
+
+        return Response(
+            content=content,
+            media_type="text/markdown",
+            headers={
+                "Content-Disposition": f'attachment; filename="{obj_id[:12]}.md"',
+            },
+        )
+
+    # ─── Document Actions ──────────────────────────────────────────
+
+    @app.post("/documents/{obj_id}/delete")
+    async def document_delete(request: Request, obj_id: str):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        result = await mcp_client.delete(obj_id)
+        status = result.get("status", "error") if isinstance(result, dict) else "error"
+        if status == "deleted":
+            return RedirectResponse(
+                "/documents?msg=Document deleted&msg_type=info",
+                status_code=302,
+            )
+        return RedirectResponse(
+            f"/documents/{obj_id}?msg=Delete failed: {status}&msg_type=danger",
+            status_code=302,
+        )
+
+    @app.post("/documents/{obj_id}/edit")
+    async def document_edit(
+        request: Request,
+        obj_id: str,
+        title: str = Form(""),
+        content: str = Form(""),
+        tags: str = Form(""),
+        project: str = Form(""),
+    ):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        await mcp_client.update(
+            obj_id, title=title, content=content, tags=tags, project=project,
+        )
+        return RedirectResponse(f"/documents/{obj_id}", status_code=302)
+
+    @app.post("/documents/{obj_id}/classify")
+    async def document_classify(
+        request: Request,
+        obj_id: str,
+        obj_type: str = Form(""),
+        summary: str = Form(""),
+    ):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        await mcp_client.classify(
+            obj_id, obj_type=obj_type, summary=summary,
+        )
+        return RedirectResponse(f"/documents/{obj_id}", status_code=302)
+
+    @app.post("/documents/{obj_id}/pipeline")
+    async def document_pipeline(request: Request, obj_id: str):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        await mcp_client.pipeline(obj_id)
+        return RedirectResponse(f"/documents/{obj_id}", status_code=302)
+
+    @app.post("/documents/{obj_id}/link")
+    async def document_link(
+        request: Request,
+        obj_id: str,
+        rel_type: str = Form("relatedTo"),
+        direction: str = Form("outgoing"),
+        target_id: str = Form(""),
+    ):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        if not target_id:
+            return RedirectResponse(
+                f"/documents/{obj_id}?msg=Target ID required&msg_type=danger",
+                status_code=302,
+            )
+
+        if direction == "outgoing":
+            await mcp_client.link(obj_id, rel_type, target_id)
+        else:
+            await mcp_client.link(target_id, rel_type, obj_id)
+        return RedirectResponse(f"/documents/{obj_id}", status_code=302)
+
+    @app.post("/documents/{obj_id}/unlink")
+    async def document_unlink(
+        request: Request,
+        obj_id: str,
+        from_id: str = Form(""),
+        rel_type: str = Form(""),
+        to_id: str = Form(""),
+    ):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        await mcp_client.unlink(from_id, rel_type, to_id)
+        return RedirectResponse(f"/documents/{obj_id}", status_code=302)
+
+    # ─── Synthesis & Insights ────────────────────────────────────
+
+    @app.get("/synthesis", response_class=HTMLResponse)
+    async def synthesis_page(request: Request):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        return templates.TemplateResponse(
+            request, "synthesis.html", _ctx(synthesis=None),
+        )
+
+    @app.post("/synthesis", response_class=HTMLResponse)
+    async def synthesis_generate(
+        request: Request,
+        period_days: int = Form(7),
+        project: str = Form(""),
+    ):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        result = await mcp_client.synthesize(period_days=period_days, project=project)
+
+        return templates.TemplateResponse(
+            request,
+            "synthesis.html",
+            _ctx(synthesis=result, period_days=period_days, project=project),
+        )
+
+    @app.get("/insights", response_class=HTMLResponse)
+    async def insights_page(request: Request):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        return templates.TemplateResponse(
+            request, "insights.html", _ctx(analysis=None),
+        )
+
+    @app.post("/insights", response_class=HTMLResponse)
+    async def insights_generate(request: Request):
+        session = _require_auth(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=302)
+
+        result = await mcp_client.reason()
+
+        return templates.TemplateResponse(
+            request, "insights.html", _ctx(analysis=result),
+        )
 
     # ─── API Endpoints (for HTMX/Cytoscape) ───────────────────────
 
@@ -584,5 +853,42 @@ def create_dashboard(
         if session is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return await mcp_client.dossier(topic)
+
+    @app.get("/api/search")
+    async def api_search(request: Request, q: str = ""):
+        session = _require_auth(request)
+        if session is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if not q or len(q) < 2:
+            return HTMLResponse("")
+        results = await mcp_client.search(q, limit=8)
+        # Return HTML fragment for HTMX
+        html = ""
+        for doc in results:
+            obj_id = doc.get("id", "")
+            title = doc.get("title", obj_id[:12])
+            doc_type = doc.get("type", "")
+            html += (
+                f'<div class="search-item" '
+                f"onclick=\"document.getElementById('target_id').value='{obj_id}'; "
+                f"document.getElementById('search-results').innerHTML='';\">"
+                f'<span class="badge badge-{doc_type}" style="font-size:0.7rem;">{doc_type}</span> '
+                f"{title[:60]}"
+                f'<small style="color:var(--text-muted);"> {obj_id[:8]}</small>'
+                f"</div>"
+            )
+        return HTMLResponse(html)
+
+    @app.post("/api/feedback")
+    async def api_feedback(request: Request):
+        session = _require_auth(request)
+        if session is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+        body = await request.json()
+        obj_id = body.get("obj_id", "")
+        relevant = body.get("relevant", True)
+        result = await mcp_client.feedback(obj_id, relevant)
+        return JSONResponse(result)
 
     return app

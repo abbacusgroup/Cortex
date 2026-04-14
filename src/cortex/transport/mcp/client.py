@@ -223,18 +223,32 @@ class CortexMCPClient:
         self.timeout = timedelta(seconds=timeout_seconds)
         self._timeout_seconds = timeout_seconds
 
-    async def _call(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
-        """Call a single MCP tool and return its unwrapped result."""
+    async def _call(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
+        """Call a single MCP tool and return its unwrapped result.
+
+        Args:
+            timeout: Per-call timeout override in seconds. When *None*
+                (the default), the client-level ``timeout_seconds`` is used.
+                Pass a higher value for slow LLM-backed tools like
+                ``cortex_synthesize`` or ``cortex_reason``.
+        """
         # Defensive sentinel: under rare concurrency conditions a task
         # group inside ClientSession.__aexit__ may suppress an inner error
         # and exit the ``async with`` without raising. Without this
         # sentinel, control flow would reach the ``return`` below with
         # ``result`` unbound and crash with ``UnboundLocalError``. We
         # surface a clean MCPConnectionError instead.
+        effective_timeout = timeout if timeout is not None else self._timeout_seconds
         result: Any = _UNSET
         try:
             async with (
-                _http_client_session(self.url, self._timeout_seconds) as (
+                _http_client_session(self.url, effective_timeout) as (
                     read_stream,
                     write_stream,
                     _get_session_id,
@@ -245,7 +259,7 @@ class CortexMCPClient:
                 result = await session.call_tool(
                     name,
                     arguments=arguments or {},
-                    read_timeout_seconds=self.timeout,
+                    read_timeout_seconds=timedelta(seconds=effective_timeout),
                 )
         except MCPClientError:
             raise
@@ -264,11 +278,11 @@ class CortexMCPClient:
             raise _classify_transport_exception(
                 _pick_significant_leaf(leaves),
                 url=self.url,
-                timeout=self._timeout_seconds,
+                timeout=effective_timeout,
             ) from eg
         except Exception as e:
             raise _classify_transport_exception(
-                e, url=self.url, timeout=self._timeout_seconds
+                e, url=self.url, timeout=effective_timeout
             ) from e
         if result is _UNSET:
             raise MCPConnectionError(
@@ -420,6 +434,33 @@ class CortexMCPClient:
         """Delete a knowledge object (admin tool)."""
         return await self._call("cortex_delete", {"obj_id": obj_id})
 
+    async def update(
+        self,
+        obj_id: str,
+        title: str = "",
+        content: str = "",
+        tags: str = "",
+        project: str = "",
+    ) -> dict[str, Any]:
+        """Update a knowledge object's fields (admin tool)."""
+        args: dict[str, Any] = {"obj_id": obj_id}
+        if title:
+            args["title"] = title
+        if content:
+            args["content"] = content
+        if tags:
+            args["tags"] = tags
+        if project:
+            args["project"] = project
+        return await self._call("cortex_update", args)
+
+    async def unlink(self, from_id: str, rel_type: str, to_id: str) -> dict[str, Any]:
+        """Remove a relationship between two knowledge objects (admin tool)."""
+        return await self._call(
+            "cortex_unlink",
+            {"from_id": from_id, "rel_type": rel_type, "to_id": to_id},
+        )
+
     async def list_objects(
         self, doc_type: str = "", project: str = "", limit: int = 50
     ) -> list[dict[str, Any]]:
@@ -460,13 +501,21 @@ class CortexMCPClient:
     # ─── Phase 3: methods used by CLI commands ────────────────────────
 
     async def pipeline(self, obj_id: str) -> dict[str, Any]:
-        return await self._call("cortex_pipeline", {"obj_id": obj_id})
+        return await self._call("cortex_pipeline", {"obj_id": obj_id}, timeout=30.0)
 
     async def synthesize(self, period_days: int = 7, project: str = "") -> dict[str, Any]:
         return await self._call(
             "cortex_synthesize",
             {"period_days": period_days, "project": project},
+            timeout=60.0,
         )
 
     async def reason(self) -> dict[str, Any]:
-        return await self._call("cortex_reason")
+        return await self._call("cortex_reason", timeout=60.0)
+
+    async def export_object(self, obj_id: str, format: str = "markdown") -> dict[str, Any]:
+        """Export a knowledge object as markdown (admin tool)."""
+        return await self._call(
+            "cortex_export",
+            {"obj_id": obj_id, "format": format},
+        )
