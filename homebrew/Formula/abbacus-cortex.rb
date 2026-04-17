@@ -1,7 +1,7 @@
 class AbbacusCortex < Formula
   include Language::Python::Virtualenv
 
-  desc "AI knowledge pipeline -- capture, search, and reason over your knowledge"
+  desc "Cognitive knowledge system with formal ontology, reasoning, and intelligence serving"
   homepage "https://github.com/abbacusgroup/Cortex"
   url "https://files.pythonhosted.org/packages/source/a/abbacus-cortex/abbacus_cortex-0.3.2.tar.gz"
   sha256 "c91d3bdf1078b70d75539ab07aa6f52982c6bc59196cf7b34d9ee55a80e14a34"

@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-04-14
+
+### Fixed
+
+- **Schema migration system** — add lightweight migrations using `PRAGMA user_version` so future schema changes apply automatically on startup.
+- **Dashboard import crash** — vault import now routes through MCP server instead of crashing on direct access.
+- **Silent error suppression** — replace `contextlib.suppress(Exception)` with logged warnings so failures are visible.
+- **XSS in dashboard search** — escape user input with `html.escape` before rendering results.
+- **O(n) entity name scan** — replaced with `SPARQL LCASE()` filter for efficient lookups.
+- **Semantic search error handling** — loading all embeddings without error handling now fails gracefully.
+- **Stale REST API version** — now reads `__version__` instead of returning hardcoded value.
+
+### Added
+
+- **Column allowlist in `ContentStore.update()`** — prevents SQL injection through dynamic column names.
+- **`count_entities()`** — avoids materializing the full entity list just to count them.
+
+### Changed
+
+- **Dockerfile aligned to Python 3.13** (matches CI), removed error suppression.
+- **Removed unused `aiosqlite` dependency**.
+
+## [0.3.1] — 2026-04-13
+
+### Fixed
+
+- **Vault export** — broken wiki-links dropped from 438 to ~16. Strip old `## Related` sections from content before appending new ones. Organize into project/type folder tree with project hub index files. Deduplicate title headings when content already starts with `# heading`.
+
+## [0.3.0] — 2026-04-13
+
+### Added
+
+- **Dashboard CRUD parity** — the dashboard is now fully interactive, matching all MCP API capabilities:
+  - **Detail page CRUD** — delete objects with confirmation modal, edit title/content/tags/project, reclassify type and summary via `cortex_classify`, re-run intelligence pipeline.
+  - **Intelligence pages** — `/synthesis` page with period/project form, `/insights` page showing contradictions, patterns, gaps, and staleness.
+  - **Relationship management** — create links with type/direction selector and HTMX typeahead search, remove relationships with inline unlink buttons, relevance feedback thumbs on search results.
+  - **Data management** — backup download button in settings, single-object markdown export on detail page.
+- **`cortex_update` MCP tool** — edit existing documents (title, content, tags, project).
+- **`cortex_unlink` MCP tool** — remove relationships between documents.
+- **`cortex_import` MCP tool** — import Obsidian vaults through MCP.
+- **Unified setup wizard** (`cortex setup`) — replaces the 3–4 step post-install flow with a single interactive command covering data stores, LLM provider, embeddings, dashboard password, background services, and Claude Code registration.
+- **`env_writer.py`** — atomic `.env` read/merge/write that fixes LaunchAgent env var visibility (root cause of silent LLM failures).
+
+### Changed
+
+- **`cortex init` deprecated** — hidden, delegates to wizard in `--auto` mode.
+- **Both MCP + dashboard services installed** (was MCP only).
+- **Dockerfile** includes embeddings and uses `setup --auto`.
+- **Homebrew caveats** simplified to just `cortex setup`.
+- **CI macOS job** scoped to integration-only tests (~20 tests instead of full suite) to avoid timeout.
+
 ## [0.2.5] — 2026-04-13
 
 ### Changed
@@ -572,7 +623,10 @@ If you're upgrading from a pre-2026-04-07 install:
 > (MCP, dashboard, REST API) plus the CLI now route through the
 > canonical MCP HTTP server.
 
-[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/abbacusgroup/Cortex/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/abbacusgroup/Cortex/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/abbacusgroup/Cortex/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/abbacusgroup/Cortex/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/abbacusgroup/Cortex/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/abbacusgroup/Cortex/compare/v0.2.2...v0.2.3

@@ -35,7 +35,7 @@ cortex setup
 
 **Homebrew**:
 ```bash
-brew install abbacusgroup/tap/abbacus-cortex
+brew install abbacusgroup/cortex/abbacus-cortex
 cortex setup
 ```
 
