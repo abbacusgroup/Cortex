@@ -153,12 +153,18 @@ class LLMClient:
     def __init__(self, config: CortexConfig):
         self.config = config
         self._litellm_available = self._check_litellm()
-        self._available = bool(config.llm_model and config.llm_api_key and self._litellm_available)
+        # Ollama runs locally and doesn't require an API key
+        needs_key = config.llm_provider not in ("ollama",)
+        self._available = bool(
+            config.llm_model
+            and (config.llm_api_key or not needs_key)
+            and self._litellm_available
+        )
         if self._available:
             self._model = config.llm_model
         else:
             self._model = ""
-            if config.llm_model and config.llm_api_key and not self._litellm_available:
+            if config.llm_model and not self._litellm_available:
                 logger.info("litellm not installed — classification will be skipped")
             else:
                 logger.info("No LLM configured — classification will be skipped")

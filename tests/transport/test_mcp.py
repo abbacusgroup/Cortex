@@ -37,6 +37,7 @@ EXPECTED_ADMIN_TOOLS = frozenset(
         "cortex_status",
         "cortex_synthesize",
         "cortex_delete",
+        "cortex_delete_entity",
         "cortex_update",
         "cortex_unlink",
         "cortex_export",
@@ -72,7 +73,7 @@ class TestToolCounts:
 
     def test_all_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=True)
-        assert len(_tool_names(mcp)) == 25
+        assert len(_tool_names(mcp)) == 26
 
     def test_public_tools_count(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=False)
@@ -85,7 +86,7 @@ class TestToolCounts:
             include_admin=False,
         )
         diff = _tool_names(all_mcp) - _tool_names(pub_mcp)
-        assert len(diff) == 14
+        assert len(diff) == 15
         assert diff == EXPECTED_ADMIN_TOOLS
 
 
@@ -298,6 +299,36 @@ def _call_tool(mcp, name: str, **kwargs):
     """
     tool = mcp._tool_manager._tools[name]
     return tool.fn(**kwargs)
+
+
+class TestCortexDeleteEntity:
+    """Functional tests for the cortex_delete_entity MCP tool."""
+
+    def test_delete_existing_entity(self, config: CortexConfig):
+        from cortex.db.store import Store
+
+        # Pre-populate via a separate store, then close before MCP server creation
+        pre_store = Store(config)
+        pre_store.initialize()
+        eid, _ = pre_store.create_entity(name="TestEntity", entity_type="concept")
+        pre_store.close()
+
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(mcp, "cortex_delete_entity", entity_id=eid)
+        assert result["status"] == "deleted"
+        assert result["entity_id"] == eid
+
+    def test_delete_nonexistent_entity(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(
+            mcp, "cortex_delete_entity",
+            entity_id="00000000-0000-0000-0000-000000000000",
+        )
+        assert result["status"] == "not_found"
+
+    def test_not_exposed_without_admin(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=False)
+        assert "cortex_delete_entity" not in _tool_names(mcp)
 
 
 class TestCortexQueryTrail:

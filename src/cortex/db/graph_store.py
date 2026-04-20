@@ -798,6 +798,29 @@ class GraphStore:
         self._store.add(ox.Quad(subject, predicate, obj))
         return True
 
+    def delete_entity(self, entity_id: str) -> bool:
+        """Delete an entity and all mention triples pointing to it.
+
+        Returns:
+            True if any triples were removed.
+        """
+        subject = cortex_iri(f"entity/{entity_id}")
+
+        # Remove all triples where entity is subject (definition)
+        outgoing = list(self._store.quads_for_pattern(subject, None, None))
+        for quad in outgoing:
+            self._store.remove(quad)
+
+        # Remove all triples where entity is object (mentions)
+        incoming = list(self._store.quads_for_pattern(None, None, subject))
+        for quad in incoming:
+            self._store.remove(quad)
+
+        removed = len(outgoing) + len(incoming)
+        if removed:
+            logger.debug("Deleted entity %s (%d triples)", entity_id, removed)
+        return removed > 0
+
     def delete_relationship(self, *, from_id: str, rel_type: str, to_id: str) -> bool:
         """Delete a specific relationship."""
         if rel_type not in RELATIONSHIP_MAP:

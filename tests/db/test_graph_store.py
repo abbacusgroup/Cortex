@@ -420,6 +420,26 @@ class TestEntities:
         entities = store.list_entities(entity_type="concept")
         assert any(e["id"] == eid for e in entities)
 
+    def test_delete_entity_removes_definition_triples(self, store: GraphStore) -> None:
+        eid, _ = store.create_entity(name="Rust", entity_type="technology")
+        assert store.delete_entity(eid) is True
+        # Entity should no longer appear in listings
+        entities = store.list_entities()
+        assert not any(e["id"] == eid for e in entities)
+
+    def test_delete_entity_removes_mention_triples(self, store: GraphStore) -> None:
+        eid, _ = store.create_entity(name="Go", entity_type="technology")
+        obj_id = store.create_object(obj_type="research", title="Go research")
+        store.add_mention(obj_id=obj_id, entity_id=eid)
+        # Verify mention exists
+        assert obj_id in store.get_entity_mentions(eid)
+        # Delete and verify mention is gone
+        assert store.delete_entity(eid) is True
+        assert store.get_entity_mentions(eid) == []
+
+    def test_delete_nonexistent_entity_returns_false(self, store: GraphStore) -> None:
+        assert store.delete_entity("00000000-0000-0000-0000-000000000000") is False
+
 
 # =========================================================================
 # SPARQL

@@ -229,6 +229,10 @@ class Store:
     def add_mention(self, *, obj_id: str, entity_id: str) -> None:
         self.graph.add_mention(obj_id=obj_id, entity_id=entity_id)
 
+    def delete_entity(self, entity_id: str) -> bool:
+        """Delete an entity from the graph."""
+        return self.graph.delete_entity(entity_id)
+
     def list_entities(self, entity_type: str | None = None) -> list[dict[str, str]]:
         return self.graph.list_entities(entity_type=entity_type)
 

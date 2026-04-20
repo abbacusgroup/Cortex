@@ -42,6 +42,7 @@ ADMIN_TOOLS = frozenset(
         "cortex_status",
         "cortex_synthesize",
         "cortex_delete",
+        "cortex_delete_entity",
         "cortex_update",
         "cortex_unlink",
         "cortex_export",
@@ -450,6 +451,21 @@ def create_mcp_server(
             return {
                 "status": "deleted" if deleted else "not_found",
                 "obj_id": obj_id,
+            }
+
+        @mcp.tool()
+        def cortex_delete_entity(
+            entity_id: str,
+        ) -> dict[str, Any]:
+            """Delete an entity and all its mention links.
+
+            Args:
+                entity_id: Entity ID to delete.
+            """
+            deleted = store.delete_entity(entity_id)
+            return {
+                "status": "deleted" if deleted else "not_found",
+                "entity_id": entity_id,
             }
 
         @mcp.tool()

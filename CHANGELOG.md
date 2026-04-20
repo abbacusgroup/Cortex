@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-04-20
+
+### Fixed
+
+- **Ollama provider no longer requires API key** — `LLMClient` now skips the `api_key` check when the provider is `ollama`, matching the setup wizard's `needs_key: False` behavior.
+- **Vault export wiki-links and tags** — export now renders relationships as Obsidian `[[wiki-links]]` and formats tags as proper YAML lists.
+
+### Added
+
+- **`delete_entity` API** — new `delete_entity()` method in graph store, store, and `cortex_delete_entity` admin MCP tool for removing entities and their mention triples from the knowledge graph.
+
+### Changed
+
+- **`.env.example` and README** — clarified `.env` file loading precedence (env vars > CWD > `~/.cortex/.env`).
+
 ## [0.3.2] — 2026-04-14
 
 ### Fixed

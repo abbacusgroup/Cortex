@@ -76,6 +76,8 @@ CORTEX_LLM_API_KEY=sk-...
 CORTEX_EMBEDDING_MODEL=all-mpnet-base-v2
 ```
 
+Cortex loads `.env` from these locations in priority order: environment variables (highest), `.env` in the current working directory, then `~/.cortex/.env`. The recommended location is `~/.cortex/.env` for persistent configuration.
+
 See `.env.example` for all options.
 
 ## CLI Commands
