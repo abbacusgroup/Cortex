@@ -17,8 +17,8 @@ from typing import Any
 
 import typer
 
+from cortex.cli._helpers import open_store_or_exit
 from cortex.core.config import CortexConfig, load_config
-from cortex.core.errors import StoreLockedError
 from cortex.core.logging import setup_logging
 from cortex.db.store import Store
 from cortex.ontology.resolver import find_ontology
@@ -79,14 +79,6 @@ def _echo(msg: str = "") -> None:
     typer.echo(msg)
 
 
-def _open_store_or_exit(config: CortexConfig) -> Store:
-    try:
-        return Store(config)
-    except StoreLockedError as e:
-        typer.secho(str(e), fg=typer.colors.RED, err=True)
-        raise typer.Exit(1) from e
-
-
 def _test_llm(config: CortexConfig, model: str, api_key: str, provider: str) -> tuple[bool, str]:
     """Attempt an LLM test call. Returns (success, message)."""
     from cortex.services.llm import LLMClient
@@ -135,7 +127,7 @@ def _step_data_dir(config: CortexConfig) -> None:
 def _step_stores(config: CortexConfig) -> Store:
     """Step 2: Initialize stores and load ontology."""
     _echo("\n[2/7] Stores & ontology")
-    store = _open_store_or_exit(config)
+    store = open_store_or_exit(config)
     try:
         ontology_path = find_ontology()
         store.initialize(ontology_path)

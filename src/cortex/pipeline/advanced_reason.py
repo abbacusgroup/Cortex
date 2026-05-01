@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
+from cortex.core.docs import summarize_doc
 from cortex.core.logging import get_logger
 from cortex.db.store import Store
 from cortex.services.llm import LLMClient
@@ -262,7 +263,7 @@ class AdvancedReasoner:
         # Add the object itself
         doc = self.store.content.get(obj_id)
         if doc:
-            chain.append(self._to_chain_entry(doc))
+            chain.append(summarize_doc(doc))
 
         # Trace forward (effects)
         self._trace_chain(obj_id, chain, visited, "ledTo", "outgoing")
@@ -289,7 +290,7 @@ class AdvancedReasoner:
                 if other_id not in visited:
                     doc = self.store.content.get(other_id)
                     if doc:
-                        chain.append(self._to_chain_entry(doc))
+                        chain.append(summarize_doc(doc))
                         self._trace_chain(
                             other_id,
                             chain,
@@ -299,12 +300,3 @@ class AdvancedReasoner:
                             max_depth - 1,
                         )
 
-    @staticmethod
-    def _to_chain_entry(doc: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "id": doc.get("id", ""),
-            "title": doc.get("title", ""),
-            "type": doc.get("type", ""),
-            "project": doc.get("project", ""),
-            "created_at": doc.get("created_at", ""),
-        }

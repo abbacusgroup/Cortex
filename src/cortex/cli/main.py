@@ -12,6 +12,7 @@ from typing import Any
 
 import typer
 
+from cortex.cli._helpers import open_store_or_exit
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.constants import KNOWLEDGE_TYPES
 from cortex.core.errors import StoreLockedError
@@ -59,18 +60,6 @@ def _global_options(
     # the previous invocation's state into the next one.
     _mcp_client = None
     _mcp_probe_done = False
-
-
-def _open_store_or_exit(config: CortexConfig) -> Store:
-    """Open a Store, exiting cleanly with a user-friendly message if the graph DB is locked.
-
-    This is the single chokepoint for surfacing StoreLockedError to CLI users.
-    """
-    try:
-        return Store(config)
-    except StoreLockedError as e:
-        typer.secho(str(e), fg=typer.colors.RED, err=True)
-        raise typer.Exit(1) from e
 
 
 # ─── Phase 3 helpers — MCP client routing ──────────────────────────────────
@@ -334,7 +323,7 @@ def _get_store(*, must_init: bool = True) -> Store:
 
     config = load_config()
     setup_logging(level=config.log_level, json_output=False)
-    store = _open_store_or_exit(config)
+    store = open_store_or_exit(config)
 
     # Auto-initialize if data dir has stores
     try:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from cortex.core.docs import summarize_doc
 from cortex.core.logging import get_logger
 from cortex.db.store import Store
 
@@ -37,7 +38,7 @@ class GraphQueries:
         # Add the starting object
         start = self.store.content.get(obj_id)
         if start:
-            chain.append(self._summarize(start))
+            chain.append(summarize_doc(start))
         # Fresh visited for forward — includes backward nodes (prevents
         # duplicates) but excludes the start node so forward traversal
         # can examine its outgoing ledTo edges.
@@ -73,7 +74,7 @@ class GraphQueries:
             if is_backward or is_forward:
                 other = self.store.content.get(rel["other_id"])
                 if other and rel["other_id"] not in visited:
-                    chain.append(self._summarize(other))
+                    chain.append(summarize_doc(other))
                     self._traverse_causal(rel["other_id"], chain, visited, remaining - 1, direction)
 
     def contradiction_map(self, scope: str | None = None) -> list[dict[str, Any]]:
@@ -128,7 +129,7 @@ class GraphQueries:
         for mid in mention_ids:
             doc = self.store.content.get(mid)
             if doc:
-                direct_objects.append(self._summarize(doc))
+                direct_objects.append(summarize_doc(doc))
 
         # Extended neighborhood (hop 2): objects connected to the direct objects
         connections = []
@@ -144,7 +145,7 @@ class GraphQueries:
                         if other:
                             connections.append(
                                 {
-                                    **self._summarize(other),
+                                    **summarize_doc(other),
                                     "via": mid,
                                     "via_rel": rel["rel_type"],
                                 }
@@ -171,7 +172,7 @@ class GraphQueries:
         # Add current
         current = self.store.content.get(obj_id)
         if current:
-            chain.append(self._summarize(current))
+            chain.append(summarize_doc(current))
 
         # Go forward (find what supersedes this) — fresh visited
         # excludes start node so forward traversal can examine its edges
@@ -205,7 +206,7 @@ class GraphQueries:
                 ):
                     other = self.store.content.get(rel["other_id"])
                     if other:
-                        chain.append(self._summarize(other))
+                        chain.append(summarize_doc(other))
                         self._traverse_supersedes(rel["other_id"], chain, visited, direction)
             elif (
                 direction == "forward"
@@ -215,7 +216,7 @@ class GraphQueries:
             ):
                 other = self.store.content.get(rel["other_id"])
                 if other:
-                    chain.append(self._summarize(other))
+                    chain.append(summarize_doc(other))
                     self._traverse_supersedes(rel["other_id"], chain, visited, direction)
 
     def project_overview(self, project: str) -> dict[str, Any]:
@@ -255,18 +256,8 @@ class GraphQueries:
         return {
             "project": project,
             "object_count": len(objects),
-            "objects": [self._summarize(obj) for obj in objects],
+            "objects": [summarize_doc(obj) for obj in objects],
             "entities": entities,
             "edges": edges,
         }
 
-    @staticmethod
-    def _summarize(doc: dict[str, Any]) -> dict[str, Any]:
-        """Create a compact summary of a document."""
-        return {
-            "id": doc.get("id", ""),
-            "title": doc.get("title", ""),
-            "type": doc.get("type", ""),
-            "project": doc.get("project", ""),
-            "created_at": doc.get("created_at", ""),
-        }

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-05-01
+
+### Changed
+
+- **Deduplicated CLI store-locking helper** — `_open_store_or_exit` was defined verbatim in both `cli/main.py` and `cli/setup_wizard.py`; extracted to shared `cli/_helpers.py::open_store_or_exit`. No behavior change.
+- **Deduplicated document summary helper** — `AdvancedReasoner._to_chain_entry` and `GraphQueries._summarize` produced identical compact-doc dicts; extracted to shared `core/docs.py::summarize_doc`. No behavior change.
+
+### Fixed
+
+- **`__version__` now matches `pyproject.toml`** — v0.3.3 forgot to bump `cortex/__init__.py`, leaving `__version__ = "0.3.2"`. Now synced to `0.3.4`.
+
 ## [0.3.3] — 2026-04-20
 
 ### Fixed
