@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-05-03
+
+### Changed
+
+- **Deduplicated Claude Code registration** — `cli/main.py::install_mcp` and `cli/setup_wizard.py` had near-identical blocks loading `~/.claude/settings.json`, setting `mcpServers["cortex"]`, and writing back. Extracted to `cli/_helpers.py::register_with_claude_code(spec)`. Each call site now constructs the `spec` dict (HTTP vs stdio) and delegates the file I/O. No behavior change.
+- **AlertPresenter delegates to GraphQueries for contradictions** — `AlertPresenter._check_contradictions` and `GraphQueries.contradiction_map` walked the graph identically; the alert version was just rewrapping the pair output. AlertPresenter now calls `GraphQueries.contradiction_map()` and formats the result. Removes ~25 lines of duplicated traversal logic; no behavior change beyond a cosmetic shift in alert message text wording (titles now resolved consistently from the same source as the graph view).
+
 ## [0.3.5] — 2026-05-03
 
 ### Fixed

@@ -12,7 +12,7 @@ from typing import Any
 
 import typer
 
-from cortex.cli._helpers import open_store_or_exit
+from cortex.cli._helpers import open_store_or_exit, register_with_claude_code
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.constants import KNOWLEDGE_TYPES
 from cortex.core.errors import StoreLockedError
@@ -775,16 +775,6 @@ def register(
     this is the pre-Phase-2 behavior, where Claude Code spawns its own
     Cortex stdio child process per session.
     """
-    import json
-
-    settings_path = Path.home() / ".claude" / "settings.json"
-    settings: dict[str, Any] = {}
-
-    if settings_path.exists():
-        settings = json.loads(settings_path.read_text())
-
-    mcp_servers = settings.setdefault("mcpServers", {})
-
     if legacy_stdio:
         import shutil
 
@@ -796,25 +786,14 @@ def register(
             cmd = sys.executable
             args = ["-m", "cortex.transport.mcp"]
 
-        mcp_servers["cortex"] = {
-            "command": cmd,
-            "args": args,
-            "env": {},
-        }
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-
+        spec = {"command": cmd, "args": args, "env": {}}
+        settings_path = register_with_claude_code(spec)
         typer.echo(f"Registered Cortex MCP (stdio) at {settings_path}")
         typer.echo(f"  Command: {cmd} {' '.join(args)}")
     else:
         config = load_config()
-        mcp_servers["cortex"] = {
-            "type": "http",
-            "url": config.mcp_server_url,
-        }
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-
+        spec = {"type": "http", "url": config.mcp_server_url}
+        settings_path = register_with_claude_code(spec)
         typer.echo(f"Registered Cortex MCP (http) at {settings_path}")
         typer.echo(f"  URL: {config.mcp_server_url}")
         typer.echo(

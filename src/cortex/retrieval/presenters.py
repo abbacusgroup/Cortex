@@ -14,6 +14,7 @@ from typing import Any
 
 from cortex.core.logging import get_logger
 from cortex.db.store import Store
+from cortex.retrieval.graph import GraphQueries
 from cortex.services.llm import LLMClient
 
 logger = get_logger("retrieval.presenters")
@@ -302,31 +303,20 @@ class AlertPresenter:
 
     def _check_contradictions(self) -> list[dict[str, Any]]:
         """Find active contradiction relationships."""
-        alerts = []
-        seen: set[tuple[str, str]] = set()
-
-        all_objects = self.store.list_objects(limit=500)
-        for obj in all_objects:
-            obj_id = obj.get("id", "")
-            rels = self.store.get_relationships(obj_id)
-            for rel in rels:
-                if rel["rel_type"] == "contradicts":
-                    pair = tuple(sorted([obj_id, rel["other_id"]]))
-                    if pair not in seen:
-                        seen.add(pair)
-                        alerts.append(
-                            {
-                                "type": "contradiction",
-                                "severity": "high",
-                                "message": (
-                                    f"Contradiction between "
-                                    f"'{obj.get('title', obj_id[:8])}' "
-                                    f"and object {rel['other_id'][:8]}"
-                                ),
-                                "object_ids": list(pair),
-                            }
-                        )
-        return alerts
+        pairs = GraphQueries(self.store).contradiction_map()
+        return [
+            {
+                "type": "contradiction",
+                "severity": "high",
+                "message": (
+                    f"Contradiction between "
+                    f"'{p['title_a'] or p['object_a'][:8]}' "
+                    f"and object {p['object_b'][:8]}"
+                ),
+                "object_ids": [p["object_a"], p["object_b"]],
+            }
+            for p in pairs
+        ]
 
     def _check_patterns(self) -> list[dict[str, Any]]:
         """Detect repeated entity mentions in fixes (systemic issues)."""

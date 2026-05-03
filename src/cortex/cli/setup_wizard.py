@@ -17,7 +17,7 @@ from typing import Any
 
 import typer
 
-from cortex.cli._helpers import open_store_or_exit
+from cortex.cli._helpers import open_store_or_exit, register_with_claude_code
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.logging import setup_logging
 from cortex.db.store import Store
@@ -370,17 +370,7 @@ def _step_services(config: CortexConfig, env_updates: dict[str, str], auto: bool
     )
     if register_cc:
         try:
-            settings_path = Path.home() / ".claude" / "settings.json"
-            settings: dict[str, Any] = {}
-            if settings_path.exists():
-                settings = json.loads(settings_path.read_text())
-            mcp_servers = settings.setdefault("mcpServers", {})
-            mcp_servers["cortex"] = {
-                "type": "http",
-                "url": config.mcp_server_url,
-            }
-            settings_path.parent.mkdir(parents=True, exist_ok=True)
-            settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+            register_with_claude_code({"type": "http", "url": config.mcp_server_url})
             _echo(f"      Registered with Claude Code ({config.mcp_server_url})")
         except Exception as e:
             _echo(f"      Registration failed: {e}")
