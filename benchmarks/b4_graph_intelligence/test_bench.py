@@ -147,7 +147,7 @@ def test_entity_neighborhood(store: Store) -> None:
     gq = GraphQueries(store)
 
     # Create entity
-    redis_eid = store.create_entity(name="Redis", entity_type="technology")
+    redis_eid, _ = store.create_entity(name="Redis", entity_type="technology")
 
     # Create 5 fix objects that mention Redis
     fix_ids = []
@@ -226,7 +226,7 @@ def test_project_overview(store: Store) -> None:
     entity_names = [("Postgres", "technology"), ("Auth", "concept"), ("K8s", "technology")]
     entity_ids = []
     for name, etype in entity_names:
-        eid = store.create_entity(name=name, entity_type=etype)
+        eid, _ = store.create_entity(name=name, entity_type=etype)
         entity_ids.append(eid)
 
     # Link entities to objects

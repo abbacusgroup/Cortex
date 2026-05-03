@@ -78,6 +78,7 @@ ENTITY_STOPWORDS = frozenset(
         "branch",
         "commit",
         "merge",
+        "cortex",
     }
 )
 

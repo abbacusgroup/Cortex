@@ -166,7 +166,7 @@ class CorpusGenerator:
     def _create_entities(self) -> None:
         """Create all entity nodes."""
         for tmpl in ENTITY_TEMPLATES:
-            eid = self.store.create_entity(
+            eid, _ = self.store.create_entity(
                 name=tmpl["name"], entity_type=tmpl["type"]
             )
             self.entity_ids[tmpl["name"]] = eid

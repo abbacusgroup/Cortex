@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-05-03
+
+### Fixed
+
+- **Benchmark suite restored** — `b1_hybrid_retrieval`, `b4_graph_intelligence`, `b5_pattern_detection` failed with `ValueError: Invalid IRI code point ' '` because they passed `store.create_entity(...)` (which returns `tuple[str, bool]`) directly as an entity ID. Updated 9 sites in `benchmarks/corpus/generator.py`, `benchmarks/b4_graph_intelligence/test_bench.py`, and `benchmarks/b5_pattern_detection/test_bench.py` to unpack the tuple.
+
+### Changed
+
+- **`pytest>=9.0.3`** (was `>=8.3`) — pytest 9 includes a compat shim for the `config.inicfg` private-attribute change; addresses dependency advisory GHSA-6w46-j5rx-g56g (dev-time tmpdir handling).
+- **Entity classifier stopword list** — added `cortex` to `ENTITY_STOPWORDS` so the LLM no longer extracts the system's own name as a `technology` entity when users capture self-referential knowledge.
+- **`litellm` constraint deliberately held at `>=1.60`** — see inline comment in `pyproject.toml`. The flagged litellm CVEs are in litellm's proxy server endpoints, which Cortex never starts (Cortex calls `litellm.completion()` as a library only). Bumping forces typer/click downgrades that break ~24 CLI tests, with no security benefit given Cortex's local-only deployment model.
+
 ## [0.3.4] — 2026-05-01
 
 ### Changed

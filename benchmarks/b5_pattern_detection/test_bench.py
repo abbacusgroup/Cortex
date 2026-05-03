@@ -40,7 +40,7 @@ def test_systemic_issue_detection(store: Store) -> None:
     # ── True positives ────────────────────────────────────────
 
     # Flaky-Service: 4 recent fixes mentioning the same entity
-    flaky_eid = store.create_entity(name="Flaky-Service", entity_type="technology")
+    flaky_eid, _ = store.create_entity(name="Flaky-Service", entity_type="technology")
     for i in range(4):
         fix_id = store.create(
             obj_type="fix",
@@ -50,7 +50,7 @@ def test_systemic_issue_detection(store: Store) -> None:
         store.add_mention(obj_id=fix_id, entity_id=flaky_eid)
 
     # Unstable-DB: 3 recent fixes (exactly at threshold)
-    unstable_eid = store.create_entity(name="Unstable-DB", entity_type="technology")
+    unstable_eid, _ = store.create_entity(name="Unstable-DB", entity_type="technology")
     for i in range(3):
         fix_id = store.create(
             obj_type="fix",
@@ -62,7 +62,7 @@ def test_systemic_issue_detection(store: Store) -> None:
     # ── True negatives ────────────────────────────────────────
 
     # Stable-API: only 2 fixes (below threshold of 3)
-    stable_eid = store.create_entity(name="Stable-API", entity_type="technology")
+    stable_eid, _ = store.create_entity(name="Stable-API", entity_type="technology")
     for i in range(2):
         fix_id = store.create(
             obj_type="fix",
@@ -72,7 +72,7 @@ def test_systemic_issue_detection(store: Store) -> None:
         store.add_mention(obj_id=fix_id, entity_id=stable_eid)
 
     # Old-Bug: 3 fixes but all created 30 days ago (outside 14-day window)
-    old_eid = store.create_entity(name="Old-Bug", entity_type="technology")
+    old_eid, _ = store.create_entity(name="Old-Bug", entity_type="technology")
     old_ts = _old_timestamp(30)
     for i in range(3):
         fix_id = store.create(
@@ -86,7 +86,7 @@ def test_systemic_issue_detection(store: Store) -> None:
     # Scattered-Fix: 3 fixes that each mention a *different* entity
     scattered_eids = []
     for i in range(3):
-        eid = store.create_entity(
+        eid, _ = store.create_entity(
             name=f"Scattered-Target-{i + 1}", entity_type="technology"
         )
         scattered_eids.append(eid)
@@ -160,7 +160,7 @@ def test_gap_analysis(store: Store) -> None:
         )
 
     # Entity "Buggy-Lib" has fixes but no lessons
-    buggy_eid = store.create_entity(name="Buggy-Lib", entity_type="technology")
+    buggy_eid, _ = store.create_entity(name="Buggy-Lib", entity_type="technology")
     for i in range(2):
         fix_id = store.create(
             obj_type="fix",
@@ -188,7 +188,7 @@ def test_gap_analysis(store: Store) -> None:
         )
 
     # Entity "Learned-Lib" has fixes AND a lesson
-    learned_eid = store.create_entity(name="Learned-Lib", entity_type="technology")
+    learned_eid, _ = store.create_entity(name="Learned-Lib", entity_type="technology")
     for i in range(2):
         fix_id = store.create(
             obj_type="fix",

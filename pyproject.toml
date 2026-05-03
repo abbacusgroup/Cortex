@@ -1,6 +1,6 @@
 [project]
 name = "abbacus-cortex"
-version = "0.3.4"
+version = "0.3.5"
 description = "Cognitive knowledge system with formal ontology, reasoning, and intelligence serving"
 readme = "README.md"
 authors = [
@@ -42,6 +42,12 @@ dependencies = [
     # HTTP client
     "httpx>=0.28",
     # LLM (provider-agnostic: Anthropic, OpenAI, Ollama, etc.)
+    # Pinned at >=1.60: bumping to >=1.83.7 (the patched version for current
+    # GHSA alerts) downgrades typer 0.24 -> 0.23 and click 8.3 -> 8.1 via the
+    # python-dotenv constraint chain, which breaks ~24 CLI tests that rely on
+    # click 8.3's CliRunner.Result.stderr behavior. The flagged litellm CVEs
+    # are all in litellm's proxy server endpoints, which Cortex never runs.
+    # Cortex is local-only and only calls litellm.completion() as a library.
     "litellm>=1.60",
 ]
 
@@ -60,7 +66,7 @@ cortex = "cortex.cli.main:app"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.25",
     # Bundle 9 / F.1 + F.2: xdist for parallel runs (the CI workflow uses
     # ``pytest -n auto``); forked for the test-isolation suite that needs
