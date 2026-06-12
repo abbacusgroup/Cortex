@@ -138,6 +138,10 @@ class DossierPresenter:
         """Find contradiction relationships among the given objects."""
         contradictions = []
         obj_ids = {obj.get("id") for obj in objects if obj.get("id")}
+        titles = {obj.get("id", ""): obj.get("title", "") for obj in objects if obj.get("id")}
+        # get_relationships returns the same edge from both endpoints, so a
+        # pair (A, B) is seen twice; dedup by sorted ID pair to emit it once.
+        seen: set[tuple[str, str]] = set()
 
         for obj in objects:
             obj_id = obj.get("id", "")
@@ -146,11 +150,16 @@ class DossierPresenter:
             rels = self.store.get_relationships(obj_id)
             for rel in rels:
                 if rel["rel_type"] == "contradicts" and rel["other_id"] in obj_ids:
+                    pair = tuple(sorted([obj_id, rel["other_id"]]))
+                    if pair in seen:
+                        continue
+                    seen.add(pair)
                     contradictions.append(
                         {
-                            "object_a": obj_id,
-                            "object_b": rel["other_id"],
-                            "title_a": obj.get("title", ""),
+                            "object_a": pair[0],
+                            "object_b": pair[1],
+                            "title_a": titles.get(pair[0], ""),
+                            "title_b": titles.get(pair[1], ""),
                         }
                     )
 

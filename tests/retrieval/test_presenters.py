@@ -235,6 +235,46 @@ class TestDossierPresenter:
         assert result["status"] == "ok"
         assert len(result["contradictions"]) >= 1
 
+    def test_dossier_contradiction_counted_once(self, store: Store):
+        """A single contradicting pair must appear exactly once.
+
+        get_relationships returns the edge from both endpoints, so the old
+        code appended the pair twice (once per direction). The fix dedups
+        by sorted ID pair.
+        """
+        id_a = _create(
+            store,
+            title="Claim A",
+            obj_type="research",
+            content="The sky is blue",
+        )
+        id_b = _create(
+            store,
+            title="Claim B",
+            obj_type="research",
+            content="The sky is green",
+        )
+        store.create_relationship(from_id=id_a, rel_type="contradicts", to_id=id_b)
+        entity_id, _ = store.create_entity(name="Sky", entity_type="concept")
+        store.add_mention(obj_id=id_a, entity_id=entity_id)
+        store.add_mention(obj_id=id_b, entity_id=entity_id)
+
+        presenter = DossierPresenter(store)
+        result = presenter.render("Sky")
+
+        contradictions = result["contradictions"]
+        # Exactly one entry for the single (A, B) pair, not two.
+        assert len(contradictions) == 1
+        entry = contradictions[0]
+        assert {entry["object_a"], entry["object_b"]} == {id_a, id_b}
+        # No duplicate pairs regardless of count.
+        pairs = [tuple(sorted((c["object_a"], c["object_b"]))) for c in contradictions]
+        assert len(pairs) == len(set(pairs))
+        # title_b is now present and each title matches its own object.
+        titles = {id_a: "Claim A", id_b: "Claim B"}
+        assert entry["title_a"] == titles[entry["object_a"]]
+        assert entry["title_b"] == titles[entry["object_b"]]
+
     def test_dossier_includes_related_entities(self, store: Store):
         obj_id = _create(
             store,

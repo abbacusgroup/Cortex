@@ -96,12 +96,19 @@ class GraphQueries:
                     if pair not in seen:
                         seen.add(pair)
                         other = self.store.content.get(rel["other_id"])
+                        # Map each title to its own ID so title_a/title_b
+                        # describe object_a/object_b after the sort, instead
+                        # of being assigned to whichever object was iterated.
+                        titles = {
+                            obj_id: obj.get("title", ""),
+                            rel["other_id"]: other.get("title", "") if other else "",
+                        }
                         contradictions.append(
                             {
                                 "object_a": pair[0],
                                 "object_b": pair[1],
-                                "title_a": obj.get("title", ""),
-                                "title_b": other.get("title", "") if other else "",
+                                "title_a": titles[pair[0]],
+                                "title_b": titles[pair[1]],
                             }
                         )
         return contradictions
