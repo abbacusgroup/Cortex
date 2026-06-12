@@ -47,7 +47,7 @@ cortex/
 │       └── static/              # CSS + JS (Cytoscape.js)
 ├── ontology/
 │   └── cortex.ttl               # OWL ontology (304 triples)
-├── tests/                       # ~1070 tests mirroring src/ structure
+├── tests/                       # ~1278 tests mirroring src/ structure
 ├── pyproject.toml
 ├── Dockerfile
 ├── docker-compose.yml

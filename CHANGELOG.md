@@ -7,6 +7,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-12
+
+Full-codebase audit release: 234 findings triaged across every subsystem (each
+high/medium adversarially re-verified), all 23 CLI commands and 26 MCP tools
+empirically validated against sandbox data, then every confirmed P0/P1 issue
+fixed. 1,278 tests (was 1,070).
+
+### Security
+
+- **Dashboard CSRF protection** — all state-changing POST routes now enforce an
+  Origin/Referer check. In the default no-password mode, any website could
+  previously trigger create/edit/delete/import/export — including an
+  arbitrary-path `.md` file write via `/settings/export`.
+
+### Fixed
+
+- **Hot backups no longer silently drop committed data** — the WAL checkpoint
+  result was discarded while `cortex.db-wal`/`-shm` were excluded from the
+  archive, so writes landing during a live-server backup vanished. The
+  checkpoint result is now verified; on a blocked checkpoint the WAL/SHM files
+  are bundled into the archive (restore replays them) with a loud warning.
+- **Restore rollback restored garbage** — a failed extraction's rollback used
+  `shutil.move` onto an existing directory, nesting the real `graph.db` inside
+  partial-extraction debris. Rollback now clears partial targets first, and a
+  post-restore verification (open + count) auto-rolls-back torn archives.
+- **Backups self-verify** — `cortex backup` reopens the written archive and
+  confirms the document count matches the live store ("Backup verified: N
+  documents"); archives no longer re-archive `.pre-restore/`, prior backup
+  tarballs, or `.DS_Store`.
+- **Importer no longer permanently loses documents** — the dedup hash was
+  persisted during the duplicate *check*, before `store.create()` ran, so a
+  failed import was forever skipped as a "duplicate" on retry. The hash is now
+  written only after a successful create. Obsidian imports also no longer drop
+  distinct files that share a filename stem across folders.
+- **FTS search no longer returns silent zero results** — embedded double quotes
+  (`foo"bar`, `5'10"`) are escaped per FTS5 rules; genuine syntax errors log
+  and return empty, while index corruption now raises `StoreError` instead of
+  masquerading as "no matches".
+- **Keyless/local LLM providers (Ollama) work** — an empty `api_key` was passed
+  to litellm, producing an illegal `Authorization: Bearer ` header that broke
+  every keyless provider. LLM failures are also logged and detectable instead
+  of the heuristic fallback silently posing as success.
+- **Relationship discovery can reference the new object** — the LLM prompt
+  never included the freshly-captured object's ID, so every relationship
+  involving it was unresolvable and dropped. Endpoints are validated before an
+  edge is written.
+- **Contradiction pairs no longer swap titles**; dossier mention counts no
+  longer double-count.
+- **`cortex entities --project` works** — the MCP probe fired (and failed)
+  before the direct-store path could run; now guarded with a clear
+  `--project requires --direct` message, mirroring `pipeline --batch`.
+- **Dashboard synthesis page renders the narrative** instead of a raw Python
+  dict repr; empty state shows a friendly message.
+- **Dashboard feedback buttons work** — `/api/feedback` expected JSON while the
+  HTMX templates post form-urlencoded, so every click returned 500. Both
+  encodings are now accepted, and the UI only confirms on actual success.
+- **`cortex_update` honors the structured-status contract** — missing IDs
+  return `{"status": "not_found"}` and store failures return
+  `{"status": "error"}` instead of leaking framework exceptions.
+
+### Added
+
+- **Short-ID prefixes** — `read`, `graph`, `pipeline` (and friends) accept the
+  8-character IDs the CLI prints; ambiguous prefixes list candidates.
+- **Input validation** — `entities --type <unknown>` exits with the valid type
+  list (previously returned *all* entities); `graph <bogus-id>` exits non-zero;
+  `install/uninstall --service` rejects typos (previously treated any unknown
+  value as `dashboard`).
+- **Adaptive ranking is live** — learner-persisted weights now actually feed
+  `RetrievalEngine` (they were computed but never read); `record_miss()`
+  adjusts weights from detected misses, bounded and renormalized; corrupt
+  persisted weights fall back to defaults.
+- **`min_relevance` floor** for search/context (engine parameter, default off)
+  so briefings stop being padded with unrelated documents.
+- **Honest keyword scoring** — FTS5 BM25 magnitudes are normalized into the
+  hybrid score instead of a position-based proxy.
+- **Paginated vault export** — `cortex_list` gained an optional `offset`;
+  dashboard vault export iterates the full corpus (the silent 5,000-doc cap is
+  gone) and de-collides project hub filenames on case-insensitive filesystems.
+- **SQLite `busy_timeout=5000`** on the content-store connection.
+
+### Changed
+
+- **Store is the single dual-write path** — pipeline stages and MCP handlers no
+  longer write around it with divergent sync behavior. `Store.update`
+  translates SQLite columns to ontology predicates, validates types up front,
+  and rewrites the graph `rdf:type` assertion on type changes — `classify` type
+  changes now reach the graph, so `counts_by_type` and `graph_counts_by_type`
+  stay equal. `Store.delete` snapshots into temporal version history. Learner
+  tier promotions go through `Store` so graph tiers stay in sync.
+- Version/tool-count drift corrected everywhere (README, CODEMAP, llms.txt,
+  SECURITY, issue templates, `server.json` — now tracked in git); Homebrew
+  formula text at 0.3.6 pending this release.
+
+### Removed
+
+- Dead code verified unreferenced repo-wide: `_warmup_embeddings`, unused
+  `CortexConfig._extra`, five dead constants, `DuplicateError`,
+  `Store.is_initialized`, `xsd_iri`/`owl_iri`, `ReasonStage.run_for_object`,
+  the empty `cortex.tools` package, unread `CortexMCPClient.timeout`, dead
+  benchmark helpers, and two unreferenced dashboard screenshots.
+
+
 ## [0.3.6] — 2026-05-03
 
 ### Changed
@@ -668,7 +771,8 @@ If you're upgrading from a pre-2026-04-07 install:
 > (MCP, dashboard, REST API) plus the CLI now route through the
 > canonical MCP HTTP server.
 
-[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/abbacusgroup/Cortex/compare/v0.3.6...v0.4.0
 [0.3.6]: https://github.com/abbacusgroup/Cortex/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/abbacusgroup/Cortex/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/abbacusgroup/Cortex/compare/v0.3.3...v0.3.4
