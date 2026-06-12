@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] — 2026-06-12
+## [0.4.1] — 2026-06-12
+
+> 0.4.0 was built and validated but never published; 0.4.1 supersedes it,
+> adding MCP-side short-id resolution found during private production soak.
 
 Full-codebase audit release: 234 findings triaged across every subsystem (each
 high/medium adversarially re-verified), all 23 CLI commands and 26 MCP tools
@@ -70,7 +73,11 @@ fixed. 1,278 tests (was 1,070).
 ### Added
 
 - **Short-ID prefixes** — `read`, `graph`, `pipeline` (and friends) accept the
-  8-character IDs the CLI prints; ambiguous prefixes list candidates.
+  8-character IDs the CLI prints; ambiguous prefixes list candidates. As of
+  0.4.1 the **MCP server resolves prefixes too** (all ten id-taking tools), so
+  short ids work identically in default and `--direct` modes; ambiguous
+  prefixes return a structured `{"status": "ambiguous", "candidates": [...]}`
+  payload and the CLI prints the candidate list.
 - **Input validation** — `entities --type <unknown>` exits with the valid type
   list (previously returned *all* entities); `graph <bogus-id>` exits non-zero;
   `install/uninstall --service` rejects typos (previously treated any unknown
@@ -97,6 +104,9 @@ fixed. 1,278 tests (was 1,070).
   changes now reach the graph, so `counts_by_type` and `graph_counts_by_type`
   stay equal. `Store.delete` snapshots into temporal version history. Learner
   tier promotions go through `Store` so graph tiers stay in sync.
+- Packaging metadata follows PEP 639 — the deprecated
+  `License :: OSI Approved :: MIT License` classifier is gone (the SPDX
+  `license = "MIT"` field already carried it); wheel builds are warning-free.
 - Version/tool-count drift corrected everywhere (README, CODEMAP, llms.txt,
   SECURITY, issue templates, `server.json` — now tracked in git); Homebrew
   formula text at 0.3.6 pending this release.
@@ -771,8 +781,8 @@ If you're upgrading from a pre-2026-04-07 install:
 > (MCP, dashboard, REST API) plus the CLI now route through the
 > canonical MCP HTTP server.
 
-[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/abbacusgroup/Cortex/compare/v0.3.6...v0.4.0
+[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/abbacusgroup/Cortex/compare/v0.3.6...v0.4.1
 [0.3.6]: https://github.com/abbacusgroup/Cortex/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/abbacusgroup/Cortex/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/abbacusgroup/Cortex/compare/v0.3.3...v0.3.4
