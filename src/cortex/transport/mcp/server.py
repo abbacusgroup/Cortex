@@ -1,9 +1,9 @@
-"""Cortex MCP server — 22 tools for AI agent integration.
+"""Cortex MCP server — 26 tools for AI agent integration.
 
 Provides both stdio and StreamableHTTP transports.
-Admin tools (status, synthesize, delete, export, safety_check, reason,
-list_entities, query_trail, graph_data, debug_sessions, debug_memory) are
-exposed on stdio and on localhost HTTP only.
+Admin tools (the 15 names in the ``ADMIN_TOOLS`` set below) are exposed on
+stdio and on localhost HTTP only; the remaining public tools are available
+on every transport.
 """
 
 from __future__ import annotations
@@ -765,7 +765,7 @@ def create_mcp_server(
                 "pid": os.getpid(),
             }
 
-        # Module-level state for tracemalloc snapshots (only populated
+        # Per-server closure state for tracemalloc snapshots (only populated
         # when cortex_debug_memory is called with action="start").
         _tracemalloc_state: dict[str, Any] = {"prev_snapshot": None}
 

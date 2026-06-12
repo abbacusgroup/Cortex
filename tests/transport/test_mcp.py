@@ -79,14 +79,14 @@ class TestToolCounts:
         mcp = create_mcp_server(config, include_admin=False)
         assert len(_tool_names(mcp)) == 11
 
-    def test_admin_exclusion_removes_exactly_thirteen(self, config: CortexConfig):
+    def test_admin_exclusion_matches_admin_tools(self, config: CortexConfig):
         all_mcp = create_mcp_server(config, include_admin=True)
         pub_mcp = create_mcp_server(
             CortexConfig(data_dir=config.data_dir / "pub"),
             include_admin=False,
         )
         diff = _tool_names(all_mcp) - _tool_names(pub_mcp)
-        assert len(diff) == 15
+        assert len(diff) == len(EXPECTED_ADMIN_TOOLS)
         assert diff == EXPECTED_ADMIN_TOOLS
 
 

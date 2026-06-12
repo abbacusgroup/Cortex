@@ -7,22 +7,19 @@ config beats single-signal baselines on MAP.
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 
 import pytest
 
-from cortex.retrieval.engine import RetrievalEngine
-
-from benchmarks.corpus.embeddings import SyntheticEmbeddingProvider
 from benchmarks.b1_hybrid_retrieval.queries import QUERIES
+from benchmarks.corpus.embeddings import SyntheticEmbeddingProvider
 from benchmarks.metrics.retrieval import (
-    recall_at_k,
     mean_average_precision,
-    ndcg_at_k,
     mrr,
-    percentiles,
+    ndcg_at_k,
+    recall_at_k,
 )
+from cortex.retrieval.engine import RetrievalEngine
 
 # ── Weight configurations ──────────────────────────────────────────
 

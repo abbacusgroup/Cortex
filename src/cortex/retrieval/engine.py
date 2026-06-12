@@ -93,7 +93,7 @@ class RetrievalEngine:
         for doc_id, cand in candidates.items():
             rels = self.store.get_relationships(doc_id)
             connection_count = len(rels)
-            # Logarithmic boost: 0 connections = 0, 10 = ~0.7, 100 = ~1.0
+            # Logarithmic boost: 0 connections = 0, 10 ≈ 0.48, 100 ≈ 0.92 (capped at 1.0)
             cand["scores"]["graph"] = min(math.log1p(connection_count) / 5.0, 1.0)
 
         # 4. Recency boost

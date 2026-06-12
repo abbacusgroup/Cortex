@@ -309,7 +309,7 @@ class TestSettingsTemplate:
             log_level="INFO",
         )
         html = env.get_template("settings.html").render(
-            config=config, weights={}, msg="", msg_type="info",
+            config=config, msg="", msg_type="info",
         )
         assert "127.0.0.1" in html
         assert "1314" in html
@@ -320,10 +320,10 @@ class TestSettingsTemplate:
         assert "Import from Obsidian" in html
         assert "Export to Obsidian" in html
 
-    def test_renders_with_empty_weights(self, env: Environment, tmp_path: Path) -> None:
+    def test_renders_without_weights(self, env: Environment, tmp_path: Path) -> None:
         config = CortexConfig(data_dir=tmp_path)
         html = env.get_template("settings.html").render(
-            config=config, weights={}, msg="", msg_type="info",
+            config=config, msg="", msg_type="info",
         )
         assert "Configuration" in html
         assert "Import from Obsidian" in html

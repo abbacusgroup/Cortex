@@ -456,7 +456,8 @@ class GraphStore:
             ontology_path: Path to cortex.ttl. If None, uses the bundled ontology.
 
         Returns:
-            Number of triples loaded.
+            Number of new triples loaded (delta from before), 0 if the
+            ontology was already present.
 
         Raises:
             OntologyError: If the ontology file cannot be parsed.
@@ -484,7 +485,10 @@ class GraphStore:
 
         loaded = len(self._store) - before
         self._ontology_loaded = True
-        logger.info("Ontology loaded: %d triples", loaded)
+        if loaded == 0:
+            logger.info("Ontology already present (0 new triples)")
+        else:
+            logger.info("Ontology loaded: %d new triples", loaded)
         return loaded
 
     @property

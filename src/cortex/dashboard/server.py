@@ -14,6 +14,7 @@ process memory.
 from __future__ import annotations
 
 import html as html_mod
+import re
 import secrets
 from pathlib import Path
 from typing import Any
@@ -364,7 +365,7 @@ def create_dashboard(
             count = edge_counts.get(ent.get("name", ""), 0)
             ent["connection_count"] = count
             # Size tiers: sm (0-20%), md (20-50%), lg (50-80%), xl (80%+)
-            ratio = count / max_count if max_count else 0
+            ratio = count / max_count
             if ratio >= 0.8:
                 ent["size"] = "xl"
             elif ratio >= 0.5:
@@ -463,7 +464,7 @@ def create_dashboard(
         return templates.TemplateResponse(
             request,
             "settings.html",
-            _ctx(config=config, weights={}, msg=msg, msg_type=msg_type),
+            _ctx(config=config, msg=msg, msg_type=msg_type),
         )
 
     @app.post("/settings/import")
@@ -473,9 +474,7 @@ def create_dashboard(
         if session is None:
             return RedirectResponse("/login", status_code=302)
 
-        from pathlib import Path as _Path
-
-        vault = _Path(vault_path).expanduser().resolve()
+        vault = Path(vault_path).expanduser().resolve()
         if not vault.is_dir():
             return RedirectResponse(
                 f"/settings?msg=Directory not found: {vault_path}&msg_type=danger",
@@ -515,9 +514,7 @@ def create_dashboard(
         if session is None:
             return RedirectResponse("/login", status_code=302)
 
-        from pathlib import Path as _Path
-
-        target = _Path(export_path).expanduser().resolve()
+        target = Path(export_path).expanduser().resolve()
         try:
             target.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -527,8 +524,6 @@ def create_dashboard(
             )
 
         try:
-            import re as _re
-
             all_docs = await mcp_client.list_objects(limit=5000)
 
             # Pass 1: collect all docs and build id -> filename lookup.
@@ -578,7 +573,7 @@ def create_dashboard(
                 # Strip old ## Related sections from content (legacy imports)
                 # to avoid duplicate sections and broken wiki-links.
                 content = full.get("content", "")
-                content = _re.split(r"\n## Related\b", content)[0].rstrip()
+                content = re.split(r"\n## Related\b", content)[0].rstrip()
 
                 # Avoid duplicate title heading
                 if not content.lstrip().startswith("# "):
@@ -679,9 +674,7 @@ def create_dashboard(
 
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                from pathlib import Path as _Path
-
-                archive_path = create_backup(config, output=_Path(tmp_dir))
+                archive_path = create_backup(config, output=Path(tmp_dir))
                 content = archive_path.read_bytes()
                 filename = archive_path.name
 

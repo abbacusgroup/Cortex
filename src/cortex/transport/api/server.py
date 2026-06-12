@@ -7,7 +7,7 @@ the direct ``Store(config)`` pattern so multiple entry points can
 coexist under a single-writer MCP server without lock conflicts.
 
 Authentication keys are read from the ``CORTEX_API_KEYS`` environment
-variable (comma-separated) at startup. If the env var is empty the API
+variable (comma-separated), re-read on each request. If the env var is empty the API
 runs in dev mode and accepts any non-empty key (matching legacy
 behavior). The previous SQLite-backed key storage has been removed —
 there is no API-level admin UI for managing keys, and the env-var
