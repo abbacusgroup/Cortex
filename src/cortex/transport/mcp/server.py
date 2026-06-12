@@ -15,7 +15,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from cortex.core.config import CortexConfig, load_config
-from cortex.core.errors import NotFoundError
+from cortex.core.errors import NotFoundError, ValidationError
 from cortex.core.logging import get_logger, setup_logging
 from cortex.db.store import Store
 from cortex.ontology.resolver import find_ontology
@@ -97,6 +97,26 @@ def create_mcp_server(
 
     mcp = FastMCP("cortex")
 
+    def _resolve_doc_id(obj_id: str) -> str | dict[str, Any]:
+        """Resolve a short-id prefix to its full document id.
+
+        Mirrors the CLI ``--direct`` behavior so the 8-char ids that
+        ``cortex_list``/``cortex_search`` display can be passed back to any
+        id-taking tool. Returns the resolved (or original) id, or an
+        ``{"status": "ambiguous", ...}`` payload listing candidates when the
+        prefix matches more than one document.
+        """
+        try:
+            return store.resolve_id(obj_id)
+        except ValidationError as e:
+            return {
+                "status": "ambiguous",
+                "obj_id": obj_id,
+                "candidates": (e.context or {}).get("candidates", []),
+                "message": f"Id prefix '{obj_id}' matches more than one document; "
+                "add more characters or use a full id.",
+            }
+
     # ─── Public Tools ──────────────────────────────────────────────
 
     @mcp.tool()
@@ -163,8 +183,12 @@ def create_mcp_server(
         """Read a knowledge object in full detail.
 
         Args:
-            obj_id: Object ID to read.
+            obj_id: Object ID to read (full id or unique short-id prefix).
         """
+        resolved = _resolve_doc_id(obj_id)
+        if isinstance(resolved, dict):
+            return resolved
+        obj_id = resolved
         presenter = DocumentPresenter(store)
         result = presenter.render(obj_id)
         if result is None:
@@ -269,10 +293,17 @@ def create_mcp_server(
         """Create a relationship between two knowledge objects.
 
         Args:
-            from_id: Source object ID.
+            from_id: Source object ID (full id or unique short-id prefix).
             rel_type: Relationship type (causedBy, contradicts, supports, etc.).
-            to_id: Target object ID.
+            to_id: Target object ID (full id or unique short-id prefix).
         """
+        resolved_from = _resolve_doc_id(from_id)
+        if isinstance(resolved_from, dict):
+            return resolved_from
+        resolved_to = _resolve_doc_id(to_id)
+        if isinstance(resolved_to, dict):
+            return resolved_to
+        from_id, to_id = resolved_from, resolved_to
         try:
             store.create_relationship(from_id=from_id, rel_type=rel_type, to_id=to_id)
             return {"status": "created", "from": from_id, "rel_type": rel_type, "to": to_id}
@@ -287,9 +318,13 @@ def create_mcp_server(
         """Provide explicit relevance feedback for an object.
 
         Args:
-            obj_id: Object ID to provide feedback for.
+            obj_id: Object ID to provide feedback for (full id or unique prefix).
             relevant: True if the object was relevant/useful.
         """
+        resolved = _resolve_doc_id(obj_id)
+        if isinstance(resolved, dict):
+            return resolved
+        obj_id = resolved
         if relevant:
             learner.record_access(obj_id)
         return {
@@ -313,6 +348,10 @@ def create_mcp_server(
         if entity:
             return graph_queries.entity_neighborhood(entity)
         if obj_id:
+            resolved = _resolve_doc_id(obj_id)
+            if isinstance(resolved, dict):
+                return resolved
+            obj_id = resolved
             return {
                 "causal_chain": graph_queries.causal_chain(obj_id),
                 "evolution": graph_queries.evolution_timeline(obj_id),
@@ -350,8 +389,12 @@ def create_mcp_server(
         """Re-run the intelligence pipeline on an existing object.
 
         Args:
-            obj_id: Object ID to re-process.
+            obj_id: Object ID to re-process (full id or unique short-id prefix).
         """
+        resolved = _resolve_doc_id(obj_id)
+        if isinstance(resolved, dict):
+            return resolved
+        obj_id = resolved
         doc = store.read(obj_id)
         if doc is None:
             return {"error": f"Not found: {obj_id}"}
@@ -386,6 +429,10 @@ def create_mcp_server(
             tags: Updated comma-separated tags.
             project: Updated project name.
         """
+        resolved = _resolve_doc_id(obj_id)
+        if isinstance(resolved, dict):
+            return resolved
+        obj_id = resolved
         doc = store.read(obj_id)
         if doc is None:
             return {"status": "error", "message": f"Not found: {obj_id}"}
@@ -473,8 +520,12 @@ def create_mcp_server(
             """Delete a knowledge object.
 
             Args:
-                obj_id: Object ID to delete.
+                obj_id: Object ID to delete (full id or unique short-id prefix).
             """
+            resolved = _resolve_doc_id(obj_id)
+            if isinstance(resolved, dict):
+                return resolved
+            obj_id = resolved
             deleted = store.delete(obj_id)
             return {
                 "status": "deleted" if deleted else "not_found",
@@ -525,6 +576,10 @@ def create_mcp_server(
                 updates["tags"] = tags
             if project:
                 updates["project"] = project
+            resolved = _resolve_doc_id(obj_id)
+            if isinstance(resolved, dict):
+                return resolved
+            obj_id = resolved
             if not updates:
                 if store.read(obj_id) is None:
                     return {"status": "not_found", "obj_id": obj_id}
@@ -554,8 +609,15 @@ def create_mcp_server(
             Args:
                 from_id: Source object ID.
                 rel_type: Relationship type (e.g. causedBy, supports).
-                to_id: Target object ID.
+                to_id: Target object ID (full id or unique short-id prefix).
             """
+            resolved_from = _resolve_doc_id(from_id)
+            if isinstance(resolved_from, dict):
+                return resolved_from
+            resolved_to = _resolve_doc_id(to_id)
+            if isinstance(resolved_to, dict):
+                return resolved_to
+            from_id, to_id = resolved_from, resolved_to
             deleted = store.delete_relationship(
                 from_id=from_id, rel_type=rel_type, to_id=to_id,
             )
@@ -577,6 +639,10 @@ def create_mcp_server(
                 obj_id: Object ID to export.
                 format: Export format (markdown).
             """
+            resolved = _resolve_doc_id(obj_id)
+            if isinstance(resolved, dict):
+                return resolved
+            obj_id = resolved
             presenter = DocumentPresenter(store)
             doc = presenter.render(obj_id)
             if doc is None:

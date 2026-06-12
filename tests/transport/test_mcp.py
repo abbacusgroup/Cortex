@@ -830,6 +830,94 @@ class TestUpdateErrorContract:
         assert "diverged" in result["message"]
 
 
+class TestShortIdPrefixResolution:
+    """MCP tools resolve the 8-char short ids the CLI displays, mirroring
+    the --direct path (0.4.1). Ambiguous prefixes return a structured
+    {"status": "ambiguous"} payload instead of acting on the wrong doc."""
+
+    @staticmethod
+    def _capture(mcp, **kwargs):
+        defaults = {
+            "title": "Prefix doc",
+            "content": "body",
+            "obj_type": "idea",
+            "run_pipeline": False,
+        }
+        defaults.update(kwargs)
+        return _call_tool(mcp, "cortex_capture", **defaults)
+
+    @staticmethod
+    def _store(mcp):
+        return mcp._tool_manager._tools["cortex_list"].fn.__closure__[0].cell_contents
+
+    def test_read_resolves_short_prefix(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        full = self._capture(mcp, title="Readable")["id"]
+        result = _call_tool(mcp, "cortex_read", obj_id=full[:8])
+        assert isinstance(result, dict)
+        assert result["id"] == full
+
+    def test_update_delete_graph_export_resolve_prefixes(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        full = self._capture(mcp, title="Mutable")["id"]
+        short = full[:8]
+
+        up = _call_tool(mcp, "cortex_update", obj_id=short, title="Renamed")
+        assert up["status"] == "updated"
+        assert up["obj_id"] == full
+
+        g = _call_tool(mcp, "cortex_graph", obj_id=short)
+        assert "relationships" in g
+
+        ex = _call_tool(mcp, "cortex_export", obj_id=short)
+        assert ex["status"] != "not_found"
+
+        d = _call_tool(mcp, "cortex_delete", obj_id=short)
+        assert d == {"status": "deleted", "obj_id": full}
+
+    def test_link_unlink_resolve_both_endpoints(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        a = self._capture(mcp, title="Link source")["id"]
+        b = self._capture(mcp, title="Link target")["id"]
+
+        linked = _call_tool(
+            mcp, "cortex_link", from_id=a[:8], rel_type="supports", to_id=b[:8]
+        )
+        assert linked["status"] == "created"
+        assert linked["from"] == a and linked["to"] == b
+
+        unlinked = _call_tool(
+            mcp, "cortex_unlink", from_id=a[:8], rel_type="supports", to_id=b[:8]
+        )
+        assert unlinked["status"] == "unlinked"
+
+    def test_ambiguous_prefix_returns_structured_payload(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        store = self._store(mcp)
+        # Two docs sharing a 8-char prefix (inserted directly to control ids).
+        store.content.insert(
+            doc_id="aaaa0000-1111-1111-1111-111111111111", title="Twin one"
+        )
+        store.content.insert(
+            doc_id="aaaa0000-2222-2222-2222-222222222222", title="Twin two"
+        )
+        result = _call_tool(mcp, "cortex_read", obj_id="aaaa0000")
+        assert result["status"] == "ambiguous"
+        assert len(result["candidates"]) == 2
+        # Mutation tools refuse rather than guessing.
+        up = _call_tool(mcp, "cortex_update", obj_id="aaaa0000", title="X")
+        assert up["status"] == "ambiguous"
+        d = _call_tool(mcp, "cortex_delete", obj_id="aaaa0000")
+        assert d["status"] == "ambiguous"
+
+    def test_full_ids_and_missing_ids_unchanged(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        full = self._capture(mcp, title="Full id")["id"]
+        assert _call_tool(mcp, "cortex_read", obj_id=full)["id"] == full
+        missing = _call_tool(mcp, "cortex_read", obj_id="ffffffff")
+        assert missing == "Not found: ffffffff"
+
+
 class TestAdaptiveFeedbackWiring:
     """The learner's adaptive weights are only useful if a production event
     actually drives them. cortex_read records a miss when the read object was

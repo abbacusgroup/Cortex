@@ -388,17 +388,37 @@ def _resolve_id_or_exit(store: Store, obj_id: str) -> str:
 def _short_id_hint(obj_id: str) -> str | None:
     """Hint shown when an MCP-routed command can't find a short-looking id.
 
-    Short-id prefixes are resolved by the direct store path; the MCP server
-    tools don't resolve them yet, so a not-found for a short id deserves an
-    explanation instead of a bare error.
+    Servers from 0.4.1 on resolve short-id prefixes themselves; a not-found
+    for a short id therefore usually means the object is gone — but against
+    an older (pre-0.4.1) server it can also mean the prefix was never
+    resolved, which deserves an explanation instead of a bare error.
     """
     if 0 < len(obj_id) < _FULL_ID_LENGTH:
         return (
-            f"'{obj_id}' looks like a short id. The MCP server does not "
-            "resolve short-id prefixes yet — pass the full id "
-            "(find it with `cortex search` or `cortex list`)."
+            f"'{obj_id}' looks like a short id. If your Cortex server "
+            "predates 0.4.1 it does not resolve short ids — pass the full id "
+            "(find it with `cortex search` or `cortex list`) or upgrade the "
+            "server."
         )
     return None
+
+
+def _exit_if_ambiguous(result: object) -> None:
+    """Exit with the candidate list when an MCP tool reports an ambiguous id.
+
+    Servers from 0.4.1 on return ``{"status": "ambiguous", "candidates":
+    [...]}`` when a short-id prefix matches several documents — mirror the
+    direct path's error output.
+    """
+    if isinstance(result, dict) and result.get("status") == "ambiguous":
+        typer.echo(
+            f"Ambiguous id prefix '{result.get('obj_id', '')}'. Matches:",
+            err=True,
+        )
+        for cand in result.get("candidates", []):
+            typer.echo(f"  {cand}", err=True)
+        typer.echo("Add more characters or use the full id.", err=True)
+        raise typer.Exit(1)
 
 
 @app.command(hidden=True)
@@ -506,6 +526,7 @@ def read(
     """Read a knowledge object in full."""
     if _use_mcp():
         doc = _mcp_call_or_exit(lambda: _get_mcp_client().read(obj_id))
+        _exit_if_ambiguous(doc)
         # cortex_read returns a string "Not found: {id}" when missing
         if isinstance(doc, str) or doc is None:
             typer.echo(f"Not found: {obj_id}", err=True)
@@ -688,6 +709,7 @@ def graph(
     """Show an object's relationships and graph neighborhood."""
     if _use_mcp():
         result = _mcp_call_or_exit(lambda: _get_mcp_client().graph(obj_id=obj_id))
+        _exit_if_ambiguous(result)
         chain = result.get("causal_chain", [])
         timeline = result.get("evolution", [])
         rels = result.get("relationships", [])
@@ -1493,6 +1515,7 @@ def run_pipeline_cmd(
 
     if _use_mcp():
         result = _mcp_call_or_exit(lambda: _get_mcp_client().pipeline(obj_id=obj_id))
+        _exit_if_ambiguous(result)
         if "error" in result:
             typer.echo(result["error"], err=True)
             hint = _short_id_hint(obj_id)
