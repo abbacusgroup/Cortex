@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.abbacusgroup/cortex",
+  "title": "Cortex",
+  "description": "Persistent knowledge system with OWL-RL reasoning and 26 MCP tools. Local-first.",
+  "repository": {
+    "url": "https://github.com/abbacusgroup/Cortex",
+    "source": "github"
+  },
+  "version": "0.3.6",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "abbacus-cortex",
+      "version": "0.3.6",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
