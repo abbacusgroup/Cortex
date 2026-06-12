@@ -10,12 +10,38 @@ from pathlib import Path
 from typing import Any
 
 from cortex.core.config import CortexConfig
-from cortex.core.errors import NotFoundError, SyncError
+from cortex.core.constants import KNOWLEDGE_TYPES
+from cortex.core.errors import NotFoundError, SyncError, ValidationError
 from cortex.core.logging import get_logger
 from cortex.db.content_store import ContentStore
 from cortex.db.graph_store import GraphStore
 
 logger = get_logger("db.store")
+
+# SQLite column name → graph predicate local name. Only these columns have a
+# graph representation; the mapping fixes the historical bug where snake_case
+# column names (captured_by) were forwarded verbatim as graph predicates,
+# diverging from the camelCase predicates written at creation (capturedBy).
+# ``type`` is handled separately because it maps to the object's rdf:type
+# class assertion, not a literal predicate.
+_COLUMN_TO_PREDICATE: dict[str, str] = {
+    "title": "title",
+    "content": "content",
+    "project": "project",
+    "tags": "tags",
+    "summary": "summary",
+    "tier": "tier",
+    "captured_by": "capturedBy",
+}
+
+# SQLite-only columns, intentionally never mirrored to the graph:
+# raw_markdown / pipeline_stage / updated_at have no graph representation;
+# confidence is written to the graph as a typed xsd:float literal at creation
+# time and update_object would rewrite it as a plain string literal, so it
+# stays content-authoritative on update.
+_CONTENT_ONLY_COLUMNS: frozenset[str] = frozenset(
+    {"raw_markdown", "pipeline_stage", "updated_at", "confidence"}
+)
 
 
 class Store:
@@ -36,10 +62,6 @@ class Store:
 
         self.temporal = TemporalVersioning(self.content)
         logger.info("Store initialized")
-
-    @property
-    def is_initialized(self) -> bool:
-        return self._initialized
 
     def close(self) -> None:
         self.content.close()
@@ -126,13 +148,71 @@ class Store:
         doc["relationships"] = self.graph.get_relationships(obj_id)
         return doc
 
-    def update(self, obj_id: str, **updates: Any) -> bool:
-        """Update in both stores.
+    def exists(self, obj_id: str) -> bool:
+        """Check whether a knowledge object exists (content-authoritative)."""
+        return self.content.get(obj_id) is not None
+
+    def resolve_id(self, obj_id: str) -> str:
+        """Resolve a possibly-shortened object id to its full id.
+
+        Exact ids (including full UUIDs) are returned unchanged. Otherwise a
+        unique id prefix — like the 8-char short ids the CLI displays —
+        resolves to the matching full id. Ids that match nothing are returned
+        unchanged so callers' existing not-found handling fires.
+
+        Raises:
+            ValidationError: If the prefix matches more than one document
+                (``context["candidates"]`` lists the matching full ids).
+        """
+        if not obj_id:
+            return obj_id
+        # Exact match always wins — protects imported ids where one full id
+        # could be a strict prefix of another.
+        if self.content.get(obj_id) is not None:
+            return obj_id
+        resolved = self.content.resolve_id_prefix(obj_id)
+        return resolved if resolved is not None else obj_id
+
+    def update(
+        self,
+        obj_id: str,
+        *,
+        properties: dict[str, str] | None = None,
+        **updates: Any,
+    ) -> bool:
+        """Update in both stores — the single dual-write update path.
+
+        SQLite column updates are mirrored to the graph using the explicit
+        column→predicate mapping (``captured_by`` → ``capturedBy`` etc.);
+        SQLite-only columns (``raw_markdown``, ``pipeline_stage``, ...) are
+        never forwarded. A ``type`` change rewrites the object's rdf:type
+        class assertion in the graph so reclassification keeps both stores'
+        per-type counts consistent.
+
+        Args:
+            obj_id: Object ID.
+            properties: Optional graph-only, type-specific properties
+                (e.g. rationale, symptom) written as cortex predicates —
+                the update-time counterpart of ``create(properties=...)``.
+                Non-string values are dropped.
+            **updates: SQLite column updates.
 
         Raises:
             NotFoundError: If object doesn't exist.
+            ValidationError: If ``type`` is given but isn't a valid knowledge
+                type (raised before either store is touched).
             SyncError: If stores go out of sync.
         """
+        # Validate type up front so an invalid value can't reach SQLite and
+        # leave the stores diverged when the graph later rejects it.
+        if "type" in updates and updates["type"] not in KNOWLEDGE_TYPES:
+            raise ValidationError(
+                f"Invalid knowledge type: {updates['type']}",
+                context={"type": updates["type"], "valid_types": sorted(KNOWLEDGE_TYPES)},
+            )
+
+        graph_updates = self._graph_updates_for(obj_id, updates, properties)
+
         if self.temporal is not None:
             self.temporal.snapshot_before_update(obj_id)
         # Update SQLite
@@ -143,13 +223,18 @@ class Store:
         except Exception as e:
             raise SyncError("SQLite update failed", cause=e) from e
 
-        # Update graph (only string-valued properties)
-        graph_updates = {k: str(v) for k, v in updates.items() if isinstance(v, str)}
+        # Update graph
         if graph_updates:
             try:
                 self.graph.update_object(obj_id, **graph_updates)
             except NotFoundError:
-                pass  # Graph might not have all properties — OK
+                # Object node is absent from the graph store entirely, so there
+                # is nothing to update there. SQLite already succeeded; we keep
+                # going but flag the divergence between the two stores.
+                logger.warning(
+                    "Object %s missing from graph during update — stores may be out of sync",
+                    obj_id,
+                )
             except Exception as e:
                 logger.warning(
                     "Graph update failed for %s (SQLite update succeeded): %s",
@@ -162,14 +247,74 @@ class Store:
 
         return True
 
+    @staticmethod
+    def _graph_updates_for(
+        obj_id: str,
+        updates: dict[str, Any],
+        properties: dict[str, str] | None,
+    ) -> dict[str, str]:
+        """Translate SQLite column updates into graph predicate updates.
+
+        Columns without a graph representation are dropped; mapped columns
+        are renamed to their ontology predicate; ``type`` is forwarded for
+        the rdf:type class rewrite. Graph-only ``properties`` are merged on
+        top (they may not carry ``type`` — the class is set via the column).
+        """
+        graph_updates: dict[str, str] = {}
+        for key, value in updates.items():
+            if key in _CONTENT_ONLY_COLUMNS:
+                continue
+            if key == "type":
+                graph_updates["type"] = str(value)
+            elif key in _COLUMN_TO_PREDICATE:
+                graph_updates[_COLUMN_TO_PREDICATE[key]] = "" if value is None else str(value)
+            # Unknown columns are left out; ContentStore.update will reject
+            # them before any write happens.
+        if properties:
+            for key, value in properties.items():
+                if key == "type":
+                    logger.warning(
+                        "Ignoring 'type' in graph properties for %s — "
+                        "pass type as a column update instead",
+                        obj_id,
+                    )
+                    continue
+                if isinstance(value, str):
+                    graph_updates[key] = value
+        return graph_updates
+
     def delete(self, obj_id: str) -> bool:
         """Delete from both stores.
 
+        The current SQLite row is snapshotted into the temporal version
+        history first, so a deletion is recoverable — mirroring update().
+
         Returns:
             True if deleted from at least one store.
+
+        Raises:
+            SyncError: If either store's delete fails. The message names
+                which store succeeded so the direction of drift is known.
         """
-        graph_deleted = self.graph.delete_object(obj_id)
-        content_deleted = self.content.delete(obj_id)
+        if self.temporal is not None:
+            self.temporal.snapshot_before_update(obj_id)
+
+        try:
+            graph_deleted = self.graph.delete_object(obj_id)
+        except Exception as e:
+            raise SyncError(
+                f"Graph delete failed for {obj_id} (SQLite row not touched)",
+                cause=e,
+            ) from e
+
+        try:
+            content_deleted = self.content.delete(obj_id)
+        except Exception as e:
+            raise SyncError(
+                f"Graph delete succeeded but SQLite delete failed for {obj_id}",
+                cause=e,
+            ) from e
+
         return graph_deleted or content_deleted
 
     # -------------------------------------------------------------------------

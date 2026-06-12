@@ -23,8 +23,10 @@ wheels/
 .DS_Store
 Thumbs.db
 
-# MCP Registry (local publishing artifact)
-server.json
+# MCP Registry: server.json is tracked (versioned publishing manifest);
+# only the local auth tokens stay ignored.
+.mcpregistry_github_token
+.mcpregistry_registry_token
 
 # Internal session docs (not for public repo)
 REIMPORT_INSTRUCTIONS.md
@@ -44,5 +46,3 @@ htmlcov/
 # live in ~/Lab/<name>_<DATE>.md (outside the repo) per workspace rule.
 # A stray tasks/ directory means something escaped that rule.
 tasks/
-.mcpregistry_github_token
-.mcpregistry_registry_token

@@ -128,7 +128,7 @@ def _tp_single_dependent_lesson(store) -> str:
     return a
 
 
-def _tp_multiple_supersessions(store) -> str:
+def _tp_multiple_supersessions(store) -> tuple[str, str]:
     """Object superseded by one, with a dependent that also has its own superseder.
 
     A superseded by B, C depends on A, C superseded by D, E depends on C.
@@ -144,7 +144,7 @@ def _tp_multiple_supersessions(store) -> str:
     _supersedes(store, d, c)
     _depends_on(store, e, c)
     # Both a and c are contradictions
-    return a, c  # type: ignore[return-value]
+    return a, c
 
 
 # ── True-Negative scenarios ─────────────────────────────────────────

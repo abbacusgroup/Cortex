@@ -152,6 +152,41 @@ class TestContradictionMap:
         pair_ids = {pair["object_a"], pair["object_b"]}
         assert pair_ids == {id_a, id_b}
 
+    def test_title_matches_its_own_object(
+        self,
+        store: Store,
+        gq: GraphQueries,
+    ):
+        """title_a must describe object_a (and title_b object_b).
+
+        contradiction_map sorts the ID pair lexicographically but used to
+        assign title_a/title_b by iteration order, so ~50% of the time the
+        titles described the wrong object. Create many distinct pairs so
+        both sort orderings are exercised, then assert the invariant that
+        each title corresponds to the object whose ID it is paired with.
+        """
+        expected_title: dict[str, str] = {}
+        for i in range(12):
+            title_a = f"Claim-A-{i}"
+            title_b = f"Claim-B-{i}"
+            id_a = _obj(store, title=title_a)
+            id_b = _obj(store, title=title_b)
+            expected_title[id_a] = title_a
+            expected_title[id_b] = title_b
+            store.create_relationship(
+                from_id=id_a,
+                rel_type="contradicts",
+                to_id=id_b,
+            )
+
+        result = gq.contradiction_map()
+        assert len(result) == 12
+        # Both sort orderings must be present across the 12 pairs, so this
+        # would fail on the old swapped-title code.
+        for pair in result:
+            assert pair["title_a"] == expected_title[pair["object_a"]]
+            assert pair["title_b"] == expected_title[pair["object_b"]]
+
     def test_no_contradictions_returns_empty(
         self,
         store: Store,

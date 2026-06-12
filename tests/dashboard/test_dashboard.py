@@ -262,3 +262,185 @@ class TestLoginPage:
     def test_login_page_renders_when_password_set(self, auth_client: TestClient):
         resp = auth_client.get("/login")
         assert resp.status_code == 200
+
+
+# -- CSRF / Origin hardening ----------------------------------------------
+
+
+class TestCsrfOriginGuard:
+    """State-changing routes must reject cross-site POSTs even with no password.
+
+    The default install has no dashboard password, so ``_require_auth`` lets
+    every request through as ``anonymous``. The Origin/Host guard is the only
+    thing standing between a drive-by ``evil.com`` page and a CSRF-driven
+    delete/export against the local KB.
+    """
+
+    def test_cross_origin_post_is_rejected(self, client: TestClient):
+        # A real object so the route would otherwise succeed.
+        store = client.app.state.mcp_client.store
+        obj_id = store.create(
+            obj_type="idea", title="Victim", content="do not delete me",
+        )
+        resp = client.post(
+            f"/documents/{obj_id}/delete",
+            headers={"origin": "http://evil.com"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+        # The guard runs before routing, so the object must still exist.
+        assert store.read(obj_id) is not None
+
+    def test_cross_origin_referer_is_rejected(self, client: TestClient):
+        # No Origin header, but a foreign Referer must also be rejected.
+        resp = client.post(
+            "/create",
+            data={"title": "X", "content": "", "obj_type": "idea"},
+            headers={"referer": "http://evil.com/attack.html"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+
+    def test_same_origin_post_still_works(self, client: TestClient):
+        # Browser same-origin form posts carry an Origin matching the host.
+        resp = client.post(
+            "/create",
+            data={
+                "title": "Same Origin Object",
+                "content": "from a real form",
+                "obj_type": "idea",
+                "project": "",
+                "tags": "",
+            },
+            headers={"origin": "http://testserver"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert resp.headers["location"].startswith("/documents/")
+
+    def test_loopback_origin_is_allowed(self, client: TestClient):
+        resp = client.post(
+            "/create",
+            data={"title": "Localhost Object", "content": "", "obj_type": "idea"},
+            headers={"origin": "http://localhost:1315"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    def test_post_without_origin_still_works(self, client: TestClient):
+        # The existing CreateForm tests rely on header-less posts continuing
+        # to work (curl / TestClient default). Guard must not break those.
+        resp = client.post(
+            "/create",
+            data={"title": "Headerless Object", "content": "", "obj_type": "idea"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    def test_get_with_foreign_origin_is_unaffected(self, client: TestClient):
+        # GET is a safe method; the guard must never touch it.
+        resp = client.get("/documents", headers={"origin": "http://evil.com"})
+        assert resp.status_code == 200
+
+    def test_cross_origin_export_is_rejected(self, client: TestClient):
+        # /settings/export is the worst case: a cross-site directory-create +
+        # arbitrary .md write primitive. It must be blocked.
+        resp = client.post(
+            "/settings/export",
+            data={"export_path": "/tmp/cortex-csrf-target"},
+            headers={"origin": "http://evil.com"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+
+
+# -- Feedback API ----------------------------------------------------------
+
+
+class TestFeedbackAPI:
+    """Regression for the content-type mismatch: the HTMX buttons in
+    documents.html post application/x-www-form-urlencoded (HTMX 2.x default,
+    no json-enc extension is loaded), but the handler parsed JSON
+    unconditionally — every click 500'd and the relevance signal was lost."""
+
+    @staticmethod
+    def _seed(client: TestClient) -> str:
+        store = client.app.state.mcp_client.store
+        return store.create(
+            obj_type="idea", title="Feedback target", content="body",
+        )
+
+    @staticmethod
+    def _access_count(client: TestClient, obj_id: str) -> int:
+        """Read the learner's persisted access counter straight from the store."""
+        store = client.app.state.mcp_client.store
+        return int(store.content.get_config(f"access_count:{obj_id}", "0"))
+
+    def test_form_encoded_relevant_true_is_recorded(self, client: TestClient):
+        obj_id = self._seed(client)
+        # Exactly what the documents.html HTMX button sends:
+        # hx-vals='{"obj_id": "...", "relevant": true}' as form encoding.
+        resp = client.post(
+            "/api/feedback",
+            data={"obj_id": obj_id, "relevant": "true"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "recorded"
+        assert body["relevant"] is True
+        assert body["access_count"] == 1
+        # The signal actually persisted for the learner.
+        assert self._access_count(client, obj_id) == 1
+
+    def test_form_encoded_relevant_false_is_parsed_as_false(
+        self, client: TestClient
+    ):
+        # bool("false") is truthy — the handler must parse the string.
+        obj_id = self._seed(client)
+        resp = client.post(
+            "/api/feedback",
+            data={"obj_id": obj_id, "relevant": "false"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["relevant"] is False
+        # Not-relevant feedback must not count as an access.
+        assert self._access_count(client, obj_id) == 0
+
+    def test_json_body_still_works(self, client: TestClient):
+        obj_id = self._seed(client)
+        resp = client.post(
+            "/api/feedback", json={"obj_id": obj_id, "relevant": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "recorded"
+        assert body["relevant"] is True
+        assert self._access_count(client, obj_id) == 1
+
+    def test_json_relevant_false(self, client: TestClient):
+        obj_id = self._seed(client)
+        resp = client.post(
+            "/api/feedback", json={"obj_id": obj_id, "relevant": False},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["relevant"] is False
+        assert self._access_count(client, obj_id) == 0
+
+    def test_missing_obj_id_returns_400(self, client: TestClient):
+        resp = client.post("/api/feedback", data={"relevant": "true"})
+        assert resp.status_code == 400
+
+    def test_invalid_json_returns_400(self, client: TestClient):
+        resp = client.post(
+            "/api/feedback",
+            content=b"{not json",
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code == 400
+
+    def test_unauthenticated_returns_401(self, auth_client: TestClient):
+        resp = auth_client.post(
+            "/api/feedback", data={"obj_id": "x", "relevant": "true"},
+        )
+        assert resp.status_code == 401

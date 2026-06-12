@@ -288,7 +288,7 @@ class CorpusGenerator:
                     to_id=self.obj_ids[dec_labels[0]],
                 )
 
-        # Contradicts: plant 3 contradictions for B3
+        # Contradicts: plant 2 contradictions for B3
         contradiction_pairs = [
             ("decision_3", "decision_0"),   # JWT vs PostgreSQL sessions
             ("decision_4", "decision_5"),   # GraphQL vs circuit breaker

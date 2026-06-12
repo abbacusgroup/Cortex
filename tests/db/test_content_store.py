@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from cortex.core.errors import NotFoundError, StoreError
+from cortex.core.errors import NotFoundError, StoreError, ValidationError
 from cortex.db.content_store import ContentStore
 
 
@@ -145,6 +145,70 @@ class TestCRUD:
             store.insert(doc_id="dup", title="Second")
 
 
+# ── Short-id prefix resolution ───────────────────────────────────────
+
+
+class TestResolveIdPrefix:
+    """resolve_id_prefix expands the 8-char short ids the CLI displays."""
+
+    def test_unique_prefix_resolves_to_full_id(self, store: ContentStore):
+        full = "a4074519-51e3-4816-9aee-d05715f5f003"
+        store.insert(doc_id=full, title="T")
+        store.insert(doc_id="b1111111-0000-0000-0000-000000000000", title="Other")
+        assert store.resolve_id_prefix("a4074519") == full
+
+    def test_full_id_resolves_to_itself(self, store: ContentStore):
+        full = "cccc1111-0000-0000-0000-000000000000"
+        store.insert(doc_id=full, title="T")
+        assert store.resolve_id_prefix(full) == full
+
+    def test_no_match_returns_none(self, store: ContentStore):
+        store.insert(doc_id="b1111111-0000-0000-0000-000000000000", title="T")
+        assert store.resolve_id_prefix("zzzzzzzz") is None
+
+    def test_empty_prefix_returns_none(self, store: ContentStore):
+        store.insert(doc_id="b1111111-0000-0000-0000-000000000000", title="T")
+        assert store.resolve_id_prefix("") is None
+
+    def test_ambiguous_prefix_raises_with_candidates(self, store: ContentStore):
+        store.insert(doc_id="ab111111-0000-0000-0000-000000000000", title="T1")
+        store.insert(doc_id="ab222222-0000-0000-0000-000000000000", title="T2")
+        with pytest.raises(ValidationError) as exc:
+            store.resolve_id_prefix("ab")
+        assert exc.value.context["prefix"] == "ab"
+        assert set(exc.value.context["candidates"]) == {
+            "ab111111-0000-0000-0000-000000000000",
+            "ab222222-0000-0000-0000-000000000000",
+        }
+        # Message lists the candidates so the CLI error is actionable
+        assert "ab111111" in str(exc.value)
+
+    def test_candidates_capped_at_ten(self, store: ContentStore):
+        for i in range(12):
+            store.insert(doc_id=f"ff{i:02d}1111-0000-0000-0000-000000000000", title="T")
+        with pytest.raises(ValidationError) as exc:
+            store.resolve_id_prefix("ff")
+        assert len(exc.value.context["candidates"]) == 10
+
+    def test_like_wildcards_are_escaped(self, store: ContentStore):
+        store.insert(doc_id="abc11111-0000-0000-0000-000000000000", title="T1")
+        store.insert(doc_id="abd22222-0000-0000-0000-000000000000", title="T2")
+        # Unescaped, '_' would match any character and '%' would match all.
+        assert store.resolve_id_prefix("ab_") is None
+        assert store.resolve_id_prefix("%") is None
+        assert store.resolve_id_prefix("ab%") is None
+
+
+# ── Connection PRAGMAs ───────────────────────────────────────────────
+
+
+class TestConnectionPragmas:
+    def test_busy_timeout_is_set(self, store: ContentStore):
+        """busy_timeout=5000 so concurrent writers wait instead of failing."""
+        timeout = store._db.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout == 5000
+
+
 # ── FTS5 Search ──────────────────────────────────────────────────────
 
 
@@ -257,6 +321,78 @@ class TestFTS:
         # Emoji-only search does not raise
         emoji_results = store.search("\U0001f680")
         assert isinstance(emoji_results, list)
+
+
+# ── FTS5 Quote Escaping & Error Surfacing ────────────────────────────
+
+
+class TestFTSQuoteEscaping:
+    def test_embedded_double_quote_matches(self, store: ContentStore):
+        """A query containing an embedded double quote finds the matching doc.
+
+        Before the fix, foo"bar produced an unterminated FTS5 string and the
+        OperationalError was swallowed, so a real match was reported as
+        'no results'.
+        """
+        store.insert(doc_id="q1", title="Note", content='the value is foo"bar today')
+        results = store.search('foo"bar')
+        assert len(results) == 1
+        assert results[0]["id"] == "q1"
+
+    def test_inches_notation_does_not_crash_and_matches(self, store: ContentStore):
+        """Inches notation (5'10") is a real-world query with a trailing quote."""
+        store.insert(
+            doc_id="height",
+            title="Measurements",
+            content='the door is 80 inches tall and the gap is small',
+        )
+        # A query ending in a stray double quote must not error and must still
+        # find content matching the rest of the tokens.
+        results = store.search('inches"')
+        assert isinstance(results, list)
+        assert len(results) == 1
+        assert results[0]["id"] == "height"
+
+    def test_unbalanced_quote_returns_correct_results(self, store: ContentStore):
+        """An unbalanced quote in the query returns matching docs, not [].
+
+        This is the inches/pasted-quote case that previously errored out.
+        """
+        store.insert(doc_id="qq", title="Quotation", content='she said hello loudly')
+        results = store.search('hello"')
+        assert len(results) == 1
+        assert results[0]["id"] == "qq"
+
+    def test_escape_doubles_embedded_quotes(self):
+        """_escape_fts_query doubles embedded quotes per FTS5 rules."""
+        escaped = ContentStore._escape_fts_query('foo"bar')
+        assert escaped == '"foo""bar"'
+
+    def test_escape_leaves_quote_free_tokens_unchanged(self):
+        """Quote-free input is still wrapped exactly as before (no regression)."""
+        assert ContentStore._escape_fts_query("hello world") == '"hello" "world"'
+
+    def test_corruption_raises_storeerror_not_empty(self, store: ContentStore):
+        """A corrupt/missing FTS index surfaces as StoreError, not silent [].
+
+        Dropping documents_fts makes MATCH raise 'no such table', which is
+        infrastructure failure — it must not masquerade as 'no matches'.
+        """
+        store.insert(doc_id="x1", title="findable", content="searchable text")
+        # Simulate index corruption by removing the FTS table.
+        store._db.execute("DROP TABLE documents_fts")
+        store._db.commit()
+        with pytest.raises(StoreError):
+            store.search("searchable")
+
+    def test_corruption_is_logged(self, store: ContentStore, caplog):
+        """Index corruption during search is logged at error level."""
+        store.insert(doc_id="x2", title="findable", content="loggable text")
+        store._db.execute("DROP TABLE documents_fts")
+        store._db.commit()
+        with caplog.at_level("ERROR"), pytest.raises(StoreError):
+            store.search("loggable")
+        assert any("FTS index error" in r.message for r in caplog.records)
 
 
 # ── Config ───────────────────────────────────────────────────────────

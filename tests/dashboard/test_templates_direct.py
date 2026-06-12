@@ -309,7 +309,7 @@ class TestSettingsTemplate:
             log_level="INFO",
         )
         html = env.get_template("settings.html").render(
-            config=config, weights={}, msg="", msg_type="info",
+            config=config, msg="", msg_type="info",
         )
         assert "127.0.0.1" in html
         assert "1314" in html
@@ -320,10 +320,10 @@ class TestSettingsTemplate:
         assert "Import from Obsidian" in html
         assert "Export to Obsidian" in html
 
-    def test_renders_with_empty_weights(self, env: Environment, tmp_path: Path) -> None:
+    def test_renders_without_weights(self, env: Environment, tmp_path: Path) -> None:
         config = CortexConfig(data_dir=tmp_path)
         html = env.get_template("settings.html").render(
-            config=config, weights={}, msg="", msg_type="info",
+            config=config, msg="", msg_type="info",
         )
         assert "Configuration" in html
         assert "Import from Obsidian" in html
@@ -382,3 +382,69 @@ class TestStaticTemplates:
         assert "Knowledge Graph" in html
         # Cytoscape mount point
         assert 'id="cy"' in html
+
+
+# ==========================================================================
+# synthesis.html — SynthesisPresenter result dict
+# ==========================================================================
+
+
+class TestSynthesisTemplate:
+    """The page must render the narrative, not a raw dict repr.
+
+    Mirrors the shape returned by ``SynthesisPresenter.render`` (and thus by
+    ``cortex_synthesize`` → ``mcp_client.synthesize``).
+    """
+
+    def test_renders_narrative_not_dict_repr(self, env: Environment) -> None:
+        synthesis = {
+            "period_days": 7,
+            "project": None,
+            "status": "ok",
+            "object_count": 2,
+            "themes": [
+                {"name": "decision", "count": 1},
+                {"name": "fix", "count": 1},
+            ],
+            "sources": [
+                {"id": "obj-aaaa1111", "title": "Adopt Oxigraph", "type": "decision"},
+                {"id": "obj-bbbb2222", "title": "Escape literals", "type": "fix"},
+            ],
+            "narrative": "This week the team committed to Oxigraph and hardened literal escaping.",
+        }
+        html = env.get_template("synthesis.html").render(
+            synthesis=synthesis, period_days=7, project="",
+        )
+        # The actual narrative text must appear...
+        assert "This week the team committed to Oxigraph" in html
+        # ...and the page must NOT dump the raw dict.
+        assert "'narrative'" not in html
+        assert "{'period_days'" not in html
+        assert "narrative_source" not in html  # no stray internal keys
+        # Themes and sources surfaced.
+        assert "decision" in html
+        assert "Adopt Oxigraph" in html
+        assert "/documents/obj-aaaa1111" in html
+
+    def test_renders_nothing_to_synthesize_branch(self, env: Environment) -> None:
+        synthesis = {
+            "period_days": 7,
+            "project": None,
+            "status": "nothing_to_synthesize",
+            "object_count": 0,
+            "themes": [],
+            "sources": [],
+            "narrative": "",
+        }
+        html = env.get_template("synthesis.html").render(
+            synthesis=synthesis, period_days=7, project="",
+        )
+        assert "Nothing to synthesize" in html
+        # No empty narrative card / dict repr leaks.
+        assert "{'period_days'" not in html
+
+    def test_renders_get_page_with_no_synthesis(self, env: Environment) -> None:
+        # GET /synthesis passes synthesis=None — the form must still render.
+        html = env.get_template("synthesis.html").render(synthesis=None)
+        assert "Generate Synthesis" in html
+        assert "Synthesis Result" not in html

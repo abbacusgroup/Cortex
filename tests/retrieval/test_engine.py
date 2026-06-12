@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import json
+import logging
+import struct
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from cortex.core.config import CortexConfig
 from cortex.db.store import Store
 from cortex.ontology.resolver import find_ontology
-from cortex.retrieval.engine import RetrievalEngine
+from cortex.retrieval.engine import (
+    DEFAULT_WEIGHTS,
+    WEIGHTS_CONFIG_KEY,
+    RetrievalEngine,
+    load_persisted_weights,
+)
 
 ONTOLOGY_PATH = find_ontology()
 
@@ -392,8 +401,6 @@ class TestEmbeddingProvider:
 
     def test_embed_query_with_provider(self, store):
         """With a provider, _embed_query returns a tuple of floats."""
-        from unittest.mock import MagicMock
-
         provider = MagicMock()
         provider.embed.return_value = [0.1, 0.2, 0.3]
         engine = RetrievalEngine(store, embedding_provider=provider)
@@ -404,3 +411,311 @@ class TestEmbeddingProvider:
     def test_provider_starts_as_none(self, store):
         engine = RetrievalEngine(store)
         assert engine._embedding_provider is None
+
+    def test_embed_query_failure_is_logged_not_swallowed(self, store, caplog):
+        """A provider exception logs a warning instead of vanishing silently."""
+        provider = MagicMock()
+        provider.embed.side_effect = RuntimeError("boom")
+        provider.model_name = "test-model"
+        engine = RetrievalEngine(store, embedding_provider=provider)
+
+        with caplog.at_level(logging.WARNING, logger="cortex.retrieval.engine"):
+            result = engine._embed_query("test query")
+
+        assert result is None
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "semantic ranking disabled" in message
+        assert "test-model" in message
+        assert "boom" in message
+
+
+# -- Learner-persisted weights ----------------------------------------------
+
+
+class TestPersistedWeights:
+    def test_defaults_when_nothing_persisted(self, seeded_store):
+        store, _ids = seeded_store
+        engine = RetrievalEngine(store)
+        engine.search("quantum")
+        assert engine.weights == dict(DEFAULT_WEIGHTS)
+
+    def test_engine_uses_learner_persisted_weights(self, seeded_store):
+        """Weights persisted by the LearningLoop drive the engine's scoring."""
+        from cortex.retrieval.learner import LearningLoop
+
+        store, ids = seeded_store
+        custom = {"keyword": 1.0, "semantic": 0.0, "graph": 0.0, "recency": 0.0}
+        LearningLoop(store).update_weights(custom)
+
+        engine = RetrievalEngine(store)
+        results = engine.search("quantum")
+
+        assert engine.weights == custom
+        assert results
+        top = results[0]
+        assert top["id"] == ids["quantum"]
+        # keyword-only weights: combined score equals the keyword score
+        assert top["score"] == pytest.approx(top["score_breakdown"]["keyword"], abs=1e-3)
+
+    def test_weight_updates_apply_to_existing_engine(self, seeded_store):
+        """A long-lived engine picks up new weights on the next search."""
+        from cortex.retrieval.learner import LearningLoop
+
+        store, _ids = seeded_store
+        engine = RetrievalEngine(store)
+        engine.search("quantum")
+        assert engine.weights == dict(DEFAULT_WEIGHTS)
+
+        custom = {"keyword": 0.7, "semantic": 0.1, "graph": 0.1, "recency": 0.1}
+        LearningLoop(store).update_weights(custom)
+        engine.search("quantum")
+        assert engine.weights == custom
+
+    def test_explicit_weights_pin_the_engine(self, seeded_store):
+        """Constructor weights override anything the learner persisted."""
+        from cortex.retrieval.learner import LearningLoop
+
+        store, _ids = seeded_store
+        explicit = {"keyword": 0.0, "semantic": 0.0, "graph": 0.0, "recency": 1.0}
+        engine = RetrievalEngine(store, weights=explicit)
+
+        LearningLoop(store).update_weights(
+            {"keyword": 1.0, "semantic": 0.0, "graph": 0.0, "recency": 0.0}
+        )
+        engine.search("quantum")
+        assert engine.weights == explicit
+
+    def test_corrupt_persisted_json_falls_back_to_defaults(self, seeded_store, caplog):
+        store, _ids = seeded_store
+        store.content.set_config(WEIGHTS_CONFIG_KEY, "{not valid json")
+
+        with caplog.at_level(logging.WARNING, logger="cortex.retrieval.engine"):
+            weights = load_persisted_weights(store.content)
+
+        assert weights == dict(DEFAULT_WEIGHTS)
+        assert any("corrupt" in r.getMessage() for r in caplog.records)
+
+    def test_wrong_shape_falls_back_to_defaults(self, seeded_store):
+        store, _ids = seeded_store
+        store.content.set_config(WEIGHTS_CONFIG_KEY, json.dumps([0.4, 0.3]))
+        assert load_persisted_weights(store.content) == dict(DEFAULT_WEIGHTS)
+
+    def test_negative_value_falls_back_to_defaults(self, seeded_store):
+        store, _ids = seeded_store
+        store.content.set_config(WEIGHTS_CONFIG_KEY, json.dumps({"keyword": -1.0}))
+        assert load_persisted_weights(store.content) == dict(DEFAULT_WEIGHTS)
+
+    def test_all_zero_weights_fall_back_to_defaults(self, seeded_store):
+        store, _ids = seeded_store
+        store.content.set_config(
+            WEIGHTS_CONFIG_KEY,
+            json.dumps({"keyword": 0, "semantic": 0, "graph": 0, "recency": 0}),
+        )
+        assert load_persisted_weights(store.content) == dict(DEFAULT_WEIGHTS)
+
+    def test_partial_weights_merge_over_defaults(self, seeded_store):
+        store, _ids = seeded_store
+        store.content.set_config(WEIGHTS_CONFIG_KEY, json.dumps({"keyword": 0.7}))
+        weights = load_persisted_weights(store.content)
+        assert weights["keyword"] == pytest.approx(0.7)
+        assert weights["semantic"] == pytest.approx(DEFAULT_WEIGHTS["semantic"])
+        assert weights["graph"] == pytest.approx(DEFAULT_WEIGHTS["graph"])
+        assert weights["recency"] == pytest.approx(DEFAULT_WEIGHTS["recency"])
+
+    def test_search_survives_corrupt_weights(self, seeded_store):
+        """A corrupt weights config must never break search itself."""
+        store, ids = seeded_store
+        store.content.set_config(WEIGHTS_CONFIG_KEY, "garbage{{{")
+        engine = RetrievalEngine(store)
+        results = engine.search("quantum")
+        assert any(r["id"] == ids["quantum"] for r in results)
+
+
+# -- Minimum relevance threshold ---------------------------------------------
+
+
+class TestMinRelevance:
+    def _two_tier_corpus(self, store: Store) -> tuple[str, str]:
+        """Create a strong title match and a weak content-only match."""
+        strong = store.create(
+            obj_type="research",
+            title="Xylophone acoustics deep dive",
+            content="Xylophone xylophone resonance study of the xylophone",
+            project="music",
+        )
+        weak = store.create(
+            obj_type="idea",
+            title="Concert hall lineup",
+            content="Maybe add a xylophone at the end of the program",
+            project="music",
+        )
+        return strong, weak
+
+    def test_default_threshold_is_off(self, store):
+        """min_relevance defaults to 0.0 — behavior unchanged, no filtering."""
+        strong, weak = self._two_tier_corpus(store)
+        engine = RetrievalEngine(store)
+        assert engine.min_relevance == 0.0
+        results = engine.search("xylophone")
+        assert {r["id"] for r in results} == {strong, weak}
+
+    def test_per_call_floor_drops_weak_results(self, store):
+        strong, weak = self._two_tier_corpus(store)
+        engine = RetrievalEngine(store)
+
+        baseline = engine.search("xylophone")
+        assert len(baseline) == 2
+        scores = {r["id"]: r["score"] for r in baseline}
+        assert scores[strong] > scores[weak]
+
+        floor = (scores[strong] + scores[weak]) / 2
+        filtered = engine.search("xylophone", min_relevance=floor)
+        assert [r["id"] for r in filtered] == [strong]
+
+    def test_engine_level_floor_applies_to_all_searches(self, store):
+        strong, weak = self._two_tier_corpus(store)
+        baseline = RetrievalEngine(store).search("xylophone")
+        scores = {r["id"]: r["score"] for r in baseline}
+        floor = (scores[strong] + scores[weak]) / 2
+
+        engine = RetrievalEngine(store, min_relevance=floor)
+        results = engine.search("xylophone")
+        assert [r["id"] for r in results] == [strong]
+
+    def test_per_call_zero_disables_engine_floor(self, store):
+        strong, weak = self._two_tier_corpus(store)
+        engine = RetrievalEngine(store, min_relevance=0.99)
+        results = engine.search("xylophone", min_relevance=0.0)
+        assert {r["id"] for r in results} == {strong, weak}
+
+    def test_floor_above_all_scores_returns_empty(self, store):
+        self._two_tier_corpus(store)
+        engine = RetrievalEngine(store)
+        assert engine.search("xylophone", min_relevance=10.0) == []
+
+
+# -- BM25-based keyword scoring -----------------------------------------------
+
+
+class _RanklessStore:
+    """Store wrapper whose search() drops the BM25 ``rank`` column."""
+
+    def __init__(self, store: Store):
+        self._store = store
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._store, name)
+
+    def search(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            {k: v for k, v in doc.items() if k != "rank"}
+            for doc in self._store.search(*args, **kwargs)
+        ]
+
+
+class TestBM25KeywordScoring:
+    def _corpus(self, store: Store) -> tuple[str, str]:
+        strong = store.create(
+            obj_type="research",
+            title="Quasar luminosity survey",
+            content="Quasar quasar measurements across the quasar sample",
+            project="astro",
+        )
+        weak = store.create(
+            obj_type="idea",
+            title="Telescope shopping list",
+            content="A filter suitable for one quasar observation",
+            project="astro",
+        )
+        return strong, weak
+
+    def test_best_match_scores_one(self, store):
+        strong, _weak = self._corpus(store)
+        results = RetrievalEngine(store).search("quasar")
+        by_id = {r["id"]: r for r in results}
+        assert by_id[strong]["score_breakdown"]["keyword"] == pytest.approx(1.0)
+
+    def test_keyword_score_reflects_bm25_magnitude(self, store):
+        """A weak content-only match scores by BM25 ratio, not list position."""
+        _strong, weak = self._corpus(store)
+        results = RetrievalEngine(store).search("quasar")
+        by_id = {r["id"]: r for r in results}
+        weak_kw = by_id[weak]["score_breakdown"]["keyword"]
+        assert 0.0 < weak_kw < 1.0
+        # Magnitude-based: a title match (10x FTS weight) towers over a single
+        # content mention, so the ratio is far below the positional 0.5.
+        assert weak_kw < 0.5
+
+    def test_falls_back_to_positional_without_rank(self, store):
+        """Without BM25 values the engine degrades to rank-position scoring."""
+        strong, weak = self._corpus(store)
+        engine = RetrievalEngine(_RanklessStore(store))  # type: ignore[arg-type]
+        results = engine.search("quasar")
+        by_id = {r["id"]: r for r in results}
+        # Two keyword results: positions 0 and 1 -> 1.0 and 0.5
+        kw_scores = sorted(
+            (by_id[strong]["score_breakdown"]["keyword"],
+             by_id[weak]["score_breakdown"]["keyword"]),
+            reverse=True,
+        )
+        assert kw_scores == [pytest.approx(1.0), pytest.approx(0.5)]
+
+
+# -- Embedding model consistency warning ---------------------------------------
+
+
+class TestModelConsistencyWarning:
+    def _store_embedding(self, store: Store, doc_id: str, model: str) -> None:
+        store.content.store_embedding(
+            doc_id=doc_id,
+            embedding=struct.pack("3f", 0.1, 0.2, 0.3),
+            model=model,
+            dimensions=3,
+        )
+
+    def _provider(self, model_name: str) -> MagicMock:
+        provider = MagicMock()
+        provider.model_name = model_name
+        provider.embed.return_value = [0.1, 0.2, 0.3]
+        return provider
+
+    def test_mismatch_warns_once_on_search(self, seeded_store, caplog):
+        store, ids = seeded_store
+        self._store_embedding(store, ids["quantum"], "old-model")
+        engine = RetrievalEngine(store, embedding_provider=self._provider("new-model"))
+
+        with caplog.at_level(logging.WARNING, logger="cortex.retrieval.engine"):
+            engine.search("quantum")
+            engine.search("quantum")
+
+        mismatch_warnings = [
+            r for r in caplog.records
+            if "old-model" in r.getMessage() and "new-model" in r.getMessage()
+        ]
+        assert len(mismatch_warnings) == 1
+
+    def test_matching_model_does_not_warn(self, seeded_store, caplog):
+        store, ids = seeded_store
+        self._store_embedding(store, ids["quantum"], "same-model")
+        engine = RetrievalEngine(store, embedding_provider=self._provider("same-model"))
+
+        with caplog.at_level(logging.WARNING, logger="cortex.retrieval.engine"):
+            engine.search("quantum")
+
+        assert not [
+            r for r in caplog.records if "Stored embeddings use model" in r.getMessage()
+        ]
+
+    def test_no_provider_skips_check(self, seeded_store, caplog):
+        store, ids = seeded_store
+        self._store_embedding(store, ids["quantum"], "old-model")
+        engine = RetrievalEngine(store)
+
+        with caplog.at_level(logging.WARNING, logger="cortex.retrieval.engine"):
+            engine.search("quantum")
+
+        assert not [
+            r for r in caplog.records if "Stored embeddings use model" in r.getMessage()
+        ]

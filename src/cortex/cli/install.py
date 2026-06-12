@@ -182,7 +182,7 @@ def detect_cortex_binary() -> str:
         return str(Path(found).resolve())
     msg = (
         "Cannot find the cortex binary. Ensure it is installed "
-        "(pip install cortex) and on your PATH."
+        "(pip install abbacus-cortex) and on your PATH."
     )
     raise FileNotFoundError(msg)
 

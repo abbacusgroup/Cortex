@@ -129,9 +129,10 @@ def _quiet_noisy_loggers() -> None:
     debugging. The two escape hatches are independent: setting one does
     NOT re-enable the other. Idempotent — safe to call repeatedly.
 
-    Also patches ``uvicorn.config.LOGGING_CONFIG`` in place so uvicorn's
-    own ``dictConfig`` call at startup honors the WARNING level for
-    ``uvicorn.access`` (which otherwise overrides a plain ``setLevel``).
+    Also attaches a WARNING-level filter to the ``uvicorn`` and
+    ``uvicorn.access`` loggers (via ``_patch_uvicorn_logging_config``) so
+    their sub-WARNING records are dropped even after uvicorn re-applies its
+    own log level at startup, which a plain ``setLevel`` would not survive.
     """
     if not os.environ.get("CORTEX_DEBUG_MCP_SDK", "").strip():
         for name in _NOISY_THIRD_PARTY_LOGGERS:

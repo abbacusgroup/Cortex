@@ -89,19 +89,14 @@ class NormalizeStage:
         if classification["project"] and not doc.get("project"):
             updates["project"] = classification["project"]
 
-        # Update in both stores
-        self.store.content.update(obj_id, **updates)
-
-        # Update graph store type-specific properties
-        graph_updates = {"summary": classification["summary"]}
-        if classification.get("properties"):
-            graph_updates.update(
-                {k: v for k, v in classification["properties"].items() if isinstance(v, str)}
-            )
-        try:
-            self.store.graph.update_object(obj_id, **graph_updates)
-        except Exception as e:
-            logger.warning("Graph update failed during normalization for %s: %s", obj_id, e)
+        # Update both stores through the single dual-write path. Type-specific
+        # classification properties (rationale, symptom, ...) are graph-only.
+        string_props = {
+            k: v
+            for k, v in (classification.get("properties") or {}).items()
+            if isinstance(v, str)
+        }
+        self.store.update(obj_id, properties=string_props or None, **updates)
 
         # Step 3: Generate embedding
         self._generate_embedding(obj_id, title, content)

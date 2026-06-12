@@ -79,14 +79,14 @@ class TestToolCounts:
         mcp = create_mcp_server(config, include_admin=False)
         assert len(_tool_names(mcp)) == 11
 
-    def test_admin_exclusion_removes_exactly_thirteen(self, config: CortexConfig):
+    def test_admin_exclusion_matches_admin_tools(self, config: CortexConfig):
         all_mcp = create_mcp_server(config, include_admin=True)
         pub_mcp = create_mcp_server(
             CortexConfig(data_dir=config.data_dir / "pub"),
             include_admin=False,
         )
         diff = _tool_names(all_mcp) - _tool_names(pub_mcp)
-        assert len(diff) == 15
+        assert len(diff) == len(EXPECTED_ADMIN_TOOLS)
         assert diff == EXPECTED_ADMIN_TOOLS
 
 
@@ -669,3 +669,373 @@ class TestCortexDebugMemory:
     def test_not_exposed_without_admin(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=False)
         assert "cortex_debug_memory" not in mcp._tool_manager._tools
+
+
+# -- Dual-write consolidation (classify/update/delete graph sync) -------------
+
+
+class TestClassifyDualWriteSync:
+    """Regression for the Phase-2 empirical drift: cortex_classify changed
+    the type only in SQLite, so per-type counts diverged between
+    counts_by_type and graph_counts_by_type."""
+
+    @staticmethod
+    def _capture(mcp, **kwargs):
+        defaults = {
+            "title": "Drift test",
+            "content": "body",
+            "obj_type": "idea",
+            "run_pipeline": False,
+        }
+        defaults.update(kwargs)
+        return _call_tool(mcp, "cortex_capture", **defaults)
+
+    def test_classify_type_change_propagates_to_graph_counts(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = self._capture(mcp)["id"]
+
+        result = _call_tool(
+            mcp,
+            "cortex_classify",
+            obj_id=obj_id,
+            summary="Actually a lesson",
+            obj_type="lesson",
+        )
+        assert result["status"] == "classified"
+
+        status = _call_tool(mcp, "cortex_status")
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"].get("lesson") == 1
+        assert "idea" not in status["counts_by_type"]
+
+    def test_classify_invalid_type_errors_and_stores_stay_consistent(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = self._capture(mcp)["id"]
+
+        result = _call_tool(mcp, "cortex_classify", obj_id=obj_id, obj_type="nonsense")
+        assert result["status"] == "error"
+
+        status = _call_tool(mcp, "cortex_status")
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"] == {"idea": 1}
+
+    def test_classify_properties_reach_graph(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = self._capture(mcp)["id"]
+
+        result = _call_tool(
+            mcp,
+            "cortex_classify",
+            obj_id=obj_id,
+            obj_type="fix",
+            summary="A fix",
+            properties='{"symptom": "drift", "resolution": "single write path"}',
+        )
+        assert result["status"] == "classified"
+
+        # Reach into the tool closure for the live store (same trick as
+        # tests/conftest.FakeMCPClient).
+        store = mcp._tool_manager._tools["cortex_list"].fn.__closure__[0].cell_contents
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None
+        assert graph_obj["type"] == "fix"
+        assert graph_obj.get("symptom") == "drift"
+        assert graph_obj.get("resolution") == "single write path"
+
+    def test_classify_update_delete_sequence_counts_stay_consistent(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        id_a = self._capture(mcp, title="A")["id"]
+        id_b = self._capture(mcp, title="B")["id"]
+        id_c = self._capture(mcp, title="C", obj_type="fix")["id"]
+
+        classify = _call_tool(
+            mcp, "cortex_classify", obj_id=id_a, summary="lesson now", obj_type="lesson"
+        )
+        assert classify["status"] == "classified"
+
+        update = _call_tool(
+            mcp, "cortex_update", obj_id=id_b, title="B renamed", tags="t1,t2"
+        )
+        assert update["status"] == "updated"
+
+        delete = _call_tool(mcp, "cortex_delete", obj_id=id_c)
+        assert delete["status"] == "deleted"
+
+        status = _call_tool(mcp, "cortex_status")
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"] == {"idea": 1, "lesson": 1}
+
+
+class TestUpdateErrorContract:
+    """cortex_update must return structured statuses like its sibling
+    mutation tools (delete/unlink/classify), never let store exceptions
+    escape to the framework as generic isError results."""
+
+    def test_update_nonexistent_returns_not_found(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(
+            mcp, "cortex_update", obj_id="nonexistent-id", title="X"
+        )
+        assert result == {"status": "not_found", "obj_id": "nonexistent-id"}
+
+    def test_update_nonexistent_with_no_fields_returns_not_found(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(mcp, "cortex_update", obj_id="nonexistent-id")
+        assert result == {"status": "not_found", "obj_id": "nonexistent-id"}
+
+    def test_update_existing_with_no_fields_returns_no_changes(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = _call_tool(
+            mcp,
+            "cortex_capture",
+            title="No-op target",
+            content="body",
+            obj_type="idea",
+            run_pipeline=False,
+        )["id"]
+        result = _call_tool(mcp, "cortex_update", obj_id=obj_id)
+        assert result == {"status": "no_changes", "obj_id": obj_id}
+
+    def test_update_store_failure_returns_error_status(
+        self, config: CortexConfig, monkeypatch
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = _call_tool(
+            mcp,
+            "cortex_capture",
+            title="Sync failure target",
+            content="body",
+            obj_type="idea",
+            run_pipeline=False,
+        )["id"]
+        from cortex.core.errors import SyncError
+        from cortex.db.store import Store
+
+        def boom(self, *a, **kw):
+            raise SyncError("graph write failed; stores may have diverged")
+
+        monkeypatch.setattr(Store, "update", boom)
+        result = _call_tool(mcp, "cortex_update", obj_id=obj_id, title="new")
+        assert result["status"] == "error"
+        assert "diverged" in result["message"]
+
+
+class TestShortIdPrefixResolution:
+    """MCP tools resolve the 8-char short ids the CLI displays, mirroring
+    the --direct path (0.4.1). Ambiguous prefixes return a structured
+    {"status": "ambiguous"} payload instead of acting on the wrong doc."""
+
+    @staticmethod
+    def _capture(mcp, **kwargs):
+        defaults = {
+            "title": "Prefix doc",
+            "content": "body",
+            "obj_type": "idea",
+            "run_pipeline": False,
+        }
+        defaults.update(kwargs)
+        return _call_tool(mcp, "cortex_capture", **defaults)
+
+    @staticmethod
+    def _store(mcp):
+        return mcp._tool_manager._tools["cortex_list"].fn.__closure__[0].cell_contents
+
+    def test_read_resolves_short_prefix(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        full = self._capture(mcp, title="Readable")["id"]
+        result = _call_tool(mcp, "cortex_read", obj_id=full[:8])
+        assert isinstance(result, dict)
+        assert result["id"] == full
+
+    def test_update_delete_graph_export_resolve_prefixes(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        full = self._capture(mcp, title="Mutable")["id"]
+        short = full[:8]
+
+        up = _call_tool(mcp, "cortex_update", obj_id=short, title="Renamed")
+        assert up["status"] == "updated"
+        assert up["obj_id"] == full
+
+        g = _call_tool(mcp, "cortex_graph", obj_id=short)
+        assert "relationships" in g
+
+        ex = _call_tool(mcp, "cortex_export", obj_id=short)
+        assert ex["status"] != "not_found"
+
+        d = _call_tool(mcp, "cortex_delete", obj_id=short)
+        assert d == {"status": "deleted", "obj_id": full}
+
+    def test_link_unlink_resolve_both_endpoints(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        a = self._capture(mcp, title="Link source")["id"]
+        b = self._capture(mcp, title="Link target")["id"]
+
+        linked = _call_tool(
+            mcp, "cortex_link", from_id=a[:8], rel_type="supports", to_id=b[:8]
+        )
+        assert linked["status"] == "created"
+        assert linked["from"] == a and linked["to"] == b
+
+        unlinked = _call_tool(
+            mcp, "cortex_unlink", from_id=a[:8], rel_type="supports", to_id=b[:8]
+        )
+        assert unlinked["status"] == "unlinked"
+
+    def test_ambiguous_prefix_returns_structured_payload(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        store = self._store(mcp)
+        # Two docs sharing a 8-char prefix (inserted directly to control ids).
+        store.content.insert(
+            doc_id="aaaa0000-1111-1111-1111-111111111111", title="Twin one"
+        )
+        store.content.insert(
+            doc_id="aaaa0000-2222-2222-2222-222222222222", title="Twin two"
+        )
+        result = _call_tool(mcp, "cortex_read", obj_id="aaaa0000")
+        assert result["status"] == "ambiguous"
+        assert len(result["candidates"]) == 2
+        # Mutation tools refuse rather than guessing.
+        up = _call_tool(mcp, "cortex_update", obj_id="aaaa0000", title="X")
+        assert up["status"] == "ambiguous"
+        d = _call_tool(mcp, "cortex_delete", obj_id="aaaa0000")
+        assert d["status"] == "ambiguous"
+
+    def test_full_ids_and_missing_ids_unchanged(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        full = self._capture(mcp, title="Full id")["id"]
+        assert _call_tool(mcp, "cortex_read", obj_id=full)["id"] == full
+        missing = _call_tool(mcp, "cortex_read", obj_id="ffffffff")
+        assert missing == "Not found: ffffffff"
+
+
+class TestAdaptiveFeedbackWiring:
+    """The learner's adaptive weights are only useful if a production event
+    actually drives them. cortex_read records a miss when the read object was
+    absent from the most recent search results."""
+
+    @staticmethod
+    def _capture(mcp, **kwargs):
+        defaults = {
+            "title": "Doc",
+            "content": "body",
+            "obj_type": "idea",
+            "run_pipeline": False,
+        }
+        defaults.update(kwargs)
+        return _call_tool(mcp, "cortex_capture", **defaults)
+
+    def test_read_after_search_miss_adjusts_weights(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        # Two docs sharing no vocabulary with the query term below.
+        target = self._capture(
+            mcp, title="Zephyrquark migration", content="obscure tangential note"
+        )["id"]
+        self._capture(mcp, title="Unrelated", content="nothing in common")
+
+        store = mcp._tool_manager._tools["cortex_list"].fn.__closure__[0].cell_contents
+        from cortex.retrieval.learner import LearningLoop
+
+        before = LearningLoop(store).get_weights()
+        # A search that does NOT surface the target, then a direct read of it.
+        _call_tool(mcp, "cortex_search", query="quibblefrotz", limit=5)
+        result = _call_tool(mcp, "cortex_read", obj_id=target)
+        assert isinstance(result, dict)  # read still succeeds
+
+        after = LearningLoop(store).get_weights()
+        assert after != before  # a miss was recorded and weights adapted
+        assert abs(sum(after.values()) - 1.0) < 1e-6  # still normalized
+
+    def test_read_without_prior_search_is_safe(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = self._capture(mcp, title="No search first")["id"]
+        # No search logged yet — read must not raise and must not adapt blindly.
+        result = _call_tool(mcp, "cortex_read", obj_id=obj_id)
+        assert isinstance(result, dict)
+
+    def test_context_min_relevance_param_accepted(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._capture(mcp, title="On topic alpha", content="alpha beta gamma")
+        # A high floor returns a (possibly empty) list without error.
+        strict = _call_tool(
+            mcp, "cortex_context", topic="alpha", limit=10, min_relevance=0.99
+        )
+        assert isinstance(strict, list)
+        loose = _call_tool(mcp, "cortex_context", topic="alpha", limit=10)
+        assert isinstance(loose, list)
+        assert len(strict) <= len(loose)
+
+
+# -- cortex_list pagination ----------------------------------------------------
+
+
+class TestCortexListPagination:
+    """cortex_list accepts an optional ``offset`` so callers (e.g. the
+    dashboard vault export) can page through corpora larger than any single
+    ``limit`` instead of silently truncating."""
+
+    @staticmethod
+    def _store(mcp):
+        """Live Store from the tool closure (same trick as FakeMCPClient)."""
+        return mcp._tool_manager._tools["cortex_list"].fn.__closure__[0].cell_contents
+
+    @classmethod
+    def _seed(cls, mcp, n: int) -> list[str]:
+        """Seed *n* docs with strictly distinct created_at timestamps so the
+        ``ORDER BY created_at DESC`` pagination order is deterministic."""
+        store = cls._store(mcp)
+        return [
+            store.create(
+                obj_type="idea",
+                title=f"Doc {i:03d}",
+                content="body",
+                created_at=f"2026-01-01T00:00:{i:02d}+00:00",
+            )
+            for i in range(n)
+        ]
+
+    def test_offset_defaults_to_zero(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._seed(mcp, 3)
+        result = _call_tool(mcp, "cortex_list", limit=50)
+        assert len(result) == 3
+
+    def test_offset_skips_results(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._seed(mcp, 5)
+        full = _call_tool(mcp, "cortex_list", limit=50)
+        shifted = _call_tool(mcp, "cortex_list", limit=50, offset=2)
+        assert [d["id"] for d in shifted] == [d["id"] for d in full[2:]]
+
+    def test_offset_pages_cover_corpus_without_overlap(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        ids = set(self._seed(mcp, 7))
+        seen: list[str] = []
+        offset = 0
+        while True:
+            page = _call_tool(mcp, "cortex_list", limit=3, offset=offset)
+            seen.extend(d["id"] for d in page)
+            if len(page) < 3:
+                break
+            offset += 3
+        assert len(seen) == 7
+        assert set(seen) == ids
+
+    def test_offset_beyond_end_returns_empty(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._seed(mcp, 2)
+        assert _call_tool(mcp, "cortex_list", limit=10, offset=10) == []
+
+    def test_negative_offset_treated_as_zero(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._seed(mcp, 2)
+        assert len(_call_tool(mcp, "cortex_list", limit=10, offset=-5)) == 2

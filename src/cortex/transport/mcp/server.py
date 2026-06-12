@@ -1,14 +1,13 @@
-"""Cortex MCP server — 22 tools for AI agent integration.
+"""Cortex MCP server — 26 tools for AI agent integration.
 
 Provides both stdio and StreamableHTTP transports.
-Admin tools (status, synthesize, delete, export, safety_check, reason,
-list_entities, query_trail, graph_data, debug_sessions, debug_memory) are
-exposed on stdio and on localhost HTTP only.
+Admin tools (the 15 names in the ``ADMIN_TOOLS`` set below) are exposed on
+stdio and on localhost HTTP only; the remaining public tools are available
+on every transport.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
 import sys
 from typing import Any
@@ -16,6 +15,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from cortex.core.config import CortexConfig, load_config
+from cortex.core.errors import NotFoundError, ValidationError
 from cortex.core.logging import get_logger, setup_logging
 from cortex.db.store import Store
 from cortex.ontology.resolver import find_ontology
@@ -97,6 +97,26 @@ def create_mcp_server(
 
     mcp = FastMCP("cortex")
 
+    def _resolve_doc_id(obj_id: str) -> str | dict[str, Any]:
+        """Resolve a short-id prefix to its full document id.
+
+        Mirrors the CLI ``--direct`` behavior so the 8-char ids that
+        ``cortex_list``/``cortex_search`` display can be passed back to any
+        id-taking tool. Returns the resolved (or original) id, or an
+        ``{"status": "ambiguous", ...}`` payload listing candidates when the
+        prefix matches more than one document.
+        """
+        try:
+            return store.resolve_id(obj_id)
+        except ValidationError as e:
+            return {
+                "status": "ambiguous",
+                "obj_id": obj_id,
+                "candidates": (e.context or {}).get("candidates", []),
+                "message": f"Id prefix '{obj_id}' matches more than one document; "
+                "add more characters or use a full id.",
+            }
+
     # ─── Public Tools ──────────────────────────────────────────────
 
     @mcp.tool()
@@ -105,6 +125,7 @@ def create_mcp_server(
         doc_type: str = "",
         project: str = "",
         limit: int = 20,
+        min_relevance: float = 0.0,
     ) -> list[dict[str, Any]]:
         """Search knowledge objects with hybrid keyword + semantic + graph ranking.
 
@@ -113,26 +134,31 @@ def create_mcp_server(
             doc_type: Filter by type (decision, lesson, fix, session, etc.)
             project: Filter by project name.
             limit: Maximum results (default 20).
+            min_relevance: Drop results below this combined score (0.0 = off).
         """
         return engine.search(
             query,
             doc_type=doc_type or None,
             project=project or None,
             limit=limit,
+            min_relevance=min_relevance or None,
         )
 
     @mcp.tool()
     def cortex_context(
         topic: str,
         limit: int = 10,
+        min_relevance: float = 0.0,
     ) -> list[dict[str, Any]]:
         """Get a briefing (summaries only) for a topic. Token-efficient.
 
         Args:
             topic: Topic to get context for.
             limit: Maximum results (default 10).
+            min_relevance: Drop results below this combined score (0.0 = off).
+                Raise it (e.g. 0.15) to keep briefings tightly on-topic.
         """
-        results = engine.search(topic, limit=limit)
+        results = engine.search(topic, limit=limit, min_relevance=min_relevance or None)
         presenter = BriefingPresenter()
         return presenter.render(results)
 
@@ -157,13 +183,35 @@ def create_mcp_server(
         """Read a knowledge object in full detail.
 
         Args:
-            obj_id: Object ID to read.
+            obj_id: Object ID to read (full id or unique short-id prefix).
         """
+        resolved = _resolve_doc_id(obj_id)
+        if isinstance(resolved, dict):
+            return resolved
+        obj_id = resolved
         presenter = DocumentPresenter(store)
         result = presenter.render(obj_id)
         if result is None:
             return f"Not found: {obj_id}"
         learner.record_access(obj_id)
+        # Adaptive ranking: if this read followed a search that didn't surface
+        # the object, that's a miss — nudge the signal weights. Best-effort:
+        # never let feedback bookkeeping break a read.
+        try:
+            recent = store.content.get_query_log(limit=1)
+            if recent and recent[0].get("tool") == "hybrid_search":
+                params = json.loads(recent[0].get("params") or "{}")
+                result_ids = json.loads(recent[0].get("result_ids") or "[]")
+                query = params.get("query") or ""
+                if query and obj_id not in result_ids:
+                    learner.record_miss(
+                        context_query=query,
+                        context_result_ids=result_ids,
+                        subsequent_read_id=obj_id,
+                    )
+        except Exception as e:
+            # Feedback bookkeeping must never break a read.
+            logger.warning("Miss-feedback bookkeeping skipped: %s", e)
         return result
 
     @mcp.tool()
@@ -245,10 +293,17 @@ def create_mcp_server(
         """Create a relationship between two knowledge objects.
 
         Args:
-            from_id: Source object ID.
+            from_id: Source object ID (full id or unique short-id prefix).
             rel_type: Relationship type (causedBy, contradicts, supports, etc.).
-            to_id: Target object ID.
+            to_id: Target object ID (full id or unique short-id prefix).
         """
+        resolved_from = _resolve_doc_id(from_id)
+        if isinstance(resolved_from, dict):
+            return resolved_from
+        resolved_to = _resolve_doc_id(to_id)
+        if isinstance(resolved_to, dict):
+            return resolved_to
+        from_id, to_id = resolved_from, resolved_to
         try:
             store.create_relationship(from_id=from_id, rel_type=rel_type, to_id=to_id)
             return {"status": "created", "from": from_id, "rel_type": rel_type, "to": to_id}
@@ -263,9 +318,13 @@ def create_mcp_server(
         """Provide explicit relevance feedback for an object.
 
         Args:
-            obj_id: Object ID to provide feedback for.
+            obj_id: Object ID to provide feedback for (full id or unique prefix).
             relevant: True if the object was relevant/useful.
         """
+        resolved = _resolve_doc_id(obj_id)
+        if isinstance(resolved, dict):
+            return resolved
+        obj_id = resolved
         if relevant:
             learner.record_access(obj_id)
         return {
@@ -289,6 +348,10 @@ def create_mcp_server(
         if entity:
             return graph_queries.entity_neighborhood(entity)
         if obj_id:
+            resolved = _resolve_doc_id(obj_id)
+            if isinstance(resolved, dict):
+                return resolved
+            obj_id = resolved
             return {
                 "causal_chain": graph_queries.causal_chain(obj_id),
                 "evolution": graph_queries.evolution_timeline(obj_id),
@@ -301,6 +364,7 @@ def create_mcp_server(
         doc_type: str = "",
         project: str = "",
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """List knowledge objects with optional filters.
 
@@ -308,11 +372,14 @@ def create_mcp_server(
             doc_type: Filter by type.
             project: Filter by project.
             limit: Maximum results (default 50).
+            offset: Number of results to skip, for paginating through
+                corpora larger than any single ``limit`` (default 0).
         """
         return store.list_objects(
             obj_type=doc_type or None,
             project=project or None,
             limit=limit,
+            offset=max(0, offset),
         )
 
     @mcp.tool()
@@ -322,8 +389,12 @@ def create_mcp_server(
         """Re-run the intelligence pipeline on an existing object.
 
         Args:
-            obj_id: Object ID to re-process.
+            obj_id: Object ID to re-process (full id or unique short-id prefix).
         """
+        resolved = _resolve_doc_id(obj_id)
+        if isinstance(resolved, dict):
+            return resolved
+        obj_id = resolved
         doc = store.read(obj_id)
         if doc is None:
             return {"error": f"Not found: {obj_id}"}
@@ -358,6 +429,10 @@ def create_mcp_server(
             tags: Updated comma-separated tags.
             project: Updated project name.
         """
+        resolved = _resolve_doc_id(obj_id)
+        if isinstance(resolved, dict):
+            return resolved
+        obj_id = resolved
         doc = store.read(obj_id)
         if doc is None:
             return {"status": "error", "message": f"Not found: {obj_id}"}
@@ -372,24 +447,24 @@ def create_mcp_server(
         if project:
             updates["project"] = project
 
-        try:
-            store.content.update(obj_id, **updates)
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-        # Update graph with properties
-        graph_updates: dict[str, str] = {}
-        if summary:
-            graph_updates["summary"] = summary
+        # Type-specific properties are graph-only; malformed JSON is ignored
+        # (but logged) so a bad properties blob can't block reclassification.
+        graph_props: dict[str, str] = {}
         if properties:
             try:
                 parsed = json.loads(properties)
-                graph_updates.update({k: v for k, v in parsed.items() if isinstance(v, str)})
+                graph_props = {k: v for k, v in parsed.items() if isinstance(v, str)}
             except json.JSONDecodeError:
-                pass
-        if graph_updates:
-            with contextlib.suppress(Exception):
-                store.graph.update_object(obj_id, **graph_updates)
+                logger.warning(
+                    "cortex_classify: ignoring malformed properties JSON for %s", obj_id
+                )
+
+        # Single dual-write path: a type change rewrites the graph class
+        # assertion too, keeping per-type counts consistent across stores.
+        try:
+            store.update(obj_id, properties=graph_props or None, **updates)
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
         # Resolve entities
         resolved = []
@@ -445,8 +520,12 @@ def create_mcp_server(
             """Delete a knowledge object.
 
             Args:
-                obj_id: Object ID to delete.
+                obj_id: Object ID to delete (full id or unique short-id prefix).
             """
+            resolved = _resolve_doc_id(obj_id)
+            if isinstance(resolved, dict):
+                return resolved
+            obj_id = resolved
             deleted = store.delete(obj_id)
             return {
                 "status": "deleted" if deleted else "not_found",
@@ -497,9 +576,22 @@ def create_mcp_server(
                 updates["tags"] = tags
             if project:
                 updates["project"] = project
+            resolved = _resolve_doc_id(obj_id)
+            if isinstance(resolved, dict):
+                return resolved
+            obj_id = resolved
             if not updates:
+                if store.read(obj_id) is None:
+                    return {"status": "not_found", "obj_id": obj_id}
                 return {"status": "no_changes", "obj_id": obj_id}
-            store.update(obj_id, **updates)
+            try:
+                store.update(obj_id, **updates)
+            except NotFoundError:
+                return {"status": "not_found", "obj_id": obj_id}
+            except Exception as e:
+                # Includes SyncError: the caller must learn the stores may
+                # have diverged, not get a framework stack-trace string.
+                return {"status": "error", "message": str(e)}
             return {
                 "status": "updated",
                 "obj_id": obj_id,
@@ -517,8 +609,15 @@ def create_mcp_server(
             Args:
                 from_id: Source object ID.
                 rel_type: Relationship type (e.g. causedBy, supports).
-                to_id: Target object ID.
+                to_id: Target object ID (full id or unique short-id prefix).
             """
+            resolved_from = _resolve_doc_id(from_id)
+            if isinstance(resolved_from, dict):
+                return resolved_from
+            resolved_to = _resolve_doc_id(to_id)
+            if isinstance(resolved_to, dict):
+                return resolved_to
+            from_id, to_id = resolved_from, resolved_to
             deleted = store.delete_relationship(
                 from_id=from_id, rel_type=rel_type, to_id=to_id,
             )
@@ -540,6 +639,10 @@ def create_mcp_server(
                 obj_id: Object ID to export.
                 format: Export format (markdown).
             """
+            resolved = _resolve_doc_id(obj_id)
+            if isinstance(resolved, dict):
+                return resolved
+            obj_id = resolved
             presenter = DocumentPresenter(store)
             doc = presenter.render(obj_id)
             if doc is None:
@@ -765,7 +868,7 @@ def create_mcp_server(
                 "pid": os.getpid(),
             }
 
-        # Module-level state for tracemalloc snapshots (only populated
+        # Per-server closure state for tracemalloc snapshots (only populated
         # when cortex_debug_memory is called with action="start").
         _tracemalloc_state: dict[str, Any] = {"prev_snapshot": None}
 

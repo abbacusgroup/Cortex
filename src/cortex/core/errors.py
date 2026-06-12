@@ -71,10 +71,6 @@ class NotFoundError(StoreError):
     code = "CORTEX_NOT_FOUND"
 
 
-class DuplicateError(StoreError):
-    code = "CORTEX_DUPLICATE"
-
-
 class SyncError(StoreError):
     code = "CORTEX_SYNC_ERROR"
 

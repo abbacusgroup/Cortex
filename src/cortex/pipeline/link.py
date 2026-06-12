@@ -42,9 +42,10 @@ class LinkStage:
         # Step 2: Discover relationships via LLM
         relationships = self._discover_relationships(obj_id)
 
-        # Step 3: Update pipeline stage
+        # Step 3: Update pipeline stage (SQLite-only column; routed through
+        # Store.update so the mutation is snapshotted like every other write)
         try:
-            self.store.content.update(obj_id, pipeline_stage="linked")
+            self.store.update(obj_id, pipeline_stage="linked")
         except Exception as e:
             logger.warning("Failed to update pipeline stage to 'linked' for %s: %s", obj_id, e)
 
@@ -128,6 +129,16 @@ class LinkStage:
             if from_id == to_id:
                 continue
 
+            # The new object must be one endpoint of every discovered edge.
+            # Without this, a hallucinating LLM could silently rewire two
+            # unrelated existing objects.
+            if obj_id not in (from_id, to_id):
+                logger.debug(
+                    "Skipping relationship — neither endpoint is the new object %s",
+                    obj_id[:8],
+                )
+                continue
+
             # Verify both objects exist
             if not self.store.content.get(from_id) or not self.store.content.get(to_id):
                 logger.debug("Skipping relationship — object not found")
@@ -138,6 +149,8 @@ class LinkStage:
                     from_id=from_id,
                     rel_type=rel_type,
                     to_id=to_id,
+                    confidence=float(rel.get("confidence", 1.0)),
+                    inferred_by="llm",
                 )
                 created.append(rel)
                 logger.debug(

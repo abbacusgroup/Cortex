@@ -137,6 +137,11 @@ class CortexV1Importer:
                 )
                 if tags:
                     _extract_entities_from_tags(self.store, obj_id, tags)
+                # Record the dedup hash only now that create() has succeeded,
+                # so a failed import stays retryable.
+                self.store.content.set_config(
+                    f"import_hash:{self._content_hash(title, content)}", "1"
+                )
                 imported += 1
             except Exception as e:
                 logger.warning("Failed to import v1 doc '%s': %s", row_dict.get("title", "?"), e)
@@ -171,12 +176,21 @@ class CortexV1Importer:
         }
         return mapping.get(v1_type.lower(), "idea")
 
-    def _is_duplicate(self, title: str, content: str) -> bool:
-        """Check if content already exists via hash."""
-        content_hash = hashlib.sha256(f"{title}:{content}".encode()).hexdigest()
+    @staticmethod
+    def _content_hash(title: str, content: str) -> str:
+        """Compute the dedup hash for a v1 document (title + content)."""
+        return hashlib.sha256(f"{title}:{content}".encode()).hexdigest()
 
-        existing = self.store.content.get_config(f"import_hash:{content_hash}", "")
-        if existing:
+    def _is_duplicate(self, title: str, content: str) -> bool:
+        """Pure predicate: report whether this doc already exists.
+
+        Does NOT record the hash — that is done by the caller only after a
+        successful create(), so a failed import remains retryable instead of
+        being permanently skipped as a duplicate.
+        """
+        content_hash = self._content_hash(title, content)
+
+        if self.store.content.get_config(f"import_hash:{content_hash}", ""):
             return True
 
         # Title-based fallback (direct SQL, not FTS)
@@ -184,12 +198,7 @@ class CortexV1Importer:
             "SELECT id FROM documents WHERE title = ? AND captured_by LIKE 'import-%' LIMIT 1",
             (title,),
         ).fetchone()
-        if row:
-            return True
-
-        # Store hash for future dedup
-        self.store.content.set_config(f"import_hash:{content_hash}", "1")
-        return False
+        return row is not None
 
 
 class ObsidianImporter:
@@ -248,8 +257,8 @@ class ObsidianImporter:
                     skipped += 1
                     continue
 
-                # Dedup check — content-only hash
-                if self._is_duplicate(title, body):
+                # Dedup check — content hash + path-scoped (pure, no side effect)
+                if self._is_duplicate(body, relative):
                     skipped += 1
                     continue
 
@@ -328,6 +337,11 @@ class ObsidianImporter:
                 if wiki_links:
                     wiki_link_map[obj_id] = wiki_links
 
+                # Record dedup keys only now that the import has succeeded, so a
+                # failed import stays retryable instead of being skipped forever.
+                self.store.content.set_config(f"import_hash:{self._content_hash(body)}", "1")
+                self.store.content.set_config(f"import_path:{relative}", "1")
+
                 imported += 1
             except Exception as e:
                 logger.warning("Failed to import '%s': %s", md_file.name, e)
@@ -351,23 +365,29 @@ class ObsidianImporter:
             "wiki_links_created": links_created,
         }
 
-    def _is_duplicate(self, title: str, content: str) -> bool:
-        """Check if content already exists via content-only hash."""
-        content_hash = hashlib.sha256(content.encode()).hexdigest()
-        existing = self.store.content.get_config(f"import_hash:{content_hash}", "")
-        if existing:
+    @staticmethod
+    def _content_hash(content: str) -> str:
+        """Compute the content-only dedup hash for a vault file."""
+        return hashlib.sha256(content.encode()).hexdigest()
+
+    def _is_duplicate(self, content: str, relative: str) -> bool:
+        """Pure predicate: report whether this file already exists.
+
+        Dedup is keyed by (a) content hash and (b) the file's relative path
+        within the vault — NOT the bare title. Obsidian titles are always the
+        filename stem, so two distinct files that share a stem across folders
+        (projectA/notes.md vs projectB/notes.md) must not collide.
+
+        Does NOT record any dedup key — the caller does that only after a
+        successful create(), so a failed import remains retryable.
+        """
+        if self.store.content.get_config(f"import_hash:{self._content_hash(content)}", ""):
             return True
 
-        # Title-based fallback (direct SQL, not FTS)
-        row = self.store.content._db.execute(
-            "SELECT id FROM documents WHERE title = ? AND captured_by LIKE 'import-%' LIMIT 1",
-            (title,),
-        ).fetchone()
-        if row:
-            return True
-
-        self.store.content.set_config(f"import_hash:{content_hash}", "1")
-        return False
+        # Path-scoped fallback: catches re-imports of the same file whose body
+        # was edited between runs (content hash changed) without dropping a
+        # different file that merely shares a filename stem.
+        return bool(self.store.content.get_config(f"import_path:{relative}", ""))
 
     @staticmethod
     def _parse_frontmatter(content: str) -> dict[str, Any]:

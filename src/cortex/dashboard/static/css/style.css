@@ -674,6 +674,28 @@ label {
     margin-top: 0.75rem;
 }
 
+/* Error page */
+.error-page {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1.5rem;
+}
+.error-status {
+    color: var(--danger);
+    font-weight: 600;
+}
+.error-message {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem;
+    white-space: pre-wrap;
+    overflow-x: auto;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .layout { flex-direction: column; }

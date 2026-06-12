@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from cortex.core.config import CortexConfig
-from cortex.core.errors import NotFoundError
+from cortex.core.errors import NotFoundError, StoreError, SyncError, ValidationError
 from cortex.db.store import Store
 from cortex.ontology.resolver import find_ontology
 
@@ -128,6 +128,54 @@ class TestSearchAndList:
         _create_sample(store, title="B", project="beta")
         objects = store.list_objects(project="beta")
         assert len(objects) == 1
+
+
+# ── Short-id resolution & existence ──────────────────────────────────
+
+
+class TestResolveIdAndExists:
+    def test_exists_true_for_created_object(self, store: Store):
+        obj_id = _create_sample(store)
+        assert store.exists(obj_id) is True
+
+    def test_exists_false_for_unknown_id(self, store: Store):
+        assert store.exists("totally-bogus-id-12345") is False
+
+    def test_resolve_full_id_unchanged(self, store: Store):
+        obj_id = _create_sample(store)
+        assert store.resolve_id(obj_id) == obj_id
+
+    def test_resolve_unique_short_prefix(self, store: Store):
+        obj_id = _create_sample(store)
+        assert store.resolve_id(obj_id[:8]) == obj_id
+
+    def test_resolve_unknown_returns_input_unchanged(self, store: Store):
+        _create_sample(store)
+        assert store.resolve_id("zzzzzzzz") == "zzzzzzzz"
+
+    def test_resolve_empty_returns_input_unchanged(self, store: Store):
+        assert store.resolve_id("") == ""
+
+    def test_resolve_ambiguous_prefix_raises(self, store: Store):
+        store.content.insert(
+            doc_id="aaaa1111-0000-0000-0000-000000000000", title="A"
+        )
+        store.content.insert(
+            doc_id="aaaa2222-0000-0000-0000-000000000000", title="B"
+        )
+        with pytest.raises(ValidationError) as exc:
+            store.resolve_id("aaaa")
+        assert set(exc.value.context["candidates"]) == {
+            "aaaa1111-0000-0000-0000-000000000000",
+            "aaaa2222-0000-0000-0000-000000000000",
+        }
+
+    def test_exact_match_wins_over_prefix(self, store: Store):
+        # Imported ids can be arbitrary strings — one id may be a strict
+        # prefix of another. The exact match must win, not raise ambiguity.
+        store.content.insert(doc_id="abc", title="Exact")
+        store.content.insert(doc_id="abcd", title="Longer")
+        assert store.resolve_id("abc") == "abc"
 
 
 # ── Relationships ────────────────────────────────────────────────────
@@ -260,6 +308,251 @@ class TestCrossSystemConsistency:
         for obj_id in [created_ids[14], created_ids[15]]:
             assert store.content.get(obj_id) is None
             assert store.graph.read_object(obj_id) is None
+
+
+# ── Update key mapping (column → graph predicate translation) ────────
+
+
+class TestUpdateKeyMapping:
+    """Store.update must translate SQLite column names into graph predicates.
+
+    Regression for the dual-write drift bug: column names were forwarded
+    verbatim, so ``type`` became a literal cortex:type triple (the class
+    never changed) and ``captured_by`` diverged from creation's capturedBy.
+    """
+
+    def test_type_change_rewrites_graph_class(self, store: Store):
+        obj_id = _create_sample(store, obj_type="idea")
+        store.update(obj_id, type="lesson")
+
+        doc = store.content.get(obj_id)
+        assert doc is not None and doc["type"] == "lesson"
+
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None
+        assert graph_obj["type"] == "lesson"
+
+    def test_type_change_keeps_per_type_counts_consistent(self, store: Store):
+        obj_id = _create_sample(store, obj_type="idea")
+        store.update(obj_id, type="lesson")
+
+        status = store.status()
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"] == {"lesson": 1}
+
+    def test_type_change_leaves_no_literal_type_triple(self, store: Store):
+        from cortex.ontology.namespaces import cortex_iri
+
+        obj_id = _create_sample(store, obj_type="idea")
+        store.update(obj_id, type="lesson")
+
+        subject = cortex_iri(f"obj/{obj_id}")
+        stray = list(store.graph._store.quads_for_pattern(subject, cortex_iri("type"), None))
+        assert stray == []
+
+    def test_type_change_keeps_base_class_listable(self, store: Store):
+        obj_id = _create_sample(store, obj_type="idea")
+        store.update(obj_id, type="fix")
+
+        objs = store.graph.list_objects()
+        assert [o["id"] for o in objs] == [obj_id]
+        assert objs[0]["type"] == "fix"
+
+    def test_invalid_type_rejected_before_any_write(self, store: Store):
+        obj_id = _create_sample(store, obj_type="idea")
+        with pytest.raises(ValidationError):
+            store.update(obj_id, type="nonsense")
+
+        # Neither store was touched
+        doc = store.content.get(obj_id)
+        assert doc is not None and doc["type"] == "idea"
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None and graph_obj["type"] == "idea"
+
+    def test_captured_by_maps_to_camelcase_predicate(self, store: Store):
+        obj_id = _create_sample(store)
+        store.update(obj_id, captured_by="claude")
+
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None
+        assert graph_obj.get("capturedBy") == "claude"
+        assert "captured_by" not in graph_obj
+
+    def test_content_only_columns_not_forwarded_to_graph(self, store: Store):
+        obj_id = _create_sample(store)
+        store.update(
+            obj_id, raw_markdown="# raw", pipeline_stage="enriched", confidence=0.5
+        )
+
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None
+        assert "raw_markdown" not in graph_obj
+        assert "pipeline_stage" not in graph_obj
+        # Graph confidence stays at the creation-time typed literal
+        # (Oxigraph normalizes the xsd:float lexical form, e.g. "1.0" → "1")
+        assert float(graph_obj.get("confidence")) == 1.0
+
+        doc = store.content.get(obj_id)
+        assert doc is not None
+        assert doc["raw_markdown"] == "# raw"
+        assert doc["pipeline_stage"] == "enriched"
+        assert doc["confidence"] == 0.5
+
+    def test_graph_only_properties_kwarg_updates_graph(self, store: Store):
+        obj_id = _create_sample(store, obj_type="decision")
+        store.update(obj_id, properties={"rationale": "because tests"})
+
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None
+        assert graph_obj.get("rationale") == "because tests"
+        # SQLite row has no such column and is untouched
+        doc = store.content.get(obj_id)
+        assert doc is not None and "rationale" not in doc
+
+    def test_type_in_properties_is_ignored(self, store: Store):
+        obj_id = _create_sample(store, obj_type="idea")
+        store.update(obj_id, properties={"type": "lesson"})
+
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None and graph_obj["type"] == "idea"
+        doc = store.content.get(obj_id)
+        assert doc is not None and doc["type"] == "idea"
+
+    def test_stray_literal_type_triple_cleaned_on_reclassify(self, store: Store):
+        """Artifacts of the old bug are swept when the type is next rewritten."""
+        import pyoxigraph as ox
+
+        from cortex.ontology.namespaces import cortex_iri
+
+        obj_id = _create_sample(store, obj_type="idea")
+        subject = cortex_iri(f"obj/{obj_id}")
+        store.graph._store.add(ox.Quad(subject, cortex_iri("type"), ox.Literal("lesson")))
+
+        store.update(obj_id, type="fix")
+
+        stray = list(store.graph._store.quads_for_pattern(subject, cortex_iri("type"), None))
+        assert stray == []
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None and graph_obj["type"] == "fix"
+
+
+# ── Update failure paths ─────────────────────────────────────────────
+
+
+class TestUpdateFailurePaths:
+    def test_graph_failure_raises_sync_error(self, store: Store, monkeypatch):
+        obj_id = _create_sample(store)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("graph down")
+
+        monkeypatch.setattr(store.graph, "update_object", boom)
+        with pytest.raises(SyncError):
+            store.update(obj_id, title="New title")
+
+    def test_content_failure_raises_sync_error(self, store: Store, monkeypatch):
+        obj_id = _create_sample(store)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("sqlite down")
+
+        monkeypatch.setattr(store.content, "update", boom)
+        with pytest.raises(SyncError):
+            store.update(obj_id, title="New title")
+
+    def test_graph_not_found_logs_but_sqlite_update_succeeds(self, store: Store):
+        obj_id = _create_sample(store)
+        store.graph.delete_object(obj_id)  # induce divergence
+
+        assert store.update(obj_id, title="Still updates SQLite") is True
+        doc = store.content.get(obj_id)
+        assert doc is not None and doc["title"] == "Still updates SQLite"
+
+
+# ── Delete safety ────────────────────────────────────────────────────
+
+
+class TestDeleteSafety:
+    def test_delete_snapshots_version_history(self, store: Store):
+        obj_id = _create_sample(store, title="Doomed")
+        assert store.delete(obj_id) is True
+
+        assert store.temporal is not None
+        versions = store.temporal.list_versions(obj_id)
+        assert len(versions) == 1
+        snap = store.temporal.get_version(obj_id, versions[0]["version_num"])
+        assert snap is not None and snap["title"] == "Doomed"
+
+    def test_content_delete_failure_raises_sync_error_naming_graph(
+        self, store: Store, monkeypatch
+    ):
+        obj_id = _create_sample(store)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr(store.content, "delete", boom)
+        with pytest.raises(SyncError) as exc_info:
+            store.delete(obj_id)
+        assert "Graph delete succeeded" in str(exc_info.value)
+
+    def test_graph_delete_failure_raises_sync_error_and_keeps_sqlite_row(
+        self, store: Store, monkeypatch
+    ):
+        obj_id = _create_sample(store)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("rocksdb error")
+
+        monkeypatch.setattr(store.graph, "delete_object", boom)
+        with pytest.raises(SyncError):
+            store.delete(obj_id)
+        # SQLite row untouched — no half-delete in the wrong direction
+        assert store.content.get(obj_id) is not None
+
+
+# ── Previously-untested db-layer branches ────────────────────────────
+
+
+class TestUntestedDbBranches:
+    def test_count_entities(self, store: Store):
+        store.create_entity(name="Python", entity_type="technology")
+        store.create_entity(name="CQRS", entity_type="pattern")
+
+        assert store.graph.count_entities() == 2
+        assert store.status()["entities"] == 2
+
+    def test_update_immutable_column_rejected(self, store: Store):
+        obj_id = _create_sample(store)
+        with pytest.raises(StoreError, match="immutable"):
+            store.content.update(obj_id, created_at="2020-01-01T00:00:00+00:00")
+
+    def test_update_unknown_column_rejected(self, store: Store):
+        obj_id = _create_sample(store)
+        with pytest.raises(StoreError, match="Unknown column"):
+            store.content.update(obj_id, bogus="x")
+
+
+# ── Per-type count consistency across a mutation sequence ────────────
+
+
+class TestCountsConsistencyAfterMutationSequence:
+    def test_classify_update_delete_sequence_keeps_counts_in_sync(self, store: Store):
+        """The empirically-observed drift case: after reclassify + update +
+        delete, SQLite and graph per-type counts must agree exactly."""
+        ids = [_create_sample(store, obj_type="idea", title=f"I{i}") for i in range(3)]
+        ids.append(_create_sample(store, obj_type="fix", title="F0"))
+
+        # Reclassify (the cortex_classify path)
+        store.update(ids[0], type="lesson", summary="now a lesson", confidence=0.9)
+        # Plain metadata update
+        store.update(ids[1], title="Renamed", tags="x,y")
+        # Delete
+        store.delete(ids[3])
+
+        status = store.status()
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"] == {"idea": 2, "lesson": 1}
 
 
 class TestTimestamps:

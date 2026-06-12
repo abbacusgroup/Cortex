@@ -1,10 +1,10 @@
-"""Reason stage — OWL-RL inference via SPARQL CONSTRUCT rules.
+"""Reason stage — lightweight inference via SPARQL CONSTRUCT rules.
 
-Applies inference rules to derive new triples from existing ones:
+Applies a small fixed set of inference rules to derive new triples from
+existing ones:
 - Transitive closure: supersedes chains
 - Symmetric enforcement: contradicts both directions
 - Inverse generation: causedBy ↔ ledTo
-- Domain/range validation
 """
 
 from __future__ import annotations
@@ -184,13 +184,3 @@ class ReasonStage:
             "total_pending": total_pending,
             "rule_counts": rule_counts,
         }
-
-    def run_for_object(self, obj_id: str) -> dict[str, Any]:
-        """Run reasoning focused on a specific object's neighborhood.
-
-        This is more efficient than full reasoning — only applies rules
-        that could produce new triples involving this object.
-        """
-        # For now, just run full reasoning.
-        # Future optimization: scope CONSTRUCT queries to obj_id neighborhood.
-        return self.run()

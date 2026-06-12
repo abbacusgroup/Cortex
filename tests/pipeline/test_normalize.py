@@ -132,3 +132,56 @@ class TestNormalizePreClassified:
         assert result["status"] == "normalized"
         # Without LLM, fallback sets confidence to 0.0
         assert result["confidence"] == 0.0
+
+
+# -- Dual-write graph sync ----------------------------------------------------
+
+
+class TestNormalizeGraphSync:
+    """Normalization must route through Store.update so a classification
+    type change reaches the graph's rdf:type assertion (drift regression)."""
+
+    def test_llm_type_change_propagates_to_graph(
+        self, store: Store, normalizer: NormalizeStage, monkeypatch
+    ):
+        obj_id = _create_obj(store, title="Should become a lesson")
+
+        def fake_classify(*, title: str, content: str):
+            return {
+                "type": "lesson",
+                "summary": "A lesson learned",
+                "tags": "testing",
+                "project": "",
+                "entities": [],
+                "confidence": 0.9,
+                "properties": {"cause": "unit test"},
+            }
+
+        monkeypatch.setattr(normalizer.llm, "classify", fake_classify)
+        result = normalizer.run(obj_id)
+        assert result["type"] == "lesson"
+
+        doc = store.content.get(obj_id)
+        assert doc is not None and doc["type"] == "lesson"
+
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None
+        assert graph_obj["type"] == "lesson"
+        # Type-specific property reached the graph too
+        assert graph_obj.get("cause") == "unit test"
+
+        status = store.status()
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"] == {"lesson": 1}
+
+    def test_fallback_keeps_counts_consistent(
+        self, store: Store, normalizer: NormalizeStage
+    ):
+        """Fallback classification (confidence 0) keeps the original type in
+        both stores — no divergence either way."""
+        obj_id = _create_obj(store)
+        normalizer.run(obj_id)
+
+        status = store.status()
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"] == {"idea": 1}

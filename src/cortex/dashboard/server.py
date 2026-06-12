@@ -14,15 +14,18 @@ process memory.
 from __future__ import annotations
 
 import html as html_mod
+import re
 import secrets
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import bcrypt
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.responses import PlainTextResponse
 
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.logging import get_logger, setup_logging
@@ -43,6 +46,57 @@ STATIC_DIR = DASHBOARD_DIR / "static"
 # In-memory session store (simple for single-user)
 _sessions: dict[str, dict[str, Any]] = {}
 SESSION_COOKIE = "cortex_session"
+
+# Hostnames always treated as same-origin (the dashboard only ever binds to
+# the local loopback interface). Cross-site form POSTs from a drive-by page
+# carry a foreign Origin/Referer and are rejected regardless of password mode.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
+
+# Methods that can mutate state. GET/HEAD/OPTIONS are exempt so browsing and
+# CORS preflight are never blocked by the Origin check.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# Page size for the vault-export pagination loop. The export keeps fetching
+# pages until a short page, so corpora of any size export completely (the old
+# single list_objects(limit=5000) call silently truncated larger KBs).
+EXPORT_PAGE_SIZE = 500
+
+
+def _origin_host(value: str) -> str:
+    """Extract the bare host (no port) from an Origin/Referer header value.
+
+    Returns an empty string when the value is missing or unparseable.
+    """
+    if not value:
+        return ""
+    # Origin is scheme://host[:port]; Referer is a full URL. urlsplit handles
+    # both; ``hostname`` strips the port and lowercases the host.
+    return (urlsplit(value).hostname or "").lower()
+
+
+def _is_same_origin(request: Request) -> bool:
+    """Return True if a state-changing request is same-origin (or local).
+
+    Defends against cross-site request forgery by rejecting any non-safe
+    request whose ``Origin`` (preferred) or ``Referer`` (fallback) host is
+    neither a loopback address nor the host the request was sent to. A request
+    that carries neither header is allowed: a browser CSRF attack via a
+    top-level form POST always sends ``Origin``, so an absent header means a
+    same-origin/non-browser caller (e.g. curl, the test client) rather than an
+    attack — blocking those would break legitimate use for no security gain.
+    """
+    origin = request.headers.get("origin", "")
+    referer = request.headers.get("referer", "")
+    source_host = _origin_host(origin) or _origin_host(referer)
+    if not source_host:
+        # No Origin/Referer to check — not a forgeable cross-site browser POST.
+        return True
+    if source_host in _LOOPBACK_HOSTS:
+        return True
+    # Same host as the one the request targeted (handles non-default ports and
+    # any host the user actually bound the dashboard to).
+    target_host = (request.url.hostname or "").lower()
+    return source_host == target_host
 
 
 def create_dashboard(
@@ -66,6 +120,29 @@ def create_dashboard(
         mcp_client = CortexMCPClient(config.mcp_server_url, timeout_seconds=10.0)
 
     app = FastAPI(title="Cortex Dashboard", docs_url=None, redoc_url=None)
+
+    @app.middleware("http")
+    async def _csrf_origin_guard(request: Request, call_next):
+        """Reject cross-site state-changing requests (CSRF defense).
+
+        Applied to every non-safe (mutating) request before routing, so no
+        POST route can be missed. This works independently of password mode —
+        the default no-password install is exactly the deployment that needs
+        it most. GET/HEAD/OPTIONS pass straight through.
+        """
+        if request.method not in _SAFE_METHODS and not _is_same_origin(request):
+            logger.warning(
+                "Rejected cross-origin %s %s (origin=%r, referer=%r)",
+                request.method,
+                request.url.path,
+                request.headers.get("origin", ""),
+                request.headers.get("referer", ""),
+            )
+            return PlainTextResponse(
+                "Cross-origin request forbidden", status_code=403
+            )
+        return await call_next(request)
+
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
@@ -364,7 +441,7 @@ def create_dashboard(
             count = edge_counts.get(ent.get("name", ""), 0)
             ent["connection_count"] = count
             # Size tiers: sm (0-20%), md (20-50%), lg (50-80%), xl (80%+)
-            ratio = count / max_count if max_count else 0
+            ratio = count / max_count
             if ratio >= 0.8:
                 ent["size"] = "xl"
             elif ratio >= 0.5:
@@ -463,7 +540,7 @@ def create_dashboard(
         return templates.TemplateResponse(
             request,
             "settings.html",
-            _ctx(config=config, weights={}, msg=msg, msg_type=msg_type),
+            _ctx(config=config, msg=msg, msg_type=msg_type),
         )
 
     @app.post("/settings/import")
@@ -473,9 +550,7 @@ def create_dashboard(
         if session is None:
             return RedirectResponse("/login", status_code=302)
 
-        from pathlib import Path as _Path
-
-        vault = _Path(vault_path).expanduser().resolve()
+        vault = Path(vault_path).expanduser().resolve()
         if not vault.is_dir():
             return RedirectResponse(
                 f"/settings?msg=Directory not found: {vault_path}&msg_type=danger",
@@ -515,9 +590,7 @@ def create_dashboard(
         if session is None:
             return RedirectResponse("/login", status_code=302)
 
-        from pathlib import Path as _Path
-
-        target = _Path(export_path).expanduser().resolve()
+        target = Path(export_path).expanduser().resolve()
         try:
             target.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -527,9 +600,73 @@ def create_dashboard(
             )
 
         try:
-            import re as _re
+            # Pass 0: page through the full corpus. A single capped
+            # list_objects call silently truncated KBs larger than the cap;
+            # loop until a short page instead. Duplicate ids (possible when
+            # created_at ties reorder across pages) are skipped.
+            all_docs: list[dict[str, Any]] = []
+            seen_ids: set[str] = set()
+            offset = 0
+            while True:
+                page = await mcp_client.list_objects(
+                    limit=EXPORT_PAGE_SIZE, offset=offset
+                )
+                if not page:
+                    break
+                for doc in page:
+                    page_id = doc.get("id", "")
+                    if page_id and page_id not in seen_ids:
+                        seen_ids.add(page_id)
+                        all_docs.append(doc)
+                if len(page) < EXPORT_PAGE_SIZE:
+                    break
+                offset += EXPORT_PAGE_SIZE
 
-            all_docs = await mcp_client.list_objects(limit=5000)
+            # All vault paths are de-collided case-insensitively: the common
+            # macOS/Windows filesystems are case-insensitive, so 'Cortex' and
+            # 'cortex' resolve to the same file and the second write would
+            # silently overwrite the first.
+            collisions = 0
+
+            # Each distinct project gets a case-insensitively unique folder
+            # (also used for its hub file, so hubs can never collide).
+            proj_dirs: dict[str, str] = {}
+            used_dirs: set[str] = set()
+
+            def _project_dir(project: str) -> str:
+                nonlocal collisions
+                if project in proj_dirs:
+                    return proj_dirs[project]
+                base = _sanitize_filename(project, "unknown")
+                candidate, n = base, 2
+                while candidate.casefold() in used_dirs:
+                    candidate = f"{base}-{n}"
+                    n += 1
+                if candidate != base:
+                    collisions += 1
+                used_dirs.add(candidate.casefold())
+                proj_dirs[project] = candidate
+                return candidate
+
+            used_paths: set[str] = set()
+
+            def _claim_path(rel_path: str, suffix: str) -> str:
+                """Reserve a unique vault path (case-insensitive).
+
+                On collision, append ``-{suffix}`` (e.g. an object-id prefix)
+                and, if still taken, a numeric counter.
+                """
+                nonlocal collisions
+                if rel_path.casefold() in used_paths:
+                    collisions += 1
+                    base = f"{rel_path}-{suffix}" if suffix else rel_path
+                    candidate, n = base, 2
+                    while candidate.casefold() in used_paths:
+                        candidate = f"{base}-{n}"
+                        n += 1
+                    rel_path = candidate
+                used_paths.add(rel_path.casefold())
+                return rel_path
 
             # Pass 1: collect all docs and build id -> filename lookup.
             # Filenames include relative path for folder structure.
@@ -547,14 +684,16 @@ def create_dashboard(
                 # Build relative path: project/type/filename
                 project = full.get("project", "") or "_unscoped"
                 doc_type = full.get("type", "") or "other"
-                safe_project = _sanitize_filename(project, "unknown")
-                rel_path = f"{safe_project}/{doc_type}/{safe_name}"
+                safe_project = _project_dir(project)
+                rel_path = _claim_path(
+                    f"{safe_project}/{doc_type}/{safe_name}", obj_id[:8]
+                )
 
                 id_to_filename[obj_id] = rel_path
                 doc_cache.append((obj_id, rel_path, full))
 
             # Pass 2: render markdown with relationships and write files.
-            exported = 0
+            doc_files = 0
             for obj_id, rel_path, full in doc_cache:
                 title = full.get("title", obj_id[:8])
 
@@ -578,7 +717,7 @@ def create_dashboard(
                 # Strip old ## Related sections from content (legacy imports)
                 # to avoid duplicate sections and broken wiki-links.
                 content = full.get("content", "")
-                content = _re.split(r"\n## Related\b", content)[0].rstrip()
+                content = re.split(r"\n## Related\b", content)[0].rstrip()
 
                 # Avoid duplicate title heading
                 if not content.lstrip().startswith("# "):
@@ -617,7 +756,7 @@ def create_dashboard(
                 filepath = target / f"{rel_path}.md"
                 filepath.parent.mkdir(parents=True, exist_ok=True)
                 filepath.write_text(md, encoding="utf-8")
-                exported += 1
+                doc_files += 1
 
             # Pass 3: generate project index/hub files.
             projects: dict[str, list[tuple[str, str, str]]] = {}
@@ -628,6 +767,7 @@ def create_dashboard(
                         (full.get("title", ""), rel_path, full.get("type", ""))
                     )
 
+            hub_files = 0
             for proj_name, docs in projects.items():
                 by_type: dict[str, list[tuple[str, str]]] = {}
                 for doc_title, doc_path, dtype in docs:
@@ -648,13 +788,28 @@ def create_dashboard(
                         hub_md += f"- [[{doc_path}|{doc_title}]]\n"
                     hub_md += "\n"
 
-                safe_proj = _sanitize_filename(proj_name, proj_name)
-                hub_path = target / safe_proj / f"{safe_proj}.md"
+                # Reuse the project's (already de-collided) folder name, so
+                # 'Cortex' and 'cortex' hubs land in distinct files even on
+                # case-insensitive filesystems.
+                safe_proj = _project_dir(proj_name)
+                hub_rel = _claim_path(f"{safe_proj}/{safe_proj}", "")
+                hub_path = target / f"{hub_rel}.md"
                 hub_path.parent.mkdir(parents=True, exist_ok=True)
                 hub_path.write_text(hub_md, encoding="utf-8")
-                exported += 1
+                hub_files += 1
 
-            msg = f"Exported {exported} documents to {target}"
+            # Honest accounting: every counted file is a distinct path on
+            # disk (paths are pre-de-collided), docs and hubs are reported
+            # separately, and resolved collisions are surfaced.
+            msg = (
+                f"Exported {doc_files} documents and {hub_files} project "
+                f"indexes to {target}"
+            )
+            skipped = len(all_docs) - len(doc_cache)
+            if skipped:
+                msg += f" ({skipped} unreadable skipped)"
+            if collisions:
+                msg += f" ({collisions} filename collisions resolved)"
             return RedirectResponse(
                 f"/settings?msg={msg}&msg_type=info", status_code=302,
             )
@@ -679,9 +834,7 @@ def create_dashboard(
 
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                from pathlib import Path as _Path
-
-                archive_path = create_backup(config, output=_Path(tmp_dir))
+                archive_path = create_backup(config, output=Path(tmp_dir))
                 content = archive_path.read_bytes()
                 filename = archive_path.name
 
@@ -940,9 +1093,33 @@ def create_dashboard(
         if session is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
-        body = await request.json()
-        obj_id = body.get("obj_id", "")
-        relevant = body.get("relevant", True)
+        # The HTMX feedback buttons (documents.html) post
+        # application/x-www-form-urlencoded — HTMX 2.x's default encoding.
+        # Parsing JSON unconditionally made every feedback click 500
+        # (JSONDecodeError), silently losing the relevance signal. Branch on
+        # Content-Type so both the form posts and JSON API callers work.
+        content_type = request.headers.get("content-type", "")
+        if content_type.strip().lower().startswith("application/json"):
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+            obj_id = str(body.get("obj_id", "") or "")
+            relevant_raw: Any = body.get("relevant", True)
+        else:
+            form = await request.form()
+            obj_id = str(form.get("obj_id", "") or "")
+            relevant_raw = form.get("relevant", "true")
+
+        if isinstance(relevant_raw, bool):
+            relevant = relevant_raw
+        else:
+            # bool("false") is True — parse the form string explicitly.
+            relevant = str(relevant_raw).strip().lower() not in {"false", "0", "no", ""}
+
+        if not obj_id:
+            return JSONResponse({"error": "obj_id is required"}, status_code=400)
+
         result = await mcp_client.feedback(obj_id, relevant)
         return JSONResponse(result)
 

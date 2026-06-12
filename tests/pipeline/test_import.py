@@ -349,6 +349,123 @@ class TestContentOnlyDedup:
 
 
 # ---------------------------------------------------------------------------
+# Retry-Safety (dedup hash recorded only after successful create)
+# ---------------------------------------------------------------------------
+
+
+class TestRetrySafety:
+    """A failed import must stay retryable, not be skipped forever."""
+
+    def test_v1_failed_create_is_retryable(self, store, tmp_path, monkeypatch):
+        """If create() raises on the first run, a re-run imports the doc."""
+        db_path = tmp_path / "v1.db"
+        _create_v1_db(db_path)
+
+        importer = CortexV1Importer(store)
+
+        real_create = store.create
+        calls = {"n": 0}
+
+        def flaky_create(*args, **kwargs):
+            calls["n"] += 1
+            # Fail every create on the first run (2 docs).
+            if calls["n"] <= 2:
+                raise RuntimeError("simulated dual-write failure")
+            return real_create(*args, **kwargs)
+
+        monkeypatch.setattr(store, "create", flaky_create)
+
+        first = importer.run(db_path)
+        assert first["imported"] == 0
+        assert first["failed"] == 2
+        # Crucially: nothing was recorded as a duplicate.
+        assert first["skipped"] == 0
+
+        # Retry — creates now succeed and the docs are NOT skipped-as-duplicate.
+        second = importer.run(db_path)
+        assert second["imported"] == 2
+        assert second["skipped"] == 0
+
+        titles = {d["title"] for d in store.content.list_documents(limit=100)}
+        assert "Test Fix" in titles
+        assert "A Decision" in titles
+
+    def test_obsidian_failed_create_is_retryable(self, store, tmp_path, monkeypatch):
+        """If create() raises on the first run, a re-run imports the file."""
+        vault = tmp_path / "vault_retry"
+        vault.mkdir()
+        _create_vault_file(
+            vault,
+            "flaky.md",
+            {"title": "Flaky", "type": "idea"},
+            "Body that should survive a transient failure",
+        )
+
+        importer = ObsidianImporter(store)
+
+        real_create = store.create
+        calls = {"n": 0}
+
+        def flaky_create(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("simulated dual-write failure")
+            return real_create(*args, **kwargs)
+
+        monkeypatch.setattr(store, "create", flaky_create)
+
+        first = importer.run(vault)
+        assert first["imported"] == 0
+        assert first["failed"] == 1
+        assert first["skipped"] == 0
+
+        second = importer.run(vault)
+        assert second["imported"] == 1
+        assert second["skipped"] == 0
+
+        docs = store.content.list_documents(limit=10)
+        assert len(docs) == 1
+
+
+# ---------------------------------------------------------------------------
+# Same-Stem Files Across Folders
+# ---------------------------------------------------------------------------
+
+
+class TestSameStemFiles:
+    """Distinct files sharing a filename stem across folders must all import."""
+
+    def test_two_same_stem_files_in_different_folders_both_import(self, store, tmp_path):
+        vault = tmp_path / "vault_stem"
+        (vault / "projectA").mkdir(parents=True)
+        (vault / "projectB").mkdir(parents=True)
+        # Same stem ("notes"), different folders, DIFFERENT content.
+        _create_vault_file(
+            vault / "projectA",
+            "notes.md",
+            {"type": "idea"},
+            "Project A specific notes content",
+        )
+        _create_vault_file(
+            vault / "projectB",
+            "notes.md",
+            {"type": "idea"},
+            "Project B has entirely different notes",
+        )
+
+        result = ObsidianImporter(store).run(vault)
+
+        assert result["status"] == "ok"
+        assert result["imported"] == 2
+        assert result["skipped"] == 0
+
+        docs = store.content.list_documents(limit=10)
+        bodies = {d["content"] for d in docs}
+        assert any("Project A" in b for b in bodies)
+        assert any("Project B" in b for b in bodies)
+
+
+# ---------------------------------------------------------------------------
 # Frontmatter Preservation
 # ---------------------------------------------------------------------------
 

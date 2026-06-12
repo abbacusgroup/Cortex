@@ -40,20 +40,16 @@ class EnrichStage:
         # Compute staleness
         staleness = self._compute_staleness(obj_id, relationships)
 
-        # Update the object
+        # Update the object through the single dual-write path (tier is
+        # mirrored to the graph; pipeline_stage is SQLite-only).
         updates: dict[str, Any] = {
             "tier": tier,
             "pipeline_stage": "enriched",
         }
         try:
-            self.store.content.update(obj_id, **updates)
+            self.store.update(obj_id, **updates)
         except Exception as e:
-            logger.warning("Content update failed during enrichment for %s: %s", obj_id, e)
-
-        try:
-            self.store.graph.update_object(obj_id, tier=tier)
-        except Exception as e:
-            logger.warning("Graph tier update failed during enrichment for %s: %s", obj_id, e)
+            logger.warning("Store update failed during enrichment for %s: %s", obj_id, e)
 
         return {
             "status": "enriched",
@@ -104,25 +100,17 @@ class EnrichStage:
     def promote_to_reflex(self, obj_id: str) -> bool:
         """Explicitly promote an object to the reflex tier."""
         try:
-            self.store.content.update(obj_id, tier="reflex")
+            self.store.update(obj_id, tier="reflex")
         except Exception as e:
-            logger.warning("Failed to promote %s to reflex in content store: %s", obj_id, e)
+            logger.warning("Failed to promote %s to reflex: %s", obj_id, e)
             return False
-        try:
-            self.store.graph.update_object(obj_id, tier="reflex")
-        except Exception as e:
-            logger.warning("Failed to promote %s to reflex in graph store: %s", obj_id, e)
         return True
 
     def demote_from_reflex(self, obj_id: str) -> bool:
         """Demote an object from reflex back to recall."""
         try:
-            self.store.content.update(obj_id, tier="recall")
+            self.store.update(obj_id, tier="recall")
         except Exception as e:
-            logger.warning("Failed to demote %s from reflex in content store: %s", obj_id, e)
+            logger.warning("Failed to demote %s from reflex: %s", obj_id, e)
             return False
-        try:
-            self.store.graph.update_object(obj_id, tier="recall")
-        except Exception as e:
-            logger.warning("Failed to demote %s from reflex in graph store: %s", obj_id, e)
         return True

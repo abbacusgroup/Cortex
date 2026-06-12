@@ -23,10 +23,6 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from cortex.core.errors import CortexError
-from cortex.core.logging import get_logger
-
-logger = get_logger("dashboard.mcp_client")
-
 
 # ─── Typed exceptions ──────────────────────────────────────────────────────
 
@@ -212,7 +208,7 @@ def _unwrap_call_tool_result(name: str, result: Any) -> Any:
 class CortexMCPClient:
     """Thin async client for Cortex's MCP HTTP server.
 
-    Each public method opens a fresh ``streamablehttp_client`` session, calls
+    Each public method opens a fresh ``streamable_http_client`` session, calls
     one tool, and returns the unwrapped result. Sessions are NOT pooled —
     they're cheap enough for a local dashboard and pooling would complicate
     cancellation and reconnection semantics.
@@ -220,7 +216,6 @@ class CortexMCPClient:
 
     def __init__(self, url: str, *, timeout_seconds: float = 10.0):
         self.url = url
-        self.timeout = timedelta(seconds=timeout_seconds)
         self._timeout_seconds = timeout_seconds
 
     async def _call(
@@ -350,8 +345,13 @@ class CortexMCPClient:
             {"query": query, "doc_type": doc_type, "project": project, "limit": limit},
         )
 
-    async def context(self, topic: str, limit: int = 10) -> list[dict[str, Any]]:
-        return await self._call("cortex_context", {"topic": topic, "limit": limit})
+    async def context(
+        self, topic: str, limit: int = 10, min_relevance: float = 0.0
+    ) -> list[dict[str, Any]]:
+        return await self._call(
+            "cortex_context",
+            {"topic": topic, "limit": limit, "min_relevance": min_relevance},
+        )
 
     async def dossier(self, topic: str) -> dict[str, Any]:
         return await self._call("cortex_dossier", {"topic": topic})
@@ -462,12 +462,22 @@ class CortexMCPClient:
         )
 
     async def list_objects(
-        self, doc_type: str = "", project: str = "", limit: int = 50
+        self,
+        doc_type: str = "",
+        project: str = "",
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        return await self._call(
-            "cortex_list",
-            {"doc_type": doc_type, "project": project, "limit": limit},
-        )
+        args: dict[str, Any] = {
+            "doc_type": doc_type,
+            "project": project,
+            "limit": limit,
+        }
+        # Only sent when paginating, so requests to older servers whose
+        # cortex_list predates the offset parameter stay wire-compatible.
+        if offset:
+            args["offset"] = offset
+        return await self._call("cortex_list", args)
 
     async def graph(self, obj_id: str = "", entity: str = "") -> dict[str, Any]:
         return await self._call("cortex_graph", {"obj_id": obj_id, "entity": entity})

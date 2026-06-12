@@ -37,11 +37,19 @@ from cortex.ontology.namespaces import (
     RDF_TYPE,
     RELATIONSHIP_MAP,
     SPARQL_PREFIXES,
+    XSD,
     cortex_iri,
+    rdf_iri,
 )
 from cortex.ontology.resolver import find_ontology
 
 logger = get_logger("db.graph")
+
+# Standard RDF reification predicates, used to attach provenance (confidence,
+# inferring agent) to relationship edges without altering the direct edge triple.
+RDF_SUBJECT = rdf_iri("subject")
+RDF_PREDICATE = rdf_iri("predicate")
+RDF_OBJECT = rdf_iri("object")
 
 # Maximum content size (10 MB)
 MAX_CONTENT_SIZE = 10 * 1024 * 1024
@@ -456,7 +464,8 @@ class GraphStore:
             ontology_path: Path to cortex.ttl. If None, uses the bundled ontology.
 
         Returns:
-            Number of triples loaded.
+            Number of new triples loaded (delta from before), 0 if the
+            ontology was already present.
 
         Raises:
             OntologyError: If the ontology file cannot be parsed.
@@ -484,7 +493,10 @@ class GraphStore:
 
         loaded = len(self._store) - before
         self._ontology_loaded = True
-        logger.info("Ontology loaded: %d triples", loaded)
+        if loaded == 0:
+            logger.info("Ontology already present (0 new triples)")
+        else:
+            logger.info("Ontology loaded: %d new triples", loaded)
         return loaded
 
     @property
@@ -627,6 +639,11 @@ class GraphStore:
     def update_object(self, obj_id: str, **updates: str) -> bool:
         """Update properties of a knowledge object.
 
+        The key ``type`` is special-cased: instead of writing a literal
+        ``cortex:type`` triple it rewrites the object's ``rdf:type`` class
+        assertion (removing the old class, adding the new one), so a
+        reclassification actually changes the object's class in the graph.
+
         Args:
             obj_id: Object ID.
             **updates: Property name → new value pairs.
@@ -636,6 +653,7 @@ class GraphStore:
 
         Raises:
             NotFoundError: If object doesn't exist.
+            ValidationError: If ``type`` is given but isn't a valid knowledge type.
         """
         subject = cortex_iri(f"obj/{obj_id}")
 
@@ -646,6 +664,11 @@ class GraphStore:
                 f"Object not found: {obj_id}",
                 context={"id": obj_id},
             )
+
+        updates = dict(updates)
+        new_type = updates.pop("type", None)
+        if new_type is not None:
+            self._set_object_class(subject, new_type)
 
         for key, value in updates.items():
             pred = cortex_iri(key)
@@ -658,6 +681,34 @@ class GraphStore:
                 self._store.add(ox.Quad(subject, pred, ox.Literal(value)))
 
         return True
+
+    def _set_object_class(self, subject: ox.NamedNode, new_type: str) -> None:
+        """Rewrite the ``rdf:type`` class assertion for a knowledge object.
+
+        Removes the existing specific class triple (keeping the
+        ``cortex:KnowledgeObject`` base-class assertion) and adds the new
+        class. Also removes any stray literal ``cortex:type`` triples left
+        behind by the historical Store.update key-mapping bug, so they can't
+        shadow the real class assertion.
+
+        Raises:
+            ValidationError: If ``new_type`` is not a valid knowledge type.
+        """
+        if new_type not in CLASS_MAP:
+            raise ValidationError(
+                f"Invalid knowledge type: {new_type}",
+                context={"type": new_type, "valid_types": sorted(CLASS_MAP.keys())},
+            )
+
+        # Remove existing specific class assertion(s); keep the base class.
+        for quad in list(self._store.quads_for_pattern(subject, RDF_TYPE, None)):
+            if quad.object != KNOWLEDGE_OBJECT_CLASS:
+                self._store.remove(quad)
+        self._store.add(ox.Quad(subject, RDF_TYPE, CLASS_MAP[new_type]))
+
+        # Hygiene: drop literal cortex:type triples written by the old bug.
+        for quad in list(self._store.quads_for_pattern(subject, cortex_iri("type"), None)):
+            self._store.remove(quad)
 
     def delete_object(self, obj_id: str) -> bool:
         """Delete a knowledge object and all its triples (including relationships TO it).
@@ -795,8 +846,92 @@ class GraphStore:
         if existing:
             return True
 
+        # The direct edge triple is kept as-is so every existing reader
+        # (get_relationships, reasoner CONSTRUCT closure) works unchanged.
         self._store.add(ox.Quad(subject, predicate, obj))
+
+        # Provenance is persisted additively via standard RDF reification: a
+        # statement node describing this edge carries confidence and, for
+        # machine-inferred edges, the inferring agent. Readers that don't ask
+        # for provenance simply never see these triples.
+        if inferred_by or confidence != 1.0:
+            self._add_relationship_provenance(
+                subject, predicate, obj, confidence=confidence, inferred_by=inferred_by
+            )
         return True
+
+    def _add_relationship_provenance(
+        self,
+        subject: ox.NamedNode,
+        predicate: ox.NamedNode,
+        obj: ox.NamedNode,
+        *,
+        confidence: float,
+        inferred_by: str,
+    ) -> None:
+        """Attach confidence/provenance to an edge via an RDF reification node.
+
+        Additive only: the direct edge triple is untouched, so existing
+        queries are unaffected while LLM-inferred edges become distinguishable
+        and their confidence queryable.
+        """
+        stmt = cortex_iri(f"rel/{uuid4()}")
+        float_dt = ox.NamedNode(f"{XSD}float")
+        self._store.add(ox.Quad(stmt, RDF_TYPE, cortex_iri("InferredStatement")))
+        self._store.add(ox.Quad(stmt, RDF_SUBJECT, subject))
+        self._store.add(ox.Quad(stmt, RDF_PREDICATE, predicate))
+        self._store.add(ox.Quad(stmt, RDF_OBJECT, obj))
+        self._store.add(
+            ox.Quad(
+                stmt,
+                cortex_iri("confidence"),
+                ox.Literal(str(confidence), datatype=float_dt),
+            )
+        )
+        if inferred_by:
+            self._store.add(
+                ox.Quad(stmt, cortex_iri("inferredBy"), ox.Literal(inferred_by))
+            )
+
+    def get_relationship_provenance(
+        self, *, from_id: str, rel_type: str, to_id: str
+    ) -> dict[str, Any] | None:
+        """Return provenance (confidence, inferred_by) for an edge, if recorded.
+
+        Returns None for edges written without provenance (e.g. user-asserted
+        edges at default confidence), which lets callers distinguish a
+        machine-inferred edge from a hand-asserted one.
+        """
+        if rel_type not in RELATIONSHIP_MAP:
+            return None
+
+        subject = cortex_iri(f"obj/{from_id}")
+        predicate = RELATIONSHIP_MAP[rel_type]
+        obj = cortex_iri(f"obj/{to_id}")
+
+        # Find the reification node(s) describing this exact edge.
+        for quad in self._store.quads_for_pattern(None, RDF_SUBJECT, subject):
+            stmt = quad.subject
+            preds = list(self._store.quads_for_pattern(stmt, RDF_PREDICATE, predicate))
+            objs = list(self._store.quads_for_pattern(stmt, RDF_OBJECT, obj))
+            if not preds or not objs:
+                continue
+
+            result: dict[str, Any] = {}
+            conf_quads = list(
+                self._store.quads_for_pattern(stmt, cortex_iri("confidence"), None)
+            )
+            if conf_quads:
+                with contextlib.suppress(ValueError):
+                    result["confidence"] = float(conf_quads[0].object.value)
+            by_quads = list(
+                self._store.quads_for_pattern(stmt, cortex_iri("inferredBy"), None)
+            )
+            if by_quads:
+                result["inferred_by"] = by_quads[0].object.value
+            return result
+
+        return None
 
     def delete_entity(self, entity_id: str) -> bool:
         """Delete an entity and all mention triples pointing to it.
@@ -833,6 +968,17 @@ class GraphStore:
         quads = list(self._store.quads_for_pattern(subject, predicate, obj))
         for quad in quads:
             self._store.remove(quad)
+
+        # Remove any provenance reification node describing this edge so it
+        # doesn't orphan once the direct edge is gone.
+        for q in list(self._store.quads_for_pattern(None, RDF_SUBJECT, subject)):
+            stmt = q.subject
+            if list(
+                self._store.quads_for_pattern(stmt, RDF_PREDICATE, predicate)
+            ) and list(self._store.quads_for_pattern(stmt, RDF_OBJECT, obj)):
+                for sq in list(self._store.quads_for_pattern(stmt, None, None)):
+                    self._store.remove(sq)
+
         return len(quads) > 0
 
     def get_relationships(self, obj_id: str) -> list[dict[str, str]]:
@@ -953,9 +1099,23 @@ class GraphStore:
         return ids
 
     def list_entities(self, entity_type: str | None = None) -> list[dict[str, str]]:
-        """List all entities, optionally filtered by type."""
+        """List all entities, optionally filtered by type.
+
+        Raises:
+            ValidationError: If ``entity_type`` is given but isn't a valid
+                entity type. (Previously unknown types were silently ignored
+                and the full entity list was returned.)
+        """
         type_filter = ""
-        if entity_type and entity_type in ENTITY_CLASS_MAP:
+        if entity_type:
+            if entity_type not in ENTITY_CLASS_MAP:
+                raise ValidationError(
+                    f"Invalid entity type: {entity_type}",
+                    context={
+                        "type": entity_type,
+                        "valid_types": sorted(ENTITY_CLASS_MAP),
+                    },
+                )
             type_filter = f"?s a cortex:{entity_type.capitalize()} ."
 
         query = f"""

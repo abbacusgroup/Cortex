@@ -27,7 +27,9 @@ def write_env(path: Path, updates: dict[str, str]) -> None:
     - Existing KEY=VALUE lines are updated in place if KEY is in *updates*.
     - New keys are appended at the end.
     - Comments, blank lines, and unrecognised keys are preserved verbatim.
-    - Write is atomic: .env.tmp -> rename -> chmod 0o600.
+    - Write is atomic: contents are written to a sibling temp file
+      (``path.with_suffix(".env.tmp")``), which is then chmod'd to 0o600
+      and atomically renamed over *path*.
     """
     if not updates:
         return

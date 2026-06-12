@@ -1,6 +1,7 @@
 """Cortex CLI — Typer application.
 
-Commands: init, capture, search, read, list, status, context, dossier, graph, synthesize, entities.
+Defines the full command surface for capturing, querying, and managing the
+knowledge store. Run ``cortex --help`` for the authoritative command list.
 """
 
 from __future__ import annotations
@@ -13,11 +14,12 @@ from typing import Any
 import typer
 
 from cortex.cli._helpers import open_store_or_exit, register_with_claude_code
-from cortex.core.config import CortexConfig, load_config
+from cortex.core.config import load_config
 from cortex.core.constants import KNOWLEDGE_TYPES
-from cortex.core.errors import StoreLockedError
+from cortex.core.errors import StoreLockedError, ValidationError
 from cortex.core.logging import setup_logging
 from cortex.db.store import Store
+from cortex.ontology.namespaces import ENTITY_CLASS_MAP
 from cortex.ontology.resolver import find_ontology
 from cortex.pipeline.orchestrator import PipelineOrchestrator
 from cortex.retrieval.learner import LearningLoop
@@ -203,13 +205,13 @@ def _probe_mcp_lazy() -> None:
     In ``--direct`` mode this function is never called.
 
     Bundle 9 / D.2 fix: the probe uses a dedicated short-timeout client
-    (3s) via ``_get_probe_client`` instead of the singleton (10s). The
+    (10s) via ``_get_probe_client`` instead of the singleton (30s). The
     singleton's wider timeout is needed for slow tools like
     ``cortex_search`` and ``cortex_capture``, but a *probe* just needs to
     know whether the server is alive — and against a hung server, every
     extra second of timeout is felt by the user. Before this change,
-    ``cortex list`` against a SIGSTOP'd server waited ~10s before
-    erroring; now it's ~3s.
+    ``cortex list`` against a SIGSTOP'd server waited ~30s before
+    erroring; now it's ~10s.
     """
     global _mcp_probe_done
     if _mcp_probe_done:
@@ -355,20 +357,68 @@ def _get_learner() -> LearningLoop:
     return _learner
 
 
-def _warmup_embeddings(config: CortexConfig) -> None:
-    """Warm up the configured embedding provider."""
-    from cortex.services.embeddings import create_embedding_provider
+# Canonical UUID4 string length — anything shorter is treated as a short-id
+# prefix for hint purposes.
+_FULL_ID_LENGTH = 36
 
-    provider = create_embedding_provider(config)
-    if provider is None:
-        typer.echo("  Embeddings: not available (check provider config)")
-        return
 
-    typer.echo(f"  Embeddings: loading {config.embedding_provider}/{provider.model_name}...")
-    if provider.warmup():
-        typer.echo(f"  Embeddings: {provider.model_name} ready")
-    else:
-        typer.echo("  Embeddings: warm-up failed — will retry on first use")
+def _resolve_id_or_exit(store: Store, obj_id: str) -> str:
+    """Resolve a short-id prefix to its full id, exiting cleanly when ambiguous.
+
+    The CLI displays 8-char short ids everywhere (list/search/graph), so the
+    commands that take an id accept those prefixes too. Unique prefixes
+    resolve to the full id; ids that match nothing pass through unchanged so
+    each command's existing not-found error fires; ambiguous prefixes exit 1
+    with the candidate ids.
+    """
+    try:
+        return store.resolve_id(obj_id)
+    except ValidationError as e:
+        typer.secho(
+            f"Ambiguous id prefix '{obj_id}'. Matches:",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        for cand in e.context.get("candidates", []):
+            typer.echo(f"  {cand}", err=True)
+        typer.echo("Add more characters or use the full id.", err=True)
+        raise typer.Exit(1) from e
+
+
+def _short_id_hint(obj_id: str) -> str | None:
+    """Hint shown when an MCP-routed command can't find a short-looking id.
+
+    Servers from 0.4.1 on resolve short-id prefixes themselves; a not-found
+    for a short id therefore usually means the object is gone — but against
+    an older (pre-0.4.1) server it can also mean the prefix was never
+    resolved, which deserves an explanation instead of a bare error.
+    """
+    if 0 < len(obj_id) < _FULL_ID_LENGTH:
+        return (
+            f"'{obj_id}' looks like a short id. If your Cortex server "
+            "predates 0.4.1 it does not resolve short ids — pass the full id "
+            "(find it with `cortex search` or `cortex list`) or upgrade the "
+            "server."
+        )
+    return None
+
+
+def _exit_if_ambiguous(result: object) -> None:
+    """Exit with the candidate list when an MCP tool reports an ambiguous id.
+
+    Servers from 0.4.1 on return ``{"status": "ambiguous", "candidates":
+    [...]}`` when a short-id prefix matches several documents — mirror the
+    direct path's error output.
+    """
+    if isinstance(result, dict) and result.get("status") == "ambiguous":
+        typer.echo(
+            f"Ambiguous id prefix '{result.get('obj_id', '')}'. Matches:",
+            err=True,
+        )
+        for cand in result.get("candidates", []):
+            typer.echo(f"  {cand}", err=True)
+        typer.echo("Add more characters or use the full id.", err=True)
+        raise typer.Exit(1)
 
 
 @app.command(hidden=True)
@@ -476,13 +526,18 @@ def read(
     """Read a knowledge object in full."""
     if _use_mcp():
         doc = _mcp_call_or_exit(lambda: _get_mcp_client().read(obj_id))
+        _exit_if_ambiguous(doc)
         # cortex_read returns a string "Not found: {id}" when missing
         if isinstance(doc, str) or doc is None:
             typer.echo(f"Not found: {obj_id}", err=True)
+            hint = _short_id_hint(obj_id)
+            if hint:
+                typer.echo(f"  Hint: {hint}", err=True)
             raise typer.Exit(1)
         # Access tracking is done server-side inside cortex_read
     else:
         store = _get_store()
+        obj_id = _resolve_id_or_exit(store, obj_id)
         doc = store.read(obj_id)
         if doc is None:
             typer.echo(f"Not found: {obj_id}", err=True)
@@ -568,17 +623,26 @@ def status() -> None:
 def context(
     topic: str = typer.Argument(..., help="Topic to get context for"),
     limit: int = typer.Option(10, "--limit", "-n", help="Max results"),
+    min_relevance: float = typer.Option(
+        0.0,
+        "--min-relevance",
+        help="Drop results below this combined score (0.0 = off; try 0.15 to stay on-topic)",
+    ),
 ) -> None:
     """Get a briefing (summaries only) for a topic."""
     if _use_mcp():
-        briefs = _mcp_call_or_exit(lambda: _get_mcp_client().context(topic=topic, limit=limit))
+        briefs = _mcp_call_or_exit(
+            lambda: _get_mcp_client().context(
+                topic=topic, limit=limit, min_relevance=min_relevance
+            )
+        )
     else:
         store = _get_store()
         from cortex.retrieval.engine import RetrievalEngine
         from cortex.retrieval.presenters import BriefingPresenter
 
         engine = RetrievalEngine(store)
-        results = engine.search(topic, limit=limit)
+        results = engine.search(topic, limit=limit, min_relevance=min_relevance or None)
         briefs = BriefingPresenter().render(results) if results else []
 
     if not briefs:
@@ -645,11 +709,25 @@ def graph(
     """Show an object's relationships and graph neighborhood."""
     if _use_mcp():
         result = _mcp_call_or_exit(lambda: _get_mcp_client().graph(obj_id=obj_id))
+        _exit_if_ambiguous(result)
         chain = result.get("causal_chain", [])
         timeline = result.get("evolution", [])
         rels = result.get("relationships", [])
+        # cortex_graph has no dedicated existence signal, but an existing
+        # object always appears in its own causal chain and evolution
+        # timeline — all-empty therefore means the object doesn't exist.
+        if not chain and not timeline and not rels:
+            typer.echo(f"Not found: {obj_id}", err=True)
+            hint = _short_id_hint(obj_id)
+            if hint:
+                typer.echo(f"  Hint: {hint}", err=True)
+            raise typer.Exit(1)
     else:
         store = _get_store()
+        obj_id = _resolve_id_or_exit(store, obj_id)
+        if not store.exists(obj_id):
+            typer.echo(f"Not found: {obj_id}", err=True)
+            raise typer.Exit(1)
         from cortex.retrieval.graph import GraphQueries
 
         gq = GraphQueries(store)
@@ -728,23 +806,42 @@ def entities(
     project: str | None = typer.Option(None, "--project", "-p", help="Filter by project"),
 ) -> None:
     """List resolved entities in the knowledge graph."""
-    if _use_mcp() and not project:
+    if entity_type:
+        # Validate up front so a typo'd type errors clearly on both routes
+        # instead of silently returning the full entity list.
+        entity_type = entity_type.lower()
+        if entity_type not in ENTITY_CLASS_MAP:
+            typer.echo(
+                f"Error: Invalid entity type '{entity_type}'. "
+                f"Valid types: {', '.join(sorted(ENTITY_CLASS_MAP))}",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+    if project:
+        # project_overview reaches into the graph store directly — keep it on
+        # the direct path. The MCP server has no project-overview tool today.
+        # Guard before any MCP probe so --project never fails on server state.
+        if not _direct_mode:
+            typer.secho(
+                "--project requires --direct (no MCP tool for project overview yet).",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        store = _get_store()
+        from cortex.retrieval.graph import GraphQueries
+
+        gq = GraphQueries(store)
+        overview = gq.project_overview(project)
+        ents = overview.get("entities", [])
+    elif _use_mcp():
         # MCP path: simple type-filtered listing.
         ents = _mcp_call_or_exit(
             lambda: _get_mcp_client().list_entities(entity_type=entity_type or "")
         )
     else:
-        # Direct path used either when --direct OR when --project is set
-        # (project_overview is direct-only — no MCP tool yet for that path).
-        store = _get_store()
-        if project:
-            from cortex.retrieval.graph import GraphQueries
-
-            gq = GraphQueries(store)
-            overview = gq.project_overview(project)
-            ents = overview.get("entities", [])
-        else:
-            ents = store.list_entities(entity_type=entity_type)
+        ents = _get_store().list_entities(entity_type=entity_type)
 
     if not ents:
         typer.echo("No entities found.")
@@ -804,11 +901,27 @@ def register(
     typer.echo("  Restart Claude Code to activate.")
 
 
+# Valid values for `cortex install/uninstall --service`. Unknown values were
+# previously forwarded verbatim and silently treated as the dashboard service.
+_VALID_SERVICES = frozenset({"mcp", "dashboard", "all"})
+
+
+def _validate_service_or_exit(service: str) -> None:
+    if service not in _VALID_SERVICES:
+        typer.echo(
+            f"Error: Invalid service '{service}'. "
+            f"Valid services: {', '.join(sorted(_VALID_SERVICES))}",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+
 @app.command()
 def install(
     service: str = typer.Option("all", "--service", help="mcp, dashboard, or all"),
 ) -> None:
     """Install Cortex as a background service (auto-start on login)."""
+    _validate_service_or_exit(service)
     from cortex.cli.install import do_install
 
     config = load_config()
@@ -820,6 +933,7 @@ def uninstall(
     service: str = typer.Option("all", "--service", help="mcp, dashboard, or all"),
 ) -> None:
     """Remove Cortex background services."""
+    _validate_service_or_exit(service)
     from cortex.cli.install import do_uninstall
 
     config = load_config()
@@ -1401,11 +1515,16 @@ def run_pipeline_cmd(
 
     if _use_mcp():
         result = _mcp_call_or_exit(lambda: _get_mcp_client().pipeline(obj_id=obj_id))
+        _exit_if_ambiguous(result)
         if "error" in result:
             typer.echo(result["error"], err=True)
+            hint = _short_id_hint(obj_id)
+            if hint:
+                typer.echo(f"  Hint: {hint}", err=True)
             raise typer.Exit(1)
     else:
         store = _get_store()
+        obj_id = _resolve_id_or_exit(store, obj_id)
         doc = store.read(obj_id)
         if doc is None:
             typer.echo(f"Not found: {obj_id}", err=True)

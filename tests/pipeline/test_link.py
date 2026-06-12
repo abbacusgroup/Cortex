@@ -159,3 +159,90 @@ class TestPipelineStage:
         obj_id = _create_obj(store)
         result = linker.run(obj_id, [])
         assert result["status"] == "linked"
+
+
+# -- Relationship discovery (with a fake LLM) -------------------------------
+
+
+class _FakeLLM:
+    """Stand-in LLMClient returning a scripted relationship list."""
+
+    available = True
+
+    def __init__(self, rels):
+        self._rels = rels
+        self.captured: dict = {}
+
+    def discover_relationships(self, *, new_id, new_title, new_type, new_content, existing):
+        self.captured = {"new_id": new_id, "existing": existing}
+        return self._rels
+
+
+class TestRelationshipDiscovery:
+    def test_edge_to_new_object_survives_and_persists_provenance(self, store: Store):
+        """An LLM edge that references the new object's real ID must be created
+        (regression: it used to be dropped), with confidence + provenance."""
+        new_id = _create_obj(store, title="New thing")
+        other_id = _create_obj(store, title="Existing thing")
+
+        rels = [
+            {
+                "from_id": new_id,
+                "to_id": other_id,
+                "rel_type": "supports",
+                "confidence": 0.82,
+            }
+        ]
+        linker = LinkStage(store, _FakeLLM(rels))
+        result = linker.run(new_id, [])
+
+        assert result["relationships_created"] == 1
+
+        graph_rels = store.get_relationships(new_id)
+        assert any(
+            r["other_id"] == other_id and r["rel_type"] == "supports"
+            for r in graph_rels
+        )
+
+        prov = store.graph.get_relationship_provenance(
+            from_id=new_id, rel_type="supports", to_id=other_id
+        )
+        assert prov is not None
+        assert prov["inferred_by"] == "llm"
+        assert abs(prov["confidence"] - 0.82) < 1e-6
+
+    def test_edge_between_two_existing_objects_is_rejected(self, store: Store):
+        """An LLM edge touching neither endpoint of the new object must be
+        dropped — the LLM must not silently rewire unrelated documents."""
+        new_id = _create_obj(store, title="New thing")
+        a_id = _create_obj(store, title="A")
+        b_id = _create_obj(store, title="B")
+
+        rels = [
+            {
+                "from_id": a_id,
+                "to_id": b_id,
+                "rel_type": "supports",
+                "confidence": 0.9,
+            }
+        ]
+        linker = LinkStage(store, _FakeLLM(rels))
+        result = linker.run(new_id, [])
+
+        assert result["relationships_created"] == 0
+        # The bogus edge was never written.
+        assert store.get_relationships(a_id) == []
+
+    def test_edge_to_nonexistent_object_is_rejected(self, store: Store):
+        new_id = _create_obj(store, title="New thing")
+        rels = [
+            {
+                "from_id": new_id,
+                "to_id": "does-not-exist",
+                "rel_type": "supports",
+                "confidence": 0.9,
+            }
+        ]
+        linker = LinkStage(store, _FakeLLM(rels))
+        result = linker.run(new_id, [])
+        assert result["relationships_created"] == 0

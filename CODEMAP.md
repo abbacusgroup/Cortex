@@ -11,7 +11,7 @@ cortex/
 │   ├── core/
 │   │   ├── config.py            # Config loader (env + .env + defaults)
 │   │   ├── constants.py         # Global constants, type definitions
-│   │   ├── errors.py            # Error hierarchy (14 types)
+│   │   ├── errors.py            # Error hierarchy (16 types)
 │   │   └── logging.py           # JSON structured logging
 │   ├── ontology/
 │   │   └── namespaces.py        # RDF namespace helpers, IRI builders
@@ -37,17 +37,17 @@ cortex/
 │   ├── services/
 │   │   └── llm.py               # litellm wrapper, classification, relationship prompts
 │   ├── transport/
-│   │   ├── mcp/server.py        # MCP server (22 tools, stdio + HTTP)
+│   │   ├── mcp/server.py        # MCP server (26 tools, stdio + HTTP)
 │   │   └── api/server.py        # REST API (FastAPI, auth, rate limiting)
 │   ├── cli/
 │   │   └── main.py              # Typer CLI (23 commands + doctor subcommands)
 │   └── dashboard/
 │       ├── server.py            # Dashboard server (FastAPI + Jinja2)
-│       ├── templates/           # 11 HTML templates
+│       ├── templates/           # 15 HTML templates
 │       └── static/              # CSS + JS (Cytoscape.js)
 ├── ontology/
 │   └── cortex.ttl               # OWL ontology (304 triples)
-├── tests/                       # ~993 tests mirroring src/ structure
+├── tests/                       # ~1278 tests mirroring src/ structure
 ├── pyproject.toml
 ├── Dockerfile
 ├── docker-compose.yml

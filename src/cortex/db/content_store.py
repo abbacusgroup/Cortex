@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cortex.core.errors import NotFoundError, StoreError
+from cortex.core.errors import NotFoundError, StoreError, ValidationError
 from cortex.core.logging import get_logger
 
 logger = get_logger("db.content")
@@ -146,6 +146,9 @@ class ContentStore:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
+        # Wait up to 5s for a lock instead of failing instantly, so concurrent
+        # writers (e.g. the importer or a checkpoint) don't raise immediately.
+        self._db.execute("PRAGMA busy_timeout=5000")
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -247,6 +250,52 @@ class ContentStore:
         if row is None:
             return None
         return dict(row)
+
+    def resolve_id_prefix(self, prefix: str) -> str | None:
+        """Resolve a short id prefix to the unique full document id.
+
+        The CLI displays 8-character short ids everywhere; this lets users
+        paste those short ids back into commands that take a full id.
+
+        Args:
+            prefix: Leading characters of a document id (e.g. ``a4074519``).
+
+        Returns:
+            The full id when exactly one document matches, or None when no
+            document matches (callers keep their existing not-found error).
+
+        Raises:
+            ValidationError: If the prefix matches more than one document.
+                ``context["candidates"]`` carries the matching full ids
+                (capped at 10) so the error can list them.
+        """
+        if not prefix:
+            return None
+
+        # Escape LIKE wildcards so a literal prefix can't fan out into a
+        # pattern match (ids are normally hex UUIDs, but imported ids may
+        # contain arbitrary characters).
+        escaped = (
+            prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        rows = self._db.execute(
+            "SELECT id FROM documents WHERE id LIKE ? ESCAPE '\\' ORDER BY id LIMIT 11",
+            (f"{escaped}%",),
+        ).fetchall()
+
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return rows[0]["id"]
+
+        candidates = [r["id"] for r in rows[:10]]
+        suffix = ", …" if len(rows) > 10 else ""
+        raise ValidationError(
+            f"Ambiguous id prefix '{prefix}' — matches {len(rows)}"
+            f"{'+' if len(rows) > 10 else ''} documents: "
+            f"{', '.join(candidates)}{suffix}",
+            context={"prefix": prefix, "candidates": candidates},
+        )
 
     def update(self, doc_id: str, **updates: Any) -> bool:
         """Update document fields.
@@ -387,9 +436,23 @@ class ContentStore:
         """
         try:
             rows = self._db.execute(sql, params).fetchall()
-        except sqlite3.OperationalError:
-            # Malformed FTS query — return empty
-            return []
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            # Genuine FTS5 query-syntax errors mean "no valid matches" for this
+            # input — return empty (the search() contract). Anything else
+            # (corrupt/missing index, locked DB, disk I/O) is infrastructure
+            # failure that must not masquerade as "no results".
+            is_query_syntax = (
+                "fts5" in msg
+                or "syntax error" in msg
+                or "unterminated" in msg
+                or "malformed match" in msg
+            )
+            if is_query_syntax:
+                logger.warning("FTS search failed for query %r: %s", query, e)
+                return []
+            logger.error("FTS index error during search for query %r: %s", query, e)
+            raise StoreError(f"FTS search failed: {e}", cause=e) from e
 
         return [dict(r) for r in rows]
 
@@ -402,8 +465,11 @@ class ContentStore:
         tokens = query.strip().split()
         if not tokens:
             return ""
-        # Quote each token to prevent FTS5 syntax interpretation
-        return " ".join(f'"{t}"' for t in tokens)
+        # Quote each token to prevent FTS5 syntax interpretation. Embedded
+        # double quotes must be doubled ("") per FTS5 string rules, otherwise a
+        # token like foo"bar yields an unterminated string and the whole query
+        # errors out (e.g. inches notation 5'10", pasted quotes, code snippets).
+        return " ".join('"' + t.replace('"', '""') + '"' for t in tokens)
 
     # -------------------------------------------------------------------------
     # Embeddings

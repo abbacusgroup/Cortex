@@ -225,6 +225,145 @@ class TestStatus:
 
 
 # ---------------------------------------------------------------------------
+# Short-id prefixes (read / graph / pipeline accept the 8-char ids shown
+# by list/search)
+# ---------------------------------------------------------------------------
+
+
+def _seed_doc(tmp_path, doc_id: str, title: str = "Seeded") -> None:
+    """Insert a document with a controlled id directly into the content store."""
+    from cortex.db.content_store import ContentStore
+
+    cs = ContentStore(path=tmp_path / "cortex.db")
+    cs.insert(doc_id=doc_id, title=title, content="seeded body")
+    cs.close()
+
+
+class TestShortIdPrefixes:
+    def test_read_accepts_short_id_prefix(self):
+        cap = _capture_fix(title="Short Id Fix")
+        full_id = _extract_id(cap.output)
+
+        result = runner.invoke(app, ["read", full_id[:8]])
+        assert result.exit_code == 0
+        assert full_id in result.output
+        assert "Short Id Fix" in result.output
+
+    def test_read_full_uuid_unchanged(self):
+        cap = _capture_fix(title="Full Id Fix")
+        full_id = _extract_id(cap.output)
+
+        result = runner.invoke(app, ["read", full_id])
+        assert result.exit_code == 0
+        assert "Full Id Fix" in result.output
+
+    def test_read_unknown_prefix_still_not_found(self):
+        _capture_fix()
+        result = runner.invoke(app, ["read", "zzzzzzzz"])
+        assert result.exit_code == 1
+        assert "Not found" in result.output
+
+    def test_read_ambiguous_prefix_lists_candidates(self, tmp_path):
+        _seed_doc(tmp_path, "aaaa1111-0000-0000-0000-000000000000", title="One")
+        _seed_doc(tmp_path, "aaaa2222-0000-0000-0000-000000000000", title="Two")
+
+        result = runner.invoke(app, ["read", "aaaa"])
+        assert result.exit_code == 1
+        assert "Ambiguous" in result.output
+        assert "aaaa1111-0000-0000-0000-000000000000" in result.output
+        assert "aaaa2222-0000-0000-0000-000000000000" in result.output
+
+    def test_graph_accepts_short_id_prefix(self):
+        cap = _capture_fix(title="Graph Short Id Fix")
+        full_id = _extract_id(cap.output)
+
+        result = runner.invoke(app, ["graph", full_id[:8]])
+        assert result.exit_code == 0
+
+    def test_pipeline_accepts_short_id_prefix(self):
+        cap = _capture_fix(title="Pipeline Short Id Fix")
+        full_id = _extract_id(cap.output)
+
+        result = runner.invoke(app, ["pipeline", full_id[:8]])
+        assert result.exit_code == 0
+        # Output names the resolved full id, not the prefix
+        assert f"for {full_id[:12]}" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Validated inputs (graph existence, entities --type, install --service)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphExistenceCheck:
+    def test_graph_bogus_id_exits_1(self):
+        runner.invoke(app, ["init"])
+        result = runner.invoke(app, ["graph", "totally-bogus-id-12345"])
+        assert result.exit_code == 1
+        assert "Not found" in result.output
+
+    def test_graph_existing_object_without_relationships_exits_0(self):
+        cap = _capture_fix(title="Lonely Fix")
+        full_id = _extract_id(cap.output)
+
+        result = runner.invoke(app, ["graph", full_id])
+        assert result.exit_code == 0
+        assert "No relationships found." in result.output
+
+
+class TestEntitiesTypeValidation:
+    def test_unknown_type_exits_1_with_valid_list(self):
+        result = runner.invoke(app, ["entities", "--type", "technologies"])
+        assert result.exit_code == 1
+        assert "Invalid entity type 'technologies'" in result.output
+        for valid in ("concept", "pattern", "project", "technology"):
+            assert valid in result.output
+
+    def test_valid_type_is_case_insensitive(self):
+        runner.invoke(app, ["init"])
+        result = runner.invoke(app, ["entities", "--type", "TECHNOLOGY"])
+        assert result.exit_code == 0
+
+
+class TestServiceValidation:
+    def test_install_invalid_service_exits_1(self, monkeypatch):
+        import cortex.cli.install as install_mod
+
+        called: list[str] = []
+        monkeypatch.setattr(
+            install_mod, "do_install", lambda config, service: called.append(service)
+        )
+        result = runner.invoke(app, ["install", "--service", "bogus"])
+        assert result.exit_code == 1
+        assert "Invalid service 'bogus'" in result.output
+        assert "all" in result.output and "dashboard" in result.output and "mcp" in result.output
+        assert called == []
+
+    def test_uninstall_invalid_service_exits_1(self, monkeypatch):
+        import cortex.cli.install as install_mod
+
+        called: list[str] = []
+        monkeypatch.setattr(
+            install_mod, "do_uninstall", lambda config, service: called.append(service)
+        )
+        result = runner.invoke(app, ["uninstall", "--service", "dashbord"])
+        assert result.exit_code == 1
+        assert "Invalid service 'dashbord'" in result.output
+        assert called == []
+
+    def test_install_valid_service_passes_through(self, monkeypatch):
+        import cortex.cli.install as install_mod
+
+        called: list[str] = []
+        monkeypatch.setattr(
+            install_mod, "do_install", lambda config, service: called.append(service)
+        )
+        result = runner.invoke(app, ["install", "--service", "mcp"])
+        assert result.exit_code == 0
+        assert called == ["mcp"]
+
+
+# ---------------------------------------------------------------------------
 # Full Round-Trip
 # ---------------------------------------------------------------------------
 

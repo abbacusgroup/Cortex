@@ -161,3 +161,40 @@ class TestPipelineStage:
         """Enriching a nonexistent object returns not_found status."""
         result = enricher.run("nonexistent-id")
         assert result["status"] == "not_found"
+
+
+class TestTierGraphSync:
+    """Tier mutations must reach both stores via the single write path."""
+
+    def test_enrich_tier_propagates_to_graph(self, store, enricher):
+        obj_id = _create_object(store)
+        store.content.update(obj_id, summary="classified", confidence=0.8)
+        enricher.run(obj_id)
+
+        doc = store.content.get(obj_id)
+        assert doc["tier"] == "recall"
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None and graph_obj["tier"] == "recall"
+
+    def test_promote_to_reflex_updates_graph(self, store, enricher):
+        obj_id = _create_object(store)
+        assert enricher.promote_to_reflex(obj_id) is True
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None and graph_obj["tier"] == "reflex"
+
+    def test_demote_from_reflex_updates_graph(self, store, enricher):
+        obj_id = _create_object(store, tier="reflex")
+        assert enricher.demote_from_reflex(obj_id) is True
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None and graph_obj["tier"] == "recall"
+
+    def test_promote_returns_false_when_store_update_fails(
+        self, store, enricher, monkeypatch
+    ):
+        obj_id = _create_object(store)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("store down")
+
+        monkeypatch.setattr(store, "update", boom)
+        assert enricher.promote_to_reflex(obj_id) is False

@@ -10,7 +10,7 @@ Precedence (highest → lowest):
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -67,8 +67,6 @@ class CortexConfig:
     vault_path: str = ""
 
     # Derived paths (computed from data_dir)
-    _extra: dict[str, str] = field(default_factory=dict, repr=False)
-
     @property
     def graph_db_path(self) -> Path:
         return self.data_dir / GRAPH_DB_FILE
