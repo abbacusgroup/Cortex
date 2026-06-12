@@ -830,6 +830,63 @@ class TestUpdateErrorContract:
         assert "diverged" in result["message"]
 
 
+class TestAdaptiveFeedbackWiring:
+    """The learner's adaptive weights are only useful if a production event
+    actually drives them. cortex_read records a miss when the read object was
+    absent from the most recent search results."""
+
+    @staticmethod
+    def _capture(mcp, **kwargs):
+        defaults = {
+            "title": "Doc",
+            "content": "body",
+            "obj_type": "idea",
+            "run_pipeline": False,
+        }
+        defaults.update(kwargs)
+        return _call_tool(mcp, "cortex_capture", **defaults)
+
+    def test_read_after_search_miss_adjusts_weights(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        # Two docs sharing no vocabulary with the query term below.
+        target = self._capture(
+            mcp, title="Zephyrquark migration", content="obscure tangential note"
+        )["id"]
+        self._capture(mcp, title="Unrelated", content="nothing in common")
+
+        store = mcp._tool_manager._tools["cortex_list"].fn.__closure__[0].cell_contents
+        from cortex.retrieval.learner import LearningLoop
+
+        before = LearningLoop(store).get_weights()
+        # A search that does NOT surface the target, then a direct read of it.
+        _call_tool(mcp, "cortex_search", query="quibblefrotz", limit=5)
+        result = _call_tool(mcp, "cortex_read", obj_id=target)
+        assert isinstance(result, dict)  # read still succeeds
+
+        after = LearningLoop(store).get_weights()
+        assert after != before  # a miss was recorded and weights adapted
+        assert abs(sum(after.values()) - 1.0) < 1e-6  # still normalized
+
+    def test_read_without_prior_search_is_safe(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = self._capture(mcp, title="No search first")["id"]
+        # No search logged yet — read must not raise and must not adapt blindly.
+        result = _call_tool(mcp, "cortex_read", obj_id=obj_id)
+        assert isinstance(result, dict)
+
+    def test_context_min_relevance_param_accepted(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._capture(mcp, title="On topic alpha", content="alpha beta gamma")
+        # A high floor returns a (possibly empty) list without error.
+        strict = _call_tool(
+            mcp, "cortex_context", topic="alpha", limit=10, min_relevance=0.99
+        )
+        assert isinstance(strict, list)
+        loose = _call_tool(mcp, "cortex_context", topic="alpha", limit=10)
+        assert isinstance(loose, list)
+        assert len(strict) <= len(loose)
+
+
 # -- cortex_list pagination ----------------------------------------------------
 
 

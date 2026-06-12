@@ -105,6 +105,7 @@ def create_mcp_server(
         doc_type: str = "",
         project: str = "",
         limit: int = 20,
+        min_relevance: float = 0.0,
     ) -> list[dict[str, Any]]:
         """Search knowledge objects with hybrid keyword + semantic + graph ranking.
 
@@ -113,26 +114,31 @@ def create_mcp_server(
             doc_type: Filter by type (decision, lesson, fix, session, etc.)
             project: Filter by project name.
             limit: Maximum results (default 20).
+            min_relevance: Drop results below this combined score (0.0 = off).
         """
         return engine.search(
             query,
             doc_type=doc_type or None,
             project=project or None,
             limit=limit,
+            min_relevance=min_relevance or None,
         )
 
     @mcp.tool()
     def cortex_context(
         topic: str,
         limit: int = 10,
+        min_relevance: float = 0.0,
     ) -> list[dict[str, Any]]:
         """Get a briefing (summaries only) for a topic. Token-efficient.
 
         Args:
             topic: Topic to get context for.
             limit: Maximum results (default 10).
+            min_relevance: Drop results below this combined score (0.0 = off).
+                Raise it (e.g. 0.15) to keep briefings tightly on-topic.
         """
-        results = engine.search(topic, limit=limit)
+        results = engine.search(topic, limit=limit, min_relevance=min_relevance or None)
         presenter = BriefingPresenter()
         return presenter.render(results)
 
@@ -164,6 +170,24 @@ def create_mcp_server(
         if result is None:
             return f"Not found: {obj_id}"
         learner.record_access(obj_id)
+        # Adaptive ranking: if this read followed a search that didn't surface
+        # the object, that's a miss — nudge the signal weights. Best-effort:
+        # never let feedback bookkeeping break a read.
+        try:
+            recent = store.content.get_query_log(limit=1)
+            if recent and recent[0].get("tool") == "hybrid_search":
+                params = json.loads(recent[0].get("params") or "{}")
+                result_ids = json.loads(recent[0].get("result_ids") or "[]")
+                query = params.get("query") or ""
+                if query and obj_id not in result_ids:
+                    learner.record_miss(
+                        context_query=query,
+                        context_result_ids=result_ids,
+                        subsequent_read_id=obj_id,
+                    )
+        except Exception as e:
+            # Feedback bookkeeping must never break a read.
+            logger.warning("Miss-feedback bookkeeping skipped: %s", e)
         return result
 
     @mcp.tool()

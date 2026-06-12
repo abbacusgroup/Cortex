@@ -602,17 +602,26 @@ def status() -> None:
 def context(
     topic: str = typer.Argument(..., help="Topic to get context for"),
     limit: int = typer.Option(10, "--limit", "-n", help="Max results"),
+    min_relevance: float = typer.Option(
+        0.0,
+        "--min-relevance",
+        help="Drop results below this combined score (0.0 = off; try 0.15 to stay on-topic)",
+    ),
 ) -> None:
     """Get a briefing (summaries only) for a topic."""
     if _use_mcp():
-        briefs = _mcp_call_or_exit(lambda: _get_mcp_client().context(topic=topic, limit=limit))
+        briefs = _mcp_call_or_exit(
+            lambda: _get_mcp_client().context(
+                topic=topic, limit=limit, min_relevance=min_relevance
+            )
+        )
     else:
         store = _get_store()
         from cortex.retrieval.engine import RetrievalEngine
         from cortex.retrieval.presenters import BriefingPresenter
 
         engine = RetrievalEngine(store)
-        results = engine.search(topic, limit=limit)
+        results = engine.search(topic, limit=limit, min_relevance=min_relevance or None)
         briefs = BriefingPresenter().render(results) if results else []
 
     if not briefs:

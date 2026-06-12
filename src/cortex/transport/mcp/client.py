@@ -345,8 +345,13 @@ class CortexMCPClient:
             {"query": query, "doc_type": doc_type, "project": project, "limit": limit},
         )
 
-    async def context(self, topic: str, limit: int = 10) -> list[dict[str, Any]]:
-        return await self._call("cortex_context", {"topic": topic, "limit": limit})
+    async def context(
+        self, topic: str, limit: int = 10, min_relevance: float = 0.0
+    ) -> list[dict[str, Any]]:
+        return await self._call(
+            "cortex_context",
+            {"topic": topic, "limit": limit, "min_relevance": min_relevance},
+        )
 
     async def dossier(self, topic: str) -> dict[str, Any]:
         return await self._call("cortex_dossier", {"topic": topic})
