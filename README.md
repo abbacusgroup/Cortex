@@ -84,8 +84,8 @@ See `.env.example` for all options.
 
 | Command | Description |
 |---------|-------------|
-| `cortex init` | Initialize data directory and stores |
 | `cortex setup` | Interactive setup wizard |
+| `cortex init` | Initialize data directory and stores (deprecated — use `cortex setup`) |
 | `cortex install` | Install background services (macOS/Linux) |
 | `cortex uninstall` | Remove background services |
 | `cortex register` | Register MCP server with Claude Code |
@@ -111,11 +111,11 @@ See `.env.example` for all options.
 
 ## MCP Tools
 
-22 tools for AI agent integration. Localhost-bound HTTP exposes all; non-localhost binds expose only the public set.
+26 tools for AI agent integration. Localhost-bound HTTP exposes all; non-localhost binds expose only the public set.
 
 **Public**: `cortex_search`, `cortex_context`, `cortex_dossier`, `cortex_read`, `cortex_capture`, `cortex_link`, `cortex_feedback`, `cortex_graph`, `cortex_list`, `cortex_classify`, `cortex_pipeline`
 
-**Admin** (localhost only): `cortex_status`, `cortex_synthesize`, `cortex_delete`, `cortex_reason`, `cortex_query_trail`, `cortex_graph_data`, `cortex_list_entities`, `cortex_export`, `cortex_safety_check`, `cortex_debug_sessions`, `cortex_debug_memory`
+**Admin** (localhost only): `cortex_status`, `cortex_synthesize`, `cortex_delete`, `cortex_delete_entity`, `cortex_update`, `cortex_unlink`, `cortex_reason`, `cortex_query_trail`, `cortex_graph_data`, `cortex_list_entities`, `cortex_export`, `cortex_import`, `cortex_safety_check`, `cortex_debug_sessions`, `cortex_debug_memory`
 
 ## Architecture
 

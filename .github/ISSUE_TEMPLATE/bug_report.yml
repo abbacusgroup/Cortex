@@ -43,8 +43,8 @@ body:
     id: version
     attributes:
       label: Cortex Version
-      description: Output of `cortex --help` (version shown in header)
-      placeholder: "0.2.2"
+      description: Output of `cortex status` (first line)
+      placeholder: "0.3.6"
     validations:
       required: true
 

@@ -641,7 +641,7 @@ If you're upgrading from a pre-2026-04-07 install:
    ```json
    "cortex": { "type": "http", "url": "http://127.0.0.1:1314/mcp" }
    ```
-3. Optionally install the LaunchAgent (see `RESUME_INSTRUCTIONS.md`):
+3. Optionally install the LaunchAgent (see the "Service Management" section in the README):
    ```bash
    launchctl load ~/Library/LaunchAgents/ai.abbacus.cortex.mcp.plist
    ```
@@ -668,7 +668,11 @@ If you're upgrading from a pre-2026-04-07 install:
 > (MCP, dashboard, REST API) plus the CLI now route through the
 > canonical MCP HTTP server.
 
-[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/abbacusgroup/Cortex/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/abbacusgroup/Cortex/compare/v0.3.5...v0.3.6
+[0.3.5]: https://github.com/abbacusgroup/Cortex/compare/v0.3.4...v0.3.5
+[0.3.4]: https://github.com/abbacusgroup/Cortex/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/abbacusgroup/Cortex/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/abbacusgroup/Cortex/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/abbacusgroup/Cortex/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/abbacusgroup/Cortex/compare/v0.2.5...v0.3.0

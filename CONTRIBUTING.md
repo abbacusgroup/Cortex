@@ -8,7 +8,7 @@ Open a [bug report](https://github.com/abbacusgroup/Cortex/issues/new?template=b
 
 - Steps to reproduce
 - Expected vs actual behavior
-- Cortex version (`cortex --help` shows the version)
+- Cortex version (`cortex status` prints "Cortex vX.Y.Z")
 - Python version and OS
 
 ## Suggesting Features
