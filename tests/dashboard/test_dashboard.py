@@ -262,3 +262,93 @@ class TestLoginPage:
     def test_login_page_renders_when_password_set(self, auth_client: TestClient):
         resp = auth_client.get("/login")
         assert resp.status_code == 200
+
+
+# -- CSRF / Origin hardening ----------------------------------------------
+
+
+class TestCsrfOriginGuard:
+    """State-changing routes must reject cross-site POSTs even with no password.
+
+    The default install has no dashboard password, so ``_require_auth`` lets
+    every request through as ``anonymous``. The Origin/Host guard is the only
+    thing standing between a drive-by ``evil.com`` page and a CSRF-driven
+    delete/export against the local KB.
+    """
+
+    def test_cross_origin_post_is_rejected(self, client: TestClient):
+        # A real object so the route would otherwise succeed.
+        store = client.app.state.mcp_client.store
+        obj_id = store.create(
+            obj_type="idea", title="Victim", content="do not delete me",
+        )
+        resp = client.post(
+            f"/documents/{obj_id}/delete",
+            headers={"origin": "http://evil.com"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+        # The guard runs before routing, so the object must still exist.
+        assert store.read(obj_id) is not None
+
+    def test_cross_origin_referer_is_rejected(self, client: TestClient):
+        # No Origin header, but a foreign Referer must also be rejected.
+        resp = client.post(
+            "/create",
+            data={"title": "X", "content": "", "obj_type": "idea"},
+            headers={"referer": "http://evil.com/attack.html"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+
+    def test_same_origin_post_still_works(self, client: TestClient):
+        # Browser same-origin form posts carry an Origin matching the host.
+        resp = client.post(
+            "/create",
+            data={
+                "title": "Same Origin Object",
+                "content": "from a real form",
+                "obj_type": "idea",
+                "project": "",
+                "tags": "",
+            },
+            headers={"origin": "http://testserver"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert resp.headers["location"].startswith("/documents/")
+
+    def test_loopback_origin_is_allowed(self, client: TestClient):
+        resp = client.post(
+            "/create",
+            data={"title": "Localhost Object", "content": "", "obj_type": "idea"},
+            headers={"origin": "http://localhost:1315"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    def test_post_without_origin_still_works(self, client: TestClient):
+        # The existing CreateForm tests rely on header-less posts continuing
+        # to work (curl / TestClient default). Guard must not break those.
+        resp = client.post(
+            "/create",
+            data={"title": "Headerless Object", "content": "", "obj_type": "idea"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+    def test_get_with_foreign_origin_is_unaffected(self, client: TestClient):
+        # GET is a safe method; the guard must never touch it.
+        resp = client.get("/documents", headers={"origin": "http://evil.com"})
+        assert resp.status_code == 200
+
+    def test_cross_origin_export_is_rejected(self, client: TestClient):
+        # /settings/export is the worst case: a cross-site directory-create +
+        # arbitrary .md write primitive. It must be blocked.
+        resp = client.post(
+            "/settings/export",
+            data={"export_path": "/tmp/cortex-csrf-target"},
+            headers={"origin": "http://evil.com"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403

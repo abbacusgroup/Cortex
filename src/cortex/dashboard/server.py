@@ -18,12 +18,14 @@ import re
 import secrets
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import bcrypt
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.responses import PlainTextResponse
 
 from cortex.core.config import CortexConfig, load_config
 from cortex.core.logging import get_logger, setup_logging
@@ -44,6 +46,52 @@ STATIC_DIR = DASHBOARD_DIR / "static"
 # In-memory session store (simple for single-user)
 _sessions: dict[str, dict[str, Any]] = {}
 SESSION_COOKIE = "cortex_session"
+
+# Hostnames always treated as same-origin (the dashboard only ever binds to
+# the local loopback interface). Cross-site form POSTs from a drive-by page
+# carry a foreign Origin/Referer and are rejected regardless of password mode.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
+
+# Methods that can mutate state. GET/HEAD/OPTIONS are exempt so browsing and
+# CORS preflight are never blocked by the Origin check.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _origin_host(value: str) -> str:
+    """Extract the bare host (no port) from an Origin/Referer header value.
+
+    Returns an empty string when the value is missing or unparseable.
+    """
+    if not value:
+        return ""
+    # Origin is scheme://host[:port]; Referer is a full URL. urlsplit handles
+    # both; ``hostname`` strips the port and lowercases the host.
+    return (urlsplit(value).hostname or "").lower()
+
+
+def _is_same_origin(request: Request) -> bool:
+    """Return True if a state-changing request is same-origin (or local).
+
+    Defends against cross-site request forgery by rejecting any non-safe
+    request whose ``Origin`` (preferred) or ``Referer`` (fallback) host is
+    neither a loopback address nor the host the request was sent to. A request
+    that carries neither header is allowed: a browser CSRF attack via a
+    top-level form POST always sends ``Origin``, so an absent header means a
+    same-origin/non-browser caller (e.g. curl, the test client) rather than an
+    attack — blocking those would break legitimate use for no security gain.
+    """
+    origin = request.headers.get("origin", "")
+    referer = request.headers.get("referer", "")
+    source_host = _origin_host(origin) or _origin_host(referer)
+    if not source_host:
+        # No Origin/Referer to check — not a forgeable cross-site browser POST.
+        return True
+    if source_host in _LOOPBACK_HOSTS:
+        return True
+    # Same host as the one the request targeted (handles non-default ports and
+    # any host the user actually bound the dashboard to).
+    target_host = (request.url.hostname or "").lower()
+    return source_host == target_host
 
 
 def create_dashboard(
@@ -67,6 +115,29 @@ def create_dashboard(
         mcp_client = CortexMCPClient(config.mcp_server_url, timeout_seconds=10.0)
 
     app = FastAPI(title="Cortex Dashboard", docs_url=None, redoc_url=None)
+
+    @app.middleware("http")
+    async def _csrf_origin_guard(request: Request, call_next):
+        """Reject cross-site state-changing requests (CSRF defense).
+
+        Applied to every non-safe (mutating) request before routing, so no
+        POST route can be missed. This works independently of password mode —
+        the default no-password install is exactly the deployment that needs
+        it most. GET/HEAD/OPTIONS pass straight through.
+        """
+        if request.method not in _SAFE_METHODS and not _is_same_origin(request):
+            logger.warning(
+                "Rejected cross-origin %s %s (origin=%r, referer=%r)",
+                request.method,
+                request.url.path,
+                request.headers.get("origin", ""),
+                request.headers.get("referer", ""),
+            )
+            return PlainTextResponse(
+                "Cross-origin request forbidden", status_code=403
+            )
+        return await call_next(request)
+
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 

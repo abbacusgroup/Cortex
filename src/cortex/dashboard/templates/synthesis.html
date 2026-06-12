@@ -30,9 +30,43 @@
 </div>
 
 {% if synthesis %}
+{% if synthesis.status == 'nothing_to_synthesize' or not synthesis.narrative %}
 <div class="card" style="margin-top: 1.5rem;">
     <div class="card-header">Synthesis Result</div>
-    <div class="content-body">{{ synthesis.get('synthesis', synthesis.get('text', synthesis | string)) }}</div>
+    <p style="color: var(--text-secondary); margin: 0;">
+        Nothing to synthesize for the last {{ synthesis.period_days or period_days }} days{% if synthesis.project %} in project "{{ synthesis.project }}"{% endif %}. Capture some knowledge first, then try again.
+    </p>
 </div>
+{% else %}
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">Synthesis Result</div>
+    <div class="content-body">{{ synthesis.narrative }}</div>
+</div>
+
+{% if synthesis.themes %}
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">Themes</div>
+    <ul style="margin: 0; padding-left: 1.25rem;">
+        {% for theme in synthesis.themes %}
+        <li>{{ theme.name }} <small style="color: var(--text-muted);">({{ theme.count }})</small></li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if synthesis.sources %}
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">Sources ({{ synthesis.object_count or synthesis.sources | length }})</div>
+    <ul style="margin: 0; padding-left: 1.25rem;">
+        {% for source in synthesis.sources %}
+        <li>
+            <a href="/documents/{{ source.id }}">{{ source.title or source.id[:8] }}</a>
+            {% if source.type %}<small style="color: var(--text-muted);">[{{ source.type }}]</small>{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+{% endif %}
 {% endif %}
 {% endblock %}

@@ -239,6 +239,43 @@ class TestEntitiesCommand:
         assert "sqlite" in result.output
         assert "lock" in result.output
 
+    def test_project_requires_direct(self, monkeypatch):
+        # --project is direct-only (no MCP project-overview tool). Without
+        # --direct it should error cleanly and must NOT run the MCP probe or
+        # the MCP list_entities call (mirrors pipeline --batch requiring
+        # --direct). Regression: previously `_use_mcp() and not project`
+        # probed first and failed in both server-up and server-down states.
+        fake = _install_fake_client(monkeypatch)
+        result = runner.invoke(app, ["entities", "--project", "cortex"])
+        assert result.exit_code == 1
+        assert "--direct" in result.output
+        fake.list_entities.assert_not_called()
+        fake.list_tools.assert_not_called()
+
+    def test_project_with_direct_uses_graph_overview(self, monkeypatch):
+        # With --direct, --project routes to GraphQueries.project_overview on
+        # the direct store and never touches the MCP client.
+        fake = MagicMock(side_effect=AssertionError("MCP client must not be called"))
+        monkeypatch.setattr(cli_mod, "_get_mcp_client", fake)
+        monkeypatch.setattr(cli_mod, "_get_probe_client", fake)
+        monkeypatch.setattr(cli_mod, "_get_store", lambda: MagicMock())
+
+        from cortex.retrieval import graph as graph_mod
+
+        gq_instance = MagicMock()
+        gq_instance.project_overview.return_value = {
+            "entities": [{"id": "e1aaaaaa", "type": "technology", "name": "sqlite"}],
+        }
+        monkeypatch.setattr(
+            graph_mod, "GraphQueries", lambda store: gq_instance
+        )
+
+        result = runner.invoke(app, ["--direct", "entities", "--project", "cortex"])
+        assert result.exit_code == 0
+        gq_instance.project_overview.assert_called_once_with("cortex")
+        assert "sqlite" in result.output
+        fake.assert_not_called()
+
 
 # ─── Write commands ────────────────────────────────────────────────────────
 

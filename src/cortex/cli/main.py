@@ -713,23 +713,30 @@ def entities(
     project: str | None = typer.Option(None, "--project", "-p", help="Filter by project"),
 ) -> None:
     """List resolved entities in the knowledge graph."""
-    if _use_mcp() and not project:
+    if project:
+        # project_overview reaches into the graph store directly — keep it on
+        # the direct path. The MCP server has no project-overview tool today.
+        # Guard before any MCP probe so --project never fails on server state.
+        if not _direct_mode:
+            typer.secho(
+                "--project requires --direct (no MCP tool for project overview yet).",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        store = _get_store()
+        from cortex.retrieval.graph import GraphQueries
+
+        gq = GraphQueries(store)
+        overview = gq.project_overview(project)
+        ents = overview.get("entities", [])
+    elif _use_mcp():
         # MCP path: simple type-filtered listing.
         ents = _mcp_call_or_exit(
             lambda: _get_mcp_client().list_entities(entity_type=entity_type or "")
         )
     else:
-        # Direct path used either when --direct OR when --project is set
-        # (project_overview is direct-only — no MCP tool yet for that path).
-        store = _get_store()
-        if project:
-            from cortex.retrieval.graph import GraphQueries
-
-            gq = GraphQueries(store)
-            overview = gq.project_overview(project)
-            ents = overview.get("entities", [])
-        else:
-            ents = store.list_entities(entity_type=entity_type)
+        ents = _get_store().list_entities(entity_type=entity_type)
 
     if not ents:
         typer.echo("No entities found.")
