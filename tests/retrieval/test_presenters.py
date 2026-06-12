@@ -449,6 +449,30 @@ class TestSynthesisPresenter:
             assert "title" in source
             assert "type" in source
 
+    def test_llm_failure_logs_warning_and_falls_back(self, store: Store, caplog):
+        """An LLM exception is surfaced in the log, not silently swallowed."""
+        import logging
+        from unittest.mock import MagicMock
+
+        _create(store, title="Recent note", obj_type="idea")
+
+        llm = MagicMock()
+        llm.available = True
+        llm.complete.side_effect = RuntimeError("llm down")
+        presenter = SynthesisPresenter(store, llm=llm)
+
+        with caplog.at_level(logging.WARNING, logger="cortex.retrieval.presenters"):
+            result = presenter.render(period_days=7)
+
+        # Falls back to the non-LLM narrative
+        assert result["status"] == "ok"
+        assert "Over the past period" in result["narrative"]
+        # ... and the failure is visible
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "narrative synthesis failed" in m and "llm down" in m for m in warnings
+        )
+
 
 # -- AlertPresenter --------------------------------------------------------
 

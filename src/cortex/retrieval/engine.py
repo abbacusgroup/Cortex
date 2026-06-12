@@ -2,10 +2,15 @@
 
 Combines FTS5 (BM25), embedding cosine similarity, and graph connectivity
 into a single ranked result set with configurable weights.
+
+Unless explicit ``weights`` are passed, the engine reads the adaptive
+weights persisted by :class:`cortex.retrieval.learner.LearningLoop` on every
+search, falling back to ``DEFAULT_WEIGHTS`` until feedback has moved them.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import struct
 import time
@@ -13,7 +18,10 @@ from typing import Any
 
 from cortex.core.logging import get_logger
 from cortex.db.store import Store
-from cortex.services.embeddings import EmbeddingProvider
+from cortex.services.embeddings import (
+    EmbeddingProvider,
+    check_embedding_model_consistency,
+)
 
 logger = get_logger("retrieval.engine")
 
@@ -25,6 +33,62 @@ DEFAULT_WEIGHTS = {
     "recency": 0.1,
 }
 
+# Config key under which LearningLoop persists adapted ranking weights.
+# Defined here (not in learner.py) so the engine can read it without a
+# circular import; learner.py re-exports it for backwards compatibility.
+WEIGHTS_CONFIG_KEY = "retrieval_weights"
+
+# Minimum combined score a result must reach to be returned. 0.0 = off
+# (every candidate passes). Kept off by default so ranking output only
+# changes when a caller opts in; see the `min_relevance` parameters.
+DEFAULT_MIN_RELEVANCE = 0.0
+
+
+def load_persisted_weights(content_store: Any) -> dict[str, float]:
+    """Load the learner-persisted ranking weights, validated.
+
+    Returns a complete weight dict (every signal in ``DEFAULT_WEIGHTS``
+    present). Falls back to ``DEFAULT_WEIGHTS`` when nothing is persisted,
+    the stored JSON is corrupt, the shape is wrong, any value is not a
+    non-negative number, or all weights are zero — logging a warning for
+    every case that isn't simply "nothing persisted yet".
+    """
+    raw = content_store.get_config(WEIGHTS_CONFIG_KEY, "")
+    if not raw:
+        return dict(DEFAULT_WEIGHTS)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.warning(
+            "Persisted retrieval weights are corrupt JSON (%s) — using defaults", e
+        )
+        return dict(DEFAULT_WEIGHTS)
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "Persisted retrieval weights have wrong shape (%s) — using defaults",
+            type(parsed).__name__,
+        )
+        return dict(DEFAULT_WEIGHTS)
+
+    weights = dict(DEFAULT_WEIGHTS)
+    for signal in weights:
+        if signal not in parsed:
+            continue
+        value = parsed[signal]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            logger.warning(
+                "Persisted retrieval weight %r has invalid value %r — using defaults",
+                signal,
+                value,
+            )
+            return dict(DEFAULT_WEIGHTS)
+        weights[signal] = float(value)
+
+    if sum(weights.values()) <= 0:
+        logger.warning("Persisted retrieval weights are all zero — using defaults")
+        return dict(DEFAULT_WEIGHTS)
+    return weights
+
 
 class RetrievalEngine:
     """Hybrid search combining keyword, semantic, graph, and recency signals."""
@@ -34,10 +98,27 @@ class RetrievalEngine:
         store: Store,
         weights: dict[str, float] | None = None,
         embedding_provider: EmbeddingProvider | None = None,
+        min_relevance: float = DEFAULT_MIN_RELEVANCE,
     ):
         self.store = store
-        self.weights = weights or dict(DEFAULT_WEIGHTS)
+        # Explicit weights pin the engine; otherwise the learner-persisted
+        # weights are re-resolved on every search (defaults until feedback
+        # has moved them).
+        self._explicit_weights = dict(weights) if weights else None
+        self.weights = self._explicit_weights or dict(DEFAULT_WEIGHTS)
         self._embedding_provider = embedding_provider
+        self.min_relevance = min_relevance
+        self._model_consistency_checked = False
+
+    def _resolve_weights(self) -> dict[str, float]:
+        """Resolve the ranking weights for this search.
+
+        Explicit constructor weights win; otherwise the weights persisted
+        by the LearningLoop are used (defaults when none exist).
+        """
+        if self._explicit_weights is not None:
+            return dict(self._explicit_weights)
+        return load_persisted_weights(self.store.content)
 
     def search(
         self,
@@ -47,6 +128,7 @@ class RetrievalEngine:
         project: str | None = None,
         entity: str | None = None,
         limit: int = 20,
+        min_relevance: float | None = None,
     ) -> list[dict[str, Any]]:
         """Execute a hybrid search.
 
@@ -56,6 +138,8 @@ class RetrievalEngine:
             project: Filter by project.
             entity: Filter by entity name.
             limit: Maximum results to return.
+            min_relevance: Per-call minimum combined score; results below
+                it are dropped. None uses the engine default (0.0 = off).
 
         Returns:
             List of result dicts sorted by combined score (best first).
@@ -65,19 +149,24 @@ class RetrievalEngine:
         if not query or not query.strip():
             return []
 
+        weights = self._resolve_weights()
+        # Keep the public attribute in sync for introspection/debugging.
+        self.weights = weights
+        relevance_floor = self.min_relevance if min_relevance is None else min_relevance
+
         # Gather candidates from multiple signals
         candidates: dict[str, dict[str, Any]] = {}
 
-        # 1. Keyword search (FTS5)
+        # 1. Keyword search (FTS5, BM25-ranked)
         keyword_results = self.store.search(
             query, doc_type=doc_type, project=project, limit=limit * 3
         )
-        for i, doc in enumerate(keyword_results):
+        keyword_scores = self._keyword_scores(keyword_results)
+        for doc in keyword_results:
             doc_id = doc["id"]
             if doc_id not in candidates:
                 candidates[doc_id] = {**doc, "scores": {}}
-            # Normalize rank: first result = 1.0, linearly decreasing
-            candidates[doc_id]["scores"]["keyword"] = 1.0 - (i / max(len(keyword_results), 1))
+            candidates[doc_id]["scores"]["keyword"] = keyword_scores[doc_id]
 
         # 2. Semantic search (embedding similarity)
         semantic_results = self._semantic_search(query, limit=limit * 3)
@@ -112,7 +201,7 @@ class RetrievalEngine:
         for _doc_id, cand in candidates.items():
             scores = cand.get("scores", {})
             combined = sum(
-                scores.get(signal, 0.0) * self.weights.get(signal, 0.0) for signal in self.weights
+                scores.get(signal, 0.0) * weights.get(signal, 0.0) for signal in weights
             )
             cand["score"] = round(combined, 4)
             cand["score_breakdown"] = {k: round(v, 4) for k, v in scores.items()}
@@ -120,6 +209,11 @@ class RetrievalEngine:
 
         # Sort by combined score (descending)
         results.sort(key=lambda x: x["score"], reverse=True)
+
+        # Drop candidates below the relevance floor (before trimming), so
+        # briefings aren't padded with unrelated docs just to fill `limit`.
+        if relevance_floor > 0:
+            results = [r for r in results if r["score"] >= relevance_floor]
 
         # Trim to limit
         results = results[:limit]
@@ -146,12 +240,41 @@ class RetrievalEngine:
         )
         return results
 
+    @staticmethod
+    def _keyword_scores(keyword_results: list[dict[str, Any]]) -> dict[str, float]:
+        """Normalize FTS5 BM25 values into [0, 1] keyword scores.
+
+        SQLite's ``bm25()`` returns *negative* values where more negative is
+        a better match; ``store.search`` surfaces it as ``rank``. Scores are
+        normalized against the best match in the result set, so the keyword
+        score reflects actual BM25 magnitude instead of mere list position.
+        Falls back to linear rank-position normalization when no usable
+        BM25 values are present (e.g. a store stub without ``rank``).
+        """
+        bm25_raw: dict[str, float] = {}
+        for doc in keyword_results:
+            rank = doc.get("rank")
+            if isinstance(rank, (int, float)) and not isinstance(rank, bool):
+                bm25_raw[doc["id"]] = max(-float(rank), 0.0)
+        max_raw = max(bm25_raw.values(), default=0.0)
+
+        scores: dict[str, float] = {}
+        for i, doc in enumerate(keyword_results):
+            doc_id = doc["id"]
+            if max_raw > 0 and doc_id in bm25_raw:
+                scores[doc_id] = min(bm25_raw[doc_id] / max_raw, 1.0)
+            else:
+                # Positional fallback: first result = 1.0, linearly decreasing
+                scores[doc_id] = 1.0 - (i / max(len(keyword_results), 1))
+        return scores
+
     def _semantic_search(self, query: str, limit: int = 60) -> list[tuple[str, float]]:
         """Find documents by embedding similarity.
 
         Returns:
             List of (doc_id, similarity) tuples, sorted by similarity descending.
         """
+        self._warn_on_model_mismatch_once()
         query_embedding = self._embed_query(query)
         if query_embedding is None:
             return []
@@ -181,8 +304,36 @@ class RetrievalEngine:
             if vector is None:
                 return None
             return tuple(vector)
-        except Exception:
+        except Exception as e:
+            # A silently-disabled semantic path is indistinguishable from
+            # "no semantic matches" — log so degradation is visible.
+            logger.warning(
+                "Query embedding failed (model=%s) — semantic ranking disabled "
+                "for this query: %s",
+                getattr(self._embedding_provider, "model_name", "unknown"),
+                e,
+            )
             return None
+
+    def _warn_on_model_mismatch_once(self) -> None:
+        """Warn (once per engine) if stored embeddings don't match the model.
+
+        Mismatched models make cosine similarity meaningless; surfacing it
+        here means every deployment path that runs a semantic search gets
+        the warning, regardless of how the engine was constructed.
+        """
+        if self._model_consistency_checked or self._embedding_provider is None:
+            return
+        self._model_consistency_checked = True
+        try:
+            warning = check_embedding_model_consistency(
+                self.store.content, self._embedding_provider
+            )
+        except Exception as e:
+            logger.debug("Embedding model consistency check failed: %s", e)
+            return
+        if warning:
+            logger.warning("%s", warning)
 
     @staticmethod
     def _cosine_similarity(a: tuple[float, ...], b: tuple[float, ...]) -> float:

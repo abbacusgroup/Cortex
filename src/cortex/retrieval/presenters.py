@@ -275,8 +275,13 @@ class SynthesisPresenter:
                     f"Synthesize these recent knowledge objects into a "
                     f"brief narrative (3-5 sentences):\n\n{summaries}"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "LLM narrative synthesis failed (%s: %s) — "
+                    "falling back to theme summary",
+                    type(e).__name__,
+                    e,
+                )
 
         # Fallback: simple summary
         lines = [f"Over the past period, {len(objects)} objects were captured."]

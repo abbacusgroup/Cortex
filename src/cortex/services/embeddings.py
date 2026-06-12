@@ -63,7 +63,9 @@ class SentenceTransformerProvider:
             vector = embedder.encode(text, normalize_embeddings=True)
             return [float(x) for x in vector]
         except Exception as e:
-            logger.warning("sentence-transformers embed failed: %s", e)
+            logger.warning(
+                "sentence-transformers embed failed (model=%s): %s", self._model_name, e
+            )
             return None
 
     def warmup(self) -> bool:
@@ -78,7 +80,9 @@ class SentenceTransformerProvider:
                 self._embedder = SentenceTransformer(self._model_name)
                 logger.info("Loaded embedding model: %s", self._model_name)
             except Exception as e:
-                logger.warning("Failed to load embedding model: %s", e)
+                logger.warning(
+                    "Failed to load embedding model %s: %s", self._model_name, e
+                )
                 self._available = False
         return self._embedder
 
@@ -135,7 +139,7 @@ class LiteLLMProvider:
             vector = response.data[0]["embedding"]
             return [float(x) for x in vector]
         except Exception as e:
-            logger.warning("litellm embed failed: %s", e)
+            logger.warning("litellm embed failed (model=%s): %s", self._model_name, e)
             return None
 
     def warmup(self) -> bool:
