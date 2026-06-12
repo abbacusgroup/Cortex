@@ -52,11 +52,11 @@
                 <button class="btn-icon" hx-post="/api/feedback"
                         hx-vals='{"obj_id": "{{ doc.id }}", "relevant": true}'
                         hx-swap="none" title="Relevant"
-                        onclick="this.style.color='var(--success)';">&#9650;</button>
+                        hx-on::after-request="if (event.detail.successful) { this.style.color='var(--success)'; } else { this.title='Feedback failed'; }">&#9650;</button>
                 <button class="btn-icon" hx-post="/api/feedback"
                         hx-vals='{"obj_id": "{{ doc.id }}", "relevant": false}'
                         hx-swap="none" title="Not relevant"
-                        onclick="this.style.color='var(--danger)';">&#9660;</button>
+                        hx-on::after-request="if (event.detail.successful) { this.style.color='var(--danger)'; } else { this.title='Feedback failed'; }">&#9660;</button>
             </td>
         </tr>
         {% else %}

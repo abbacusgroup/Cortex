@@ -352,3 +352,95 @@ class TestCsrfOriginGuard:
             follow_redirects=False,
         )
         assert resp.status_code == 403
+
+
+# -- Feedback API ----------------------------------------------------------
+
+
+class TestFeedbackAPI:
+    """Regression for the content-type mismatch: the HTMX buttons in
+    documents.html post application/x-www-form-urlencoded (HTMX 2.x default,
+    no json-enc extension is loaded), but the handler parsed JSON
+    unconditionally — every click 500'd and the relevance signal was lost."""
+
+    @staticmethod
+    def _seed(client: TestClient) -> str:
+        store = client.app.state.mcp_client.store
+        return store.create(
+            obj_type="idea", title="Feedback target", content="body",
+        )
+
+    @staticmethod
+    def _access_count(client: TestClient, obj_id: str) -> int:
+        """Read the learner's persisted access counter straight from the store."""
+        store = client.app.state.mcp_client.store
+        return int(store.content.get_config(f"access_count:{obj_id}", "0"))
+
+    def test_form_encoded_relevant_true_is_recorded(self, client: TestClient):
+        obj_id = self._seed(client)
+        # Exactly what the documents.html HTMX button sends:
+        # hx-vals='{"obj_id": "...", "relevant": true}' as form encoding.
+        resp = client.post(
+            "/api/feedback",
+            data={"obj_id": obj_id, "relevant": "true"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "recorded"
+        assert body["relevant"] is True
+        assert body["access_count"] == 1
+        # The signal actually persisted for the learner.
+        assert self._access_count(client, obj_id) == 1
+
+    def test_form_encoded_relevant_false_is_parsed_as_false(
+        self, client: TestClient
+    ):
+        # bool("false") is truthy — the handler must parse the string.
+        obj_id = self._seed(client)
+        resp = client.post(
+            "/api/feedback",
+            data={"obj_id": obj_id, "relevant": "false"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["relevant"] is False
+        # Not-relevant feedback must not count as an access.
+        assert self._access_count(client, obj_id) == 0
+
+    def test_json_body_still_works(self, client: TestClient):
+        obj_id = self._seed(client)
+        resp = client.post(
+            "/api/feedback", json={"obj_id": obj_id, "relevant": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "recorded"
+        assert body["relevant"] is True
+        assert self._access_count(client, obj_id) == 1
+
+    def test_json_relevant_false(self, client: TestClient):
+        obj_id = self._seed(client)
+        resp = client.post(
+            "/api/feedback", json={"obj_id": obj_id, "relevant": False},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["relevant"] is False
+        assert self._access_count(client, obj_id) == 0
+
+    def test_missing_obj_id_returns_400(self, client: TestClient):
+        resp = client.post("/api/feedback", data={"relevant": "true"})
+        assert resp.status_code == 400
+
+    def test_invalid_json_returns_400(self, client: TestClient):
+        resp = client.post(
+            "/api/feedback",
+            content=b"{not json",
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code == 400
+
+    def test_unauthenticated_returns_401(self, auth_client: TestClient):
+        resp = auth_client.post(
+            "/api/feedback", data={"obj_id": "x", "relevant": "true"},
+        )
+        assert resp.status_code == 401

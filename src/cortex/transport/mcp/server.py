@@ -301,6 +301,7 @@ def create_mcp_server(
         doc_type: str = "",
         project: str = "",
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """List knowledge objects with optional filters.
 
@@ -308,11 +309,14 @@ def create_mcp_server(
             doc_type: Filter by type.
             project: Filter by project.
             limit: Maximum results (default 50).
+            offset: Number of results to skip, for paginating through
+                corpora larger than any single ``limit`` (default 0).
         """
         return store.list_objects(
             obj_type=doc_type or None,
             project=project or None,
             limit=limit,
+            offset=max(0, offset),
         )
 
     @mcp.tool()

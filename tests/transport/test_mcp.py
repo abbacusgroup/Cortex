@@ -828,3 +828,69 @@ class TestUpdateErrorContract:
         result = _call_tool(mcp, "cortex_update", obj_id=obj_id, title="new")
         assert result["status"] == "error"
         assert "diverged" in result["message"]
+
+
+# -- cortex_list pagination ----------------------------------------------------
+
+
+class TestCortexListPagination:
+    """cortex_list accepts an optional ``offset`` so callers (e.g. the
+    dashboard vault export) can page through corpora larger than any single
+    ``limit`` instead of silently truncating."""
+
+    @staticmethod
+    def _store(mcp):
+        """Live Store from the tool closure (same trick as FakeMCPClient)."""
+        return mcp._tool_manager._tools["cortex_list"].fn.__closure__[0].cell_contents
+
+    @classmethod
+    def _seed(cls, mcp, n: int) -> list[str]:
+        """Seed *n* docs with strictly distinct created_at timestamps so the
+        ``ORDER BY created_at DESC`` pagination order is deterministic."""
+        store = cls._store(mcp)
+        return [
+            store.create(
+                obj_type="idea",
+                title=f"Doc {i:03d}",
+                content="body",
+                created_at=f"2026-01-01T00:00:{i:02d}+00:00",
+            )
+            for i in range(n)
+        ]
+
+    def test_offset_defaults_to_zero(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._seed(mcp, 3)
+        result = _call_tool(mcp, "cortex_list", limit=50)
+        assert len(result) == 3
+
+    def test_offset_skips_results(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._seed(mcp, 5)
+        full = _call_tool(mcp, "cortex_list", limit=50)
+        shifted = _call_tool(mcp, "cortex_list", limit=50, offset=2)
+        assert [d["id"] for d in shifted] == [d["id"] for d in full[2:]]
+
+    def test_offset_pages_cover_corpus_without_overlap(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        ids = set(self._seed(mcp, 7))
+        seen: list[str] = []
+        offset = 0
+        while True:
+            page = _call_tool(mcp, "cortex_list", limit=3, offset=offset)
+            seen.extend(d["id"] for d in page)
+            if len(page) < 3:
+                break
+            offset += 3
+        assert len(seen) == 7
+        assert set(seen) == ids
+
+    def test_offset_beyond_end_returns_empty(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._seed(mcp, 2)
+        assert _call_tool(mcp, "cortex_list", limit=10, offset=10) == []
+
+    def test_negative_offset_treated_as_zero(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        self._seed(mcp, 2)
+        assert len(_call_tool(mcp, "cortex_list", limit=10, offset=-5)) == 2

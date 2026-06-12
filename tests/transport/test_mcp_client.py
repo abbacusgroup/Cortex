@@ -189,6 +189,31 @@ class TestCortexMCPClientHappyPath:
         assert args.kwargs["arguments"]["limit"] == 10
 
     @pytest.mark.asyncio
+    async def test_list_objects_passes_nonzero_offset(self, fake_client_session):
+        fake_client_session.call_tool.return_value = _FakeCallToolResult(
+            text=json.dumps([])
+        )
+        client = CortexMCPClient("http://localhost:1314/mcp")
+        await client.list_objects(limit=10, offset=20)
+        args = fake_client_session.call_tool.call_args
+        assert args.args[0] == "cortex_list"
+        assert args.kwargs["arguments"]["offset"] == 20
+
+    @pytest.mark.asyncio
+    async def test_list_objects_omits_zero_offset_for_wire_compat(
+        self, fake_client_session
+    ):
+        # Older servers' cortex_list has no offset param; the default call
+        # must stay byte-identical so mixed-version deployments keep working.
+        fake_client_session.call_tool.return_value = _FakeCallToolResult(
+            text=json.dumps([])
+        )
+        client = CortexMCPClient("http://localhost:1314/mcp")
+        await client.list_objects(limit=10)
+        args = fake_client_session.call_tool.call_args
+        assert "offset" not in args.kwargs["arguments"]
+
+    @pytest.mark.asyncio
     async def test_dossier_returns_dict(self, fake_client_session):
         fake_client_session.call_tool.return_value = _FakeCallToolResult(
             text=json.dumps({"topic": "SQLite", "objects": [], "related_entities": []})

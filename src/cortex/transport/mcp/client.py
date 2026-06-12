@@ -457,12 +457,22 @@ class CortexMCPClient:
         )
 
     async def list_objects(
-        self, doc_type: str = "", project: str = "", limit: int = 50
+        self,
+        doc_type: str = "",
+        project: str = "",
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        return await self._call(
-            "cortex_list",
-            {"doc_type": doc_type, "project": project, "limit": limit},
-        )
+        args: dict[str, Any] = {
+            "doc_type": doc_type,
+            "project": project,
+            "limit": limit,
+        }
+        # Only sent when paginating, so requests to older servers whose
+        # cortex_list predates the offset parameter stay wire-compatible.
+        if offset:
+            args["offset"] = offset
+        return await self._call("cortex_list", args)
 
     async def graph(self, obj_id: str = "", entity: str = "") -> dict[str, Any]:
         return await self._call("cortex_graph", {"obj_id": obj_id, "entity": entity})
