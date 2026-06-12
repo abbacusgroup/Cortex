@@ -146,6 +146,9 @@ class ContentStore:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
+        # Wait up to 5s for a lock instead of failing instantly, so concurrent
+        # writers (e.g. the importer or a checkpoint) don't raise immediately.
+        self._db.execute("PRAGMA busy_timeout=5000")
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -387,9 +390,23 @@ class ContentStore:
         """
         try:
             rows = self._db.execute(sql, params).fetchall()
-        except sqlite3.OperationalError:
-            # Malformed FTS query — return empty
-            return []
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            # Genuine FTS5 query-syntax errors mean "no valid matches" for this
+            # input — return empty (the search() contract). Anything else
+            # (corrupt/missing index, locked DB, disk I/O) is infrastructure
+            # failure that must not masquerade as "no results".
+            is_query_syntax = (
+                "fts5" in msg
+                or "syntax error" in msg
+                or "unterminated" in msg
+                or "malformed match" in msg
+            )
+            if is_query_syntax:
+                logger.warning("FTS search failed for query %r: %s", query, e)
+                return []
+            logger.error("FTS index error during search for query %r: %s", query, e)
+            raise StoreError(f"FTS search failed: {e}", cause=e) from e
 
         return [dict(r) for r in rows]
 
@@ -402,8 +419,11 @@ class ContentStore:
         tokens = query.strip().split()
         if not tokens:
             return ""
-        # Quote each token to prevent FTS5 syntax interpretation
-        return " ".join(f'"{t}"' for t in tokens)
+        # Quote each token to prevent FTS5 syntax interpretation. Embedded
+        # double quotes must be doubled ("") per FTS5 string rules, otherwise a
+        # token like foo"bar yields an unterminated string and the whole query
+        # errors out (e.g. inches notation 5'10", pasted quotes, code snippets).
+        return " ".join('"' + t.replace('"', '""') + '"' for t in tokens)
 
     # -------------------------------------------------------------------------
     # Embeddings

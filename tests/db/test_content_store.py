@@ -145,6 +145,16 @@ class TestCRUD:
             store.insert(doc_id="dup", title="Second")
 
 
+# ── Connection PRAGMAs ───────────────────────────────────────────────
+
+
+class TestConnectionPragmas:
+    def test_busy_timeout_is_set(self, store: ContentStore):
+        """busy_timeout=5000 so concurrent writers wait instead of failing."""
+        timeout = store._db.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout == 5000
+
+
 # ── FTS5 Search ──────────────────────────────────────────────────────
 
 
@@ -257,6 +267,78 @@ class TestFTS:
         # Emoji-only search does not raise
         emoji_results = store.search("\U0001f680")
         assert isinstance(emoji_results, list)
+
+
+# ── FTS5 Quote Escaping & Error Surfacing ────────────────────────────
+
+
+class TestFTSQuoteEscaping:
+    def test_embedded_double_quote_matches(self, store: ContentStore):
+        """A query containing an embedded double quote finds the matching doc.
+
+        Before the fix, foo"bar produced an unterminated FTS5 string and the
+        OperationalError was swallowed, so a real match was reported as
+        'no results'.
+        """
+        store.insert(doc_id="q1", title="Note", content='the value is foo"bar today')
+        results = store.search('foo"bar')
+        assert len(results) == 1
+        assert results[0]["id"] == "q1"
+
+    def test_inches_notation_does_not_crash_and_matches(self, store: ContentStore):
+        """Inches notation (5'10") is a real-world query with a trailing quote."""
+        store.insert(
+            doc_id="height",
+            title="Measurements",
+            content='the door is 80 inches tall and the gap is small',
+        )
+        # A query ending in a stray double quote must not error and must still
+        # find content matching the rest of the tokens.
+        results = store.search('inches"')
+        assert isinstance(results, list)
+        assert len(results) == 1
+        assert results[0]["id"] == "height"
+
+    def test_unbalanced_quote_returns_correct_results(self, store: ContentStore):
+        """An unbalanced quote in the query returns matching docs, not [].
+
+        This is the inches/pasted-quote case that previously errored out.
+        """
+        store.insert(doc_id="qq", title="Quotation", content='she said hello loudly')
+        results = store.search('hello"')
+        assert len(results) == 1
+        assert results[0]["id"] == "qq"
+
+    def test_escape_doubles_embedded_quotes(self):
+        """_escape_fts_query doubles embedded quotes per FTS5 rules."""
+        escaped = ContentStore._escape_fts_query('foo"bar')
+        assert escaped == '"foo""bar"'
+
+    def test_escape_leaves_quote_free_tokens_unchanged(self):
+        """Quote-free input is still wrapped exactly as before (no regression)."""
+        assert ContentStore._escape_fts_query("hello world") == '"hello" "world"'
+
+    def test_corruption_raises_storeerror_not_empty(self, store: ContentStore):
+        """A corrupt/missing FTS index surfaces as StoreError, not silent [].
+
+        Dropping documents_fts makes MATCH raise 'no such table', which is
+        infrastructure failure — it must not masquerade as 'no matches'.
+        """
+        store.insert(doc_id="x1", title="findable", content="searchable text")
+        # Simulate index corruption by removing the FTS table.
+        store._db.execute("DROP TABLE documents_fts")
+        store._db.commit()
+        with pytest.raises(StoreError):
+            store.search("searchable")
+
+    def test_corruption_is_logged(self, store: ContentStore, caplog):
+        """Index corruption during search is logged at error level."""
+        store.insert(doc_id="x2", title="findable", content="loggable text")
+        store._db.execute("DROP TABLE documents_fts")
+        store._db.commit()
+        with caplog.at_level("ERROR"), pytest.raises(StoreError):
+            store.search("loggable")
+        assert any("FTS index error" in r.message for r in caplog.records)
 
 
 # ── Config ───────────────────────────────────────────────────────────
