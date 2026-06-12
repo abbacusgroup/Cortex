@@ -1,6 +1,7 @@
 """Cortex CLI — Typer application.
 
-Commands: init, capture, search, read, list, status, context, dossier, graph, synthesize, entities.
+Defines the full command surface for capturing, querying, and managing the
+knowledge store. Run ``cortex --help`` for the authoritative command list.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any
 import typer
 
 from cortex.cli._helpers import open_store_or_exit, register_with_claude_code
-from cortex.core.config import CortexConfig, load_config
+from cortex.core.config import load_config
 from cortex.core.constants import KNOWLEDGE_TYPES
 from cortex.core.errors import StoreLockedError
 from cortex.core.logging import setup_logging
@@ -203,13 +204,13 @@ def _probe_mcp_lazy() -> None:
     In ``--direct`` mode this function is never called.
 
     Bundle 9 / D.2 fix: the probe uses a dedicated short-timeout client
-    (3s) via ``_get_probe_client`` instead of the singleton (10s). The
+    (10s) via ``_get_probe_client`` instead of the singleton (30s). The
     singleton's wider timeout is needed for slow tools like
     ``cortex_search`` and ``cortex_capture``, but a *probe* just needs to
     know whether the server is alive — and against a hung server, every
     extra second of timeout is felt by the user. Before this change,
-    ``cortex list`` against a SIGSTOP'd server waited ~10s before
-    erroring; now it's ~3s.
+    ``cortex list`` against a SIGSTOP'd server waited ~30s before
+    erroring; now it's ~10s.
     """
     global _mcp_probe_done
     if _mcp_probe_done:
@@ -353,22 +354,6 @@ def _get_learner() -> LearningLoop:
         return _learner
     _learner = LearningLoop(_get_store())
     return _learner
-
-
-def _warmup_embeddings(config: CortexConfig) -> None:
-    """Warm up the configured embedding provider."""
-    from cortex.services.embeddings import create_embedding_provider
-
-    provider = create_embedding_provider(config)
-    if provider is None:
-        typer.echo("  Embeddings: not available (check provider config)")
-        return
-
-    typer.echo(f"  Embeddings: loading {config.embedding_provider}/{provider.model_name}...")
-    if provider.warmup():
-        typer.echo(f"  Embeddings: {provider.model_name} ready")
-    else:
-        typer.echo("  Embeddings: warm-up failed — will retry on first use")
 
 
 @app.command(hidden=True)

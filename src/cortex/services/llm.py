@@ -191,7 +191,7 @@ class LLMClient:
             On failure, returns a minimal dict with type="idea" and confidence=0.0.
         """
         if not self._available:
-            return self._fallback_classification(title, content)
+            return self._fallback_classification(title)
 
         prompt = CLASSIFY_PROMPT.format(title=title, content=content[:8000])
 
@@ -201,7 +201,7 @@ class LLMClient:
             return self._validate_classification(parsed)
         except Exception as e:
             logger.warning("Classification failed: %s", e)
-            return self._fallback_classification(title, content)
+            return self._fallback_classification(title)
 
     def discover_relationships(
         self,
@@ -340,7 +340,7 @@ class LLMClient:
         return result
 
     @staticmethod
-    def _fallback_classification(title: str, content: str) -> dict[str, Any]:
+    def _fallback_classification(title: str) -> dict[str, Any]:
         """Minimal classification when LLM is unavailable."""
         return {
             "type": "idea",

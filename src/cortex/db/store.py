@@ -37,10 +37,6 @@ class Store:
         self.temporal = TemporalVersioning(self.content)
         logger.info("Store initialized")
 
-    @property
-    def is_initialized(self) -> bool:
-        return self._initialized
-
     def close(self) -> None:
         self.content.close()
         self.graph.close()
@@ -149,7 +145,13 @@ class Store:
             try:
                 self.graph.update_object(obj_id, **graph_updates)
             except NotFoundError:
-                pass  # Graph might not have all properties — OK
+                # Object node is absent from the graph store entirely, so there
+                # is nothing to update there. SQLite already succeeded; we keep
+                # going but flag the divergence between the two stores.
+                logger.warning(
+                    "Object %s missing from graph during update — stores may be out of sync",
+                    obj_id,
+                )
             except Exception as e:
                 logger.warning(
                     "Graph update failed for %s (SQLite update succeeded): %s",

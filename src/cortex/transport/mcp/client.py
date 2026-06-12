@@ -23,10 +23,6 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from cortex.core.errors import CortexError
-from cortex.core.logging import get_logger
-
-logger = get_logger("dashboard.mcp_client")
-
 
 # ─── Typed exceptions ──────────────────────────────────────────────────────
 
@@ -212,7 +208,7 @@ def _unwrap_call_tool_result(name: str, result: Any) -> Any:
 class CortexMCPClient:
     """Thin async client for Cortex's MCP HTTP server.
 
-    Each public method opens a fresh ``streamablehttp_client`` session, calls
+    Each public method opens a fresh ``streamable_http_client`` session, calls
     one tool, and returns the unwrapped result. Sessions are NOT pooled —
     they're cheap enough for a local dashboard and pooling would complicate
     cancellation and reconnection semantics.
@@ -220,7 +216,6 @@ class CortexMCPClient:
 
     def __init__(self, url: str, *, timeout_seconds: float = 10.0):
         self.url = url
-        self.timeout = timedelta(seconds=timeout_seconds)
         self._timeout_seconds = timeout_seconds
 
     async def _call(

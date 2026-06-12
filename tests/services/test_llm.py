@@ -10,16 +10,15 @@ from cortex.core.config import CortexConfig
 from cortex.core.errors import LLMError
 from cortex.services.llm import LLMClient
 
-# Bundle 9.1 / CI: ``litellm`` is an optional dependency (see
-# ``[project.optional-dependencies].llm`` in pyproject.toml). The dev
-# group does NOT install it, so CI and any minimal-install environment
-# won't have it. Tests that require real litellm capability are marked
-# with this skipif so they stay runnable in the llm-installed path and
-# skip cleanly elsewhere.
+# ``litellm`` is a core dependency (see ``dependencies`` in pyproject.toml),
+# so it is always installed and ``_LITELLM_AVAILABLE`` is normally True. This
+# guard is a defensive fallback for unusual/minimal environments where the
+# import is somehow unavailable, so those tests skip cleanly instead of
+# erroring.
 _LITELLM_AVAILABLE = importlib.util.find_spec("litellm") is not None
 requires_litellm = pytest.mark.skipif(
     not _LITELLM_AVAILABLE,
-    reason="litellm (optional dep) not installed; install with .[llm]",
+    reason="litellm not importable in this environment",
 )
 
 
@@ -205,7 +204,7 @@ class TestValidateClassification:
 
 class TestFallbackClassification:
     def test_returns_correct_structure(self):
-        result = LLMClient._fallback_classification("My Title", "Body")
+        result = LLMClient._fallback_classification("My Title")
         assert result == {
             "type": "idea",
             "summary": "My Title",
@@ -217,5 +216,5 @@ class TestFallbackClassification:
         }
 
     def test_summary_is_title(self):
-        result = LLMClient._fallback_classification("Hello", "World")
+        result = LLMClient._fallback_classification("Hello")
         assert result["summary"] == "Hello"

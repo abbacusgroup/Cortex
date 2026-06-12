@@ -36,14 +36,6 @@ def rdfs_iri(local: str) -> ox.NamedNode:
     return ox.NamedNode(f"{RDFS}{local}")
 
 
-def xsd_iri(local: str) -> ox.NamedNode:
-    return ox.NamedNode(f"{XSD}{local}")
-
-
-def owl_iri(local: str) -> ox.NamedNode:
-    return ox.NamedNode(f"{OWL}{local}")
-
-
 # Pre-built common nodes
 RDF_TYPE = rdf_iri("type")
 RDFS_LABEL = rdfs_iri("label")
