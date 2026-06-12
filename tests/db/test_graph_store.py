@@ -470,6 +470,24 @@ class TestEntities:
         all_ents = store.list_entities()
         assert len(all_ents) == 2
 
+    def test_list_entities_unknown_type_raises(self, store: GraphStore) -> None:
+        """Unknown types used to be silently ignored, returning ALL entities."""
+        store.create_entity(name="Python", entity_type="technology")
+        store.create_entity(name="SOLID", entity_type="pattern")
+        with pytest.raises(ValidationError) as exc:
+            store.list_entities(entity_type="technologies")
+        assert exc.value.context["type"] == "technologies"
+        assert exc.value.context["valid_types"] == [
+            "concept",
+            "pattern",
+            "project",
+            "technology",
+        ]
+
+    def test_list_entities_none_type_unfiltered(self, store: GraphStore) -> None:
+        store.create_entity(name="Python", entity_type="technology")
+        assert len(store.list_entities(entity_type=None)) == 1
+
     def test_add_mention_and_get_entity_mentions(self, store: GraphStore) -> None:
         eid, _ = store.create_entity(name="Oxigraph", entity_type="technology")
         obj_id = store.create_object(obj_type="research", title="Graph DB research")

@@ -148,6 +148,31 @@ class Store:
         doc["relationships"] = self.graph.get_relationships(obj_id)
         return doc
 
+    def exists(self, obj_id: str) -> bool:
+        """Check whether a knowledge object exists (content-authoritative)."""
+        return self.content.get(obj_id) is not None
+
+    def resolve_id(self, obj_id: str) -> str:
+        """Resolve a possibly-shortened object id to its full id.
+
+        Exact ids (including full UUIDs) are returned unchanged. Otherwise a
+        unique id prefix — like the 8-char short ids the CLI displays —
+        resolves to the matching full id. Ids that match nothing are returned
+        unchanged so callers' existing not-found handling fires.
+
+        Raises:
+            ValidationError: If the prefix matches more than one document
+                (``context["candidates"]`` lists the matching full ids).
+        """
+        if not obj_id:
+            return obj_id
+        # Exact match always wins — protects imported ids where one full id
+        # could be a strict prefix of another.
+        if self.content.get(obj_id) is not None:
+            return obj_id
+        resolved = self.content.resolve_id_prefix(obj_id)
+        return resolved if resolved is not None else obj_id
+
     def update(
         self,
         obj_id: str,

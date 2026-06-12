@@ -1099,9 +1099,23 @@ class GraphStore:
         return ids
 
     def list_entities(self, entity_type: str | None = None) -> list[dict[str, str]]:
-        """List all entities, optionally filtered by type."""
+        """List all entities, optionally filtered by type.
+
+        Raises:
+            ValidationError: If ``entity_type`` is given but isn't a valid
+                entity type. (Previously unknown types were silently ignored
+                and the full entity list was returned.)
+        """
         type_filter = ""
-        if entity_type and entity_type in ENTITY_CLASS_MAP:
+        if entity_type:
+            if entity_type not in ENTITY_CLASS_MAP:
+                raise ValidationError(
+                    f"Invalid entity type: {entity_type}",
+                    context={
+                        "type": entity_type,
+                        "valid_types": sorted(ENTITY_CLASS_MAP),
+                    },
+                )
             type_filter = f"?s a cortex:{entity_type.capitalize()} ."
 
         query = f"""

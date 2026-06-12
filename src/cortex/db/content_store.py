@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cortex.core.errors import NotFoundError, StoreError
+from cortex.core.errors import NotFoundError, StoreError, ValidationError
 from cortex.core.logging import get_logger
 
 logger = get_logger("db.content")
@@ -250,6 +250,52 @@ class ContentStore:
         if row is None:
             return None
         return dict(row)
+
+    def resolve_id_prefix(self, prefix: str) -> str | None:
+        """Resolve a short id prefix to the unique full document id.
+
+        The CLI displays 8-character short ids everywhere; this lets users
+        paste those short ids back into commands that take a full id.
+
+        Args:
+            prefix: Leading characters of a document id (e.g. ``a4074519``).
+
+        Returns:
+            The full id when exactly one document matches, or None when no
+            document matches (callers keep their existing not-found error).
+
+        Raises:
+            ValidationError: If the prefix matches more than one document.
+                ``context["candidates"]`` carries the matching full ids
+                (capped at 10) so the error can list them.
+        """
+        if not prefix:
+            return None
+
+        # Escape LIKE wildcards so a literal prefix can't fan out into a
+        # pattern match (ids are normally hex UUIDs, but imported ids may
+        # contain arbitrary characters).
+        escaped = (
+            prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        rows = self._db.execute(
+            "SELECT id FROM documents WHERE id LIKE ? ESCAPE '\\' ORDER BY id LIMIT 11",
+            (f"{escaped}%",),
+        ).fetchall()
+
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return rows[0]["id"]
+
+        candidates = [r["id"] for r in rows[:10]]
+        suffix = ", …" if len(rows) > 10 else ""
+        raise ValidationError(
+            f"Ambiguous id prefix '{prefix}' — matches {len(rows)}"
+            f"{'+' if len(rows) > 10 else ''} documents: "
+            f"{', '.join(candidates)}{suffix}",
+            context={"prefix": prefix, "candidates": candidates},
+        )
 
     def update(self, doc_id: str, **updates: Any) -> bool:
         """Update document fields.

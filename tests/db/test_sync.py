@@ -130,6 +130,54 @@ class TestSearchAndList:
         assert len(objects) == 1
 
 
+# ── Short-id resolution & existence ──────────────────────────────────
+
+
+class TestResolveIdAndExists:
+    def test_exists_true_for_created_object(self, store: Store):
+        obj_id = _create_sample(store)
+        assert store.exists(obj_id) is True
+
+    def test_exists_false_for_unknown_id(self, store: Store):
+        assert store.exists("totally-bogus-id-12345") is False
+
+    def test_resolve_full_id_unchanged(self, store: Store):
+        obj_id = _create_sample(store)
+        assert store.resolve_id(obj_id) == obj_id
+
+    def test_resolve_unique_short_prefix(self, store: Store):
+        obj_id = _create_sample(store)
+        assert store.resolve_id(obj_id[:8]) == obj_id
+
+    def test_resolve_unknown_returns_input_unchanged(self, store: Store):
+        _create_sample(store)
+        assert store.resolve_id("zzzzzzzz") == "zzzzzzzz"
+
+    def test_resolve_empty_returns_input_unchanged(self, store: Store):
+        assert store.resolve_id("") == ""
+
+    def test_resolve_ambiguous_prefix_raises(self, store: Store):
+        store.content.insert(
+            doc_id="aaaa1111-0000-0000-0000-000000000000", title="A"
+        )
+        store.content.insert(
+            doc_id="aaaa2222-0000-0000-0000-000000000000", title="B"
+        )
+        with pytest.raises(ValidationError) as exc:
+            store.resolve_id("aaaa")
+        assert set(exc.value.context["candidates"]) == {
+            "aaaa1111-0000-0000-0000-000000000000",
+            "aaaa2222-0000-0000-0000-000000000000",
+        }
+
+    def test_exact_match_wins_over_prefix(self, store: Store):
+        # Imported ids can be arbitrary strings — one id may be a strict
+        # prefix of another. The exact match must win, not raise ambiguity.
+        store.content.insert(doc_id="abc", title="Exact")
+        store.content.insert(doc_id="abcd", title="Longer")
+        assert store.resolve_id("abc") == "abc"
+
+
 # ── Relationships ────────────────────────────────────────────────────
 
 

@@ -160,6 +160,22 @@ class TestReadCommand:
         assert result.exit_code == 1
         assert "Not found" in result.output
 
+    def test_not_found_short_id_shows_hint(self, monkeypatch):
+        # MCP server tools don't resolve short-id prefixes — the CLI explains
+        # that instead of leaving a bare "Not found".
+        _install_fake_client(monkeypatch, read="Not found: abc12345")
+        result = runner.invoke(app, ["read", "abc12345"])
+        assert result.exit_code == 1
+        assert "Not found" in result.output
+        assert "short id" in result.output
+
+    def test_not_found_full_uuid_has_no_short_id_hint(self, monkeypatch):
+        full = "12345678-1234-1234-1234-123456789012"
+        _install_fake_client(monkeypatch, read=f"Not found: {full}")
+        result = runner.invoke(app, ["read", full])
+        assert result.exit_code == 1
+        assert "short id" not in result.output
+
 
 class TestContextCommand:
     def test_routes_to_cortex_context(self, monkeypatch):
@@ -223,6 +239,45 @@ class TestGraphCommand:
         assert "Causal chain" in result.output
         assert "supports" in result.output
 
+    def test_graph_nonexistent_id_exits_1(self, monkeypatch):
+        # An existing object always appears in its own causal chain and
+        # evolution timeline; an all-empty result means the id is unknown.
+        # Previously this printed 'No relationships found.' and exited 0.
+        _install_fake_client(
+            monkeypatch,
+            graph={"causal_chain": [], "evolution": [], "relationships": []},
+        )
+        result = runner.invoke(
+            app, ["graph", "12345678-1234-1234-1234-123456789012"]
+        )
+        assert result.exit_code == 1
+        assert "Not found" in result.output
+
+    def test_graph_nonexistent_short_id_shows_hint(self, monkeypatch):
+        _install_fake_client(
+            monkeypatch,
+            graph={"causal_chain": [], "evolution": [], "relationships": []},
+        )
+        result = runner.invoke(app, ["graph", "abc12345"])
+        assert result.exit_code == 1
+        assert "Not found" in result.output
+        assert "short id" in result.output
+
+    def test_graph_existing_object_without_relationships_exits_0(self, monkeypatch):
+        # A real object with no edges still has itself in the causal chain —
+        # the not-found check must not fire for it.
+        _install_fake_client(
+            monkeypatch,
+            graph={
+                "causal_chain": [{"type": "fix", "title": "Lonely"}],
+                "evolution": [{"title": "Lonely", "created_at": "2026-06-01"}],
+                "relationships": [],
+            },
+        )
+        result = runner.invoke(app, ["graph", "abc12345"])
+        assert result.exit_code == 0
+        assert "No relationships found." in result.output
+
 
 class TestEntitiesCommand:
     def test_routes_to_cortex_list_entities(self, monkeypatch):
@@ -238,6 +293,24 @@ class TestEntitiesCommand:
         fake.list_entities.assert_called_once()
         assert "sqlite" in result.output
         assert "lock" in result.output
+
+    def test_invalid_entity_type_exits_1_without_mcp_call(self, monkeypatch):
+        # The type is validated client-side before any MCP traffic, so a
+        # typo'd --type errors clearly instead of returning every entity.
+        fake = _install_fake_client(monkeypatch, list_entities=[])
+        result = runner.invoke(app, ["entities", "--type", "technologies"])
+        assert result.exit_code == 1
+        assert "Invalid entity type 'technologies'" in result.output
+        fake.list_entities.assert_not_called()
+
+    def test_entity_type_lowercased_before_mcp_call(self, monkeypatch):
+        fake = _install_fake_client(
+            monkeypatch,
+            list_entities=[{"id": "e1aaaaaa", "type": "technology", "name": "sqlite"}],
+        )
+        result = runner.invoke(app, ["entities", "--type", "TECHNOLOGY"])
+        assert result.exit_code == 0
+        fake.list_entities.assert_called_once_with(entity_type="technology")
 
     def test_project_requires_direct(self, monkeypatch):
         # --project is direct-only (no MCP project-overview tool). Without
@@ -351,6 +424,15 @@ class TestPipelineCommand:
         result = runner.invoke(app, ["pipeline", "--batch"])
         assert result.exit_code == 1
         assert "--direct" in result.output
+
+    def test_pipeline_not_found_short_id_shows_hint(self, monkeypatch):
+        _install_fake_client(
+            monkeypatch, pipeline={"error": "Not found: abc12345"}
+        )
+        result = runner.invoke(app, ["pipeline", "abc12345"])
+        assert result.exit_code == 1
+        assert "Not found" in result.output
+        assert "short id" in result.output
 
 
 class TestReasonCommand:

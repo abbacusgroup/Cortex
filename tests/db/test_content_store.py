@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from cortex.core.errors import NotFoundError, StoreError
+from cortex.core.errors import NotFoundError, StoreError, ValidationError
 from cortex.db.content_store import ContentStore
 
 
@@ -143,6 +143,60 @@ class TestCRUD:
         store.insert(doc_id="dup", title="First")
         with pytest.raises(StoreError):
             store.insert(doc_id="dup", title="Second")
+
+
+# ── Short-id prefix resolution ───────────────────────────────────────
+
+
+class TestResolveIdPrefix:
+    """resolve_id_prefix expands the 8-char short ids the CLI displays."""
+
+    def test_unique_prefix_resolves_to_full_id(self, store: ContentStore):
+        full = "a4074519-51e3-4816-9aee-d05715f5f003"
+        store.insert(doc_id=full, title="T")
+        store.insert(doc_id="b1111111-0000-0000-0000-000000000000", title="Other")
+        assert store.resolve_id_prefix("a4074519") == full
+
+    def test_full_id_resolves_to_itself(self, store: ContentStore):
+        full = "cccc1111-0000-0000-0000-000000000000"
+        store.insert(doc_id=full, title="T")
+        assert store.resolve_id_prefix(full) == full
+
+    def test_no_match_returns_none(self, store: ContentStore):
+        store.insert(doc_id="b1111111-0000-0000-0000-000000000000", title="T")
+        assert store.resolve_id_prefix("zzzzzzzz") is None
+
+    def test_empty_prefix_returns_none(self, store: ContentStore):
+        store.insert(doc_id="b1111111-0000-0000-0000-000000000000", title="T")
+        assert store.resolve_id_prefix("") is None
+
+    def test_ambiguous_prefix_raises_with_candidates(self, store: ContentStore):
+        store.insert(doc_id="ab111111-0000-0000-0000-000000000000", title="T1")
+        store.insert(doc_id="ab222222-0000-0000-0000-000000000000", title="T2")
+        with pytest.raises(ValidationError) as exc:
+            store.resolve_id_prefix("ab")
+        assert exc.value.context["prefix"] == "ab"
+        assert set(exc.value.context["candidates"]) == {
+            "ab111111-0000-0000-0000-000000000000",
+            "ab222222-0000-0000-0000-000000000000",
+        }
+        # Message lists the candidates so the CLI error is actionable
+        assert "ab111111" in str(exc.value)
+
+    def test_candidates_capped_at_ten(self, store: ContentStore):
+        for i in range(12):
+            store.insert(doc_id=f"ff{i:02d}1111-0000-0000-0000-000000000000", title="T")
+        with pytest.raises(ValidationError) as exc:
+            store.resolve_id_prefix("ff")
+        assert len(exc.value.context["candidates"]) == 10
+
+    def test_like_wildcards_are_escaped(self, store: ContentStore):
+        store.insert(doc_id="abc11111-0000-0000-0000-000000000000", title="T1")
+        store.insert(doc_id="abd22222-0000-0000-0000-000000000000", title="T2")
+        # Unescaped, '_' would match any character and '%' would match all.
+        assert store.resolve_id_prefix("ab_") is None
+        assert store.resolve_id_prefix("%") is None
+        assert store.resolve_id_prefix("ab%") is None
 
 
 # ── Connection PRAGMAs ───────────────────────────────────────────────
