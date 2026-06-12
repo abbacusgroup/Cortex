@@ -639,6 +639,11 @@ class GraphStore:
     def update_object(self, obj_id: str, **updates: str) -> bool:
         """Update properties of a knowledge object.
 
+        The key ``type`` is special-cased: instead of writing a literal
+        ``cortex:type`` triple it rewrites the object's ``rdf:type`` class
+        assertion (removing the old class, adding the new one), so a
+        reclassification actually changes the object's class in the graph.
+
         Args:
             obj_id: Object ID.
             **updates: Property name → new value pairs.
@@ -648,6 +653,7 @@ class GraphStore:
 
         Raises:
             NotFoundError: If object doesn't exist.
+            ValidationError: If ``type`` is given but isn't a valid knowledge type.
         """
         subject = cortex_iri(f"obj/{obj_id}")
 
@@ -658,6 +664,11 @@ class GraphStore:
                 f"Object not found: {obj_id}",
                 context={"id": obj_id},
             )
+
+        updates = dict(updates)
+        new_type = updates.pop("type", None)
+        if new_type is not None:
+            self._set_object_class(subject, new_type)
 
         for key, value in updates.items():
             pred = cortex_iri(key)
@@ -670,6 +681,34 @@ class GraphStore:
                 self._store.add(ox.Quad(subject, pred, ox.Literal(value)))
 
         return True
+
+    def _set_object_class(self, subject: ox.NamedNode, new_type: str) -> None:
+        """Rewrite the ``rdf:type`` class assertion for a knowledge object.
+
+        Removes the existing specific class triple (keeping the
+        ``cortex:KnowledgeObject`` base-class assertion) and adds the new
+        class. Also removes any stray literal ``cortex:type`` triples left
+        behind by the historical Store.update key-mapping bug, so they can't
+        shadow the real class assertion.
+
+        Raises:
+            ValidationError: If ``new_type`` is not a valid knowledge type.
+        """
+        if new_type not in CLASS_MAP:
+            raise ValidationError(
+                f"Invalid knowledge type: {new_type}",
+                context={"type": new_type, "valid_types": sorted(CLASS_MAP.keys())},
+            )
+
+        # Remove existing specific class assertion(s); keep the base class.
+        for quad in list(self._store.quads_for_pattern(subject, RDF_TYPE, None)):
+            if quad.object != KNOWLEDGE_OBJECT_CLASS:
+                self._store.remove(quad)
+        self._store.add(ox.Quad(subject, RDF_TYPE, CLASS_MAP[new_type]))
+
+        # Hygiene: drop literal cortex:type triples written by the old bug.
+        for quad in list(self._store.quads_for_pattern(subject, cortex_iri("type"), None)):
+            self._store.remove(quad)
 
     def delete_object(self, obj_id: str) -> bool:
         """Delete a knowledge object and all its triples (including relationships TO it).

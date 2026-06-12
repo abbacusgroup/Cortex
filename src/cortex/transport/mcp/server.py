@@ -8,7 +8,6 @@ on every transport.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import sys
 from typing import Any
@@ -16,6 +15,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from cortex.core.config import CortexConfig, load_config
+from cortex.core.errors import NotFoundError
 from cortex.core.logging import get_logger, setup_logging
 from cortex.db.store import Store
 from cortex.ontology.resolver import find_ontology
@@ -372,24 +372,24 @@ def create_mcp_server(
         if project:
             updates["project"] = project
 
-        try:
-            store.content.update(obj_id, **updates)
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-        # Update graph with properties
-        graph_updates: dict[str, str] = {}
-        if summary:
-            graph_updates["summary"] = summary
+        # Type-specific properties are graph-only; malformed JSON is ignored
+        # (but logged) so a bad properties blob can't block reclassification.
+        graph_props: dict[str, str] = {}
         if properties:
             try:
                 parsed = json.loads(properties)
-                graph_updates.update({k: v for k, v in parsed.items() if isinstance(v, str)})
+                graph_props = {k: v for k, v in parsed.items() if isinstance(v, str)}
             except json.JSONDecodeError:
-                pass
-        if graph_updates:
-            with contextlib.suppress(Exception):
-                store.graph.update_object(obj_id, **graph_updates)
+                logger.warning(
+                    "cortex_classify: ignoring malformed properties JSON for %s", obj_id
+                )
+
+        # Single dual-write path: a type change rewrites the graph class
+        # assertion too, keeping per-type counts consistent across stores.
+        try:
+            store.update(obj_id, properties=graph_props or None, **updates)
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
         # Resolve entities
         resolved = []
@@ -498,8 +498,17 @@ def create_mcp_server(
             if project:
                 updates["project"] = project
             if not updates:
+                if store.read(obj_id) is None:
+                    return {"status": "not_found", "obj_id": obj_id}
                 return {"status": "no_changes", "obj_id": obj_id}
-            store.update(obj_id, **updates)
+            try:
+                store.update(obj_id, **updates)
+            except NotFoundError:
+                return {"status": "not_found", "obj_id": obj_id}
+            except Exception as e:
+                # Includes SyncError: the caller must learn the stores may
+                # have diverged, not get a framework stack-trace string.
+                return {"status": "error", "message": str(e)}
             return {
                 "status": "updated",
                 "obj_id": obj_id,

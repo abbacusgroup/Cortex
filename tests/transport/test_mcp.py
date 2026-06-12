@@ -669,3 +669,162 @@ class TestCortexDebugMemory:
     def test_not_exposed_without_admin(self, config: CortexConfig):
         mcp = create_mcp_server(config, include_admin=False)
         assert "cortex_debug_memory" not in mcp._tool_manager._tools
+
+
+# -- Dual-write consolidation (classify/update/delete graph sync) -------------
+
+
+class TestClassifyDualWriteSync:
+    """Regression for the Phase-2 empirical drift: cortex_classify changed
+    the type only in SQLite, so per-type counts diverged between
+    counts_by_type and graph_counts_by_type."""
+
+    @staticmethod
+    def _capture(mcp, **kwargs):
+        defaults = {
+            "title": "Drift test",
+            "content": "body",
+            "obj_type": "idea",
+            "run_pipeline": False,
+        }
+        defaults.update(kwargs)
+        return _call_tool(mcp, "cortex_capture", **defaults)
+
+    def test_classify_type_change_propagates_to_graph_counts(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = self._capture(mcp)["id"]
+
+        result = _call_tool(
+            mcp,
+            "cortex_classify",
+            obj_id=obj_id,
+            summary="Actually a lesson",
+            obj_type="lesson",
+        )
+        assert result["status"] == "classified"
+
+        status = _call_tool(mcp, "cortex_status")
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"].get("lesson") == 1
+        assert "idea" not in status["counts_by_type"]
+
+    def test_classify_invalid_type_errors_and_stores_stay_consistent(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = self._capture(mcp)["id"]
+
+        result = _call_tool(mcp, "cortex_classify", obj_id=obj_id, obj_type="nonsense")
+        assert result["status"] == "error"
+
+        status = _call_tool(mcp, "cortex_status")
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"] == {"idea": 1}
+
+    def test_classify_properties_reach_graph(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = self._capture(mcp)["id"]
+
+        result = _call_tool(
+            mcp,
+            "cortex_classify",
+            obj_id=obj_id,
+            obj_type="fix",
+            summary="A fix",
+            properties='{"symptom": "drift", "resolution": "single write path"}',
+        )
+        assert result["status"] == "classified"
+
+        # Reach into the tool closure for the live store (same trick as
+        # tests/conftest.FakeMCPClient).
+        store = mcp._tool_manager._tools["cortex_list"].fn.__closure__[0].cell_contents
+        graph_obj = store.graph.read_object(obj_id)
+        assert graph_obj is not None
+        assert graph_obj["type"] == "fix"
+        assert graph_obj.get("symptom") == "drift"
+        assert graph_obj.get("resolution") == "single write path"
+
+    def test_classify_update_delete_sequence_counts_stay_consistent(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        id_a = self._capture(mcp, title="A")["id"]
+        id_b = self._capture(mcp, title="B")["id"]
+        id_c = self._capture(mcp, title="C", obj_type="fix")["id"]
+
+        classify = _call_tool(
+            mcp, "cortex_classify", obj_id=id_a, summary="lesson now", obj_type="lesson"
+        )
+        assert classify["status"] == "classified"
+
+        update = _call_tool(
+            mcp, "cortex_update", obj_id=id_b, title="B renamed", tags="t1,t2"
+        )
+        assert update["status"] == "updated"
+
+        delete = _call_tool(mcp, "cortex_delete", obj_id=id_c)
+        assert delete["status"] == "deleted"
+
+        status = _call_tool(mcp, "cortex_status")
+        assert status["counts_by_type"] == status["graph_counts_by_type"]
+        assert status["counts_by_type"] == {"idea": 1, "lesson": 1}
+
+
+class TestUpdateErrorContract:
+    """cortex_update must return structured statuses like its sibling
+    mutation tools (delete/unlink/classify), never let store exceptions
+    escape to the framework as generic isError results."""
+
+    def test_update_nonexistent_returns_not_found(self, config: CortexConfig):
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(
+            mcp, "cortex_update", obj_id="nonexistent-id", title="X"
+        )
+        assert result == {"status": "not_found", "obj_id": "nonexistent-id"}
+
+    def test_update_nonexistent_with_no_fields_returns_not_found(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        result = _call_tool(mcp, "cortex_update", obj_id="nonexistent-id")
+        assert result == {"status": "not_found", "obj_id": "nonexistent-id"}
+
+    def test_update_existing_with_no_fields_returns_no_changes(
+        self, config: CortexConfig
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = _call_tool(
+            mcp,
+            "cortex_capture",
+            title="No-op target",
+            content="body",
+            obj_type="idea",
+            run_pipeline=False,
+        )["id"]
+        result = _call_tool(mcp, "cortex_update", obj_id=obj_id)
+        assert result == {"status": "no_changes", "obj_id": obj_id}
+
+    def test_update_store_failure_returns_error_status(
+        self, config: CortexConfig, monkeypatch
+    ):
+        mcp = create_mcp_server(config, include_admin=True)
+        obj_id = _call_tool(
+            mcp,
+            "cortex_capture",
+            title="Sync failure target",
+            content="body",
+            obj_type="idea",
+            run_pipeline=False,
+        )["id"]
+        from cortex.core.errors import SyncError
+        from cortex.db.store import Store
+
+        def boom(self, *a, **kw):
+            raise SyncError("graph write failed; stores may have diverged")
+
+        monkeypatch.setattr(Store, "update", boom)
+        result = _call_tool(mcp, "cortex_update", obj_id=obj_id, title="new")
+        assert result["status"] == "error"
+        assert "diverged" in result["message"]

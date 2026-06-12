@@ -42,9 +42,10 @@ class LinkStage:
         # Step 2: Discover relationships via LLM
         relationships = self._discover_relationships(obj_id)
 
-        # Step 3: Update pipeline stage
+        # Step 3: Update pipeline stage (SQLite-only column; routed through
+        # Store.update so the mutation is snapshotted like every other write)
         try:
-            self.store.content.update(obj_id, pipeline_stage="linked")
+            self.store.update(obj_id, pipeline_stage="linked")
         except Exception as e:
             logger.warning("Failed to update pipeline stage to 'linked' for %s: %s", obj_id, e)
 
