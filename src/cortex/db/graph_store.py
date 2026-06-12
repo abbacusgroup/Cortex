@@ -37,11 +37,19 @@ from cortex.ontology.namespaces import (
     RDF_TYPE,
     RELATIONSHIP_MAP,
     SPARQL_PREFIXES,
+    XSD,
     cortex_iri,
+    rdf_iri,
 )
 from cortex.ontology.resolver import find_ontology
 
 logger = get_logger("db.graph")
+
+# Standard RDF reification predicates, used to attach provenance (confidence,
+# inferring agent) to relationship edges without altering the direct edge triple.
+RDF_SUBJECT = rdf_iri("subject")
+RDF_PREDICATE = rdf_iri("predicate")
+RDF_OBJECT = rdf_iri("object")
 
 # Maximum content size (10 MB)
 MAX_CONTENT_SIZE = 10 * 1024 * 1024
@@ -799,8 +807,92 @@ class GraphStore:
         if existing:
             return True
 
+        # The direct edge triple is kept as-is so every existing reader
+        # (get_relationships, reasoner CONSTRUCT closure) works unchanged.
         self._store.add(ox.Quad(subject, predicate, obj))
+
+        # Provenance is persisted additively via standard RDF reification: a
+        # statement node describing this edge carries confidence and, for
+        # machine-inferred edges, the inferring agent. Readers that don't ask
+        # for provenance simply never see these triples.
+        if inferred_by or confidence != 1.0:
+            self._add_relationship_provenance(
+                subject, predicate, obj, confidence=confidence, inferred_by=inferred_by
+            )
         return True
+
+    def _add_relationship_provenance(
+        self,
+        subject: ox.NamedNode,
+        predicate: ox.NamedNode,
+        obj: ox.NamedNode,
+        *,
+        confidence: float,
+        inferred_by: str,
+    ) -> None:
+        """Attach confidence/provenance to an edge via an RDF reification node.
+
+        Additive only: the direct edge triple is untouched, so existing
+        queries are unaffected while LLM-inferred edges become distinguishable
+        and their confidence queryable.
+        """
+        stmt = cortex_iri(f"rel/{uuid4()}")
+        float_dt = ox.NamedNode(f"{XSD}float")
+        self._store.add(ox.Quad(stmt, RDF_TYPE, cortex_iri("InferredStatement")))
+        self._store.add(ox.Quad(stmt, RDF_SUBJECT, subject))
+        self._store.add(ox.Quad(stmt, RDF_PREDICATE, predicate))
+        self._store.add(ox.Quad(stmt, RDF_OBJECT, obj))
+        self._store.add(
+            ox.Quad(
+                stmt,
+                cortex_iri("confidence"),
+                ox.Literal(str(confidence), datatype=float_dt),
+            )
+        )
+        if inferred_by:
+            self._store.add(
+                ox.Quad(stmt, cortex_iri("inferredBy"), ox.Literal(inferred_by))
+            )
+
+    def get_relationship_provenance(
+        self, *, from_id: str, rel_type: str, to_id: str
+    ) -> dict[str, Any] | None:
+        """Return provenance (confidence, inferred_by) for an edge, if recorded.
+
+        Returns None for edges written without provenance (e.g. user-asserted
+        edges at default confidence), which lets callers distinguish a
+        machine-inferred edge from a hand-asserted one.
+        """
+        if rel_type not in RELATIONSHIP_MAP:
+            return None
+
+        subject = cortex_iri(f"obj/{from_id}")
+        predicate = RELATIONSHIP_MAP[rel_type]
+        obj = cortex_iri(f"obj/{to_id}")
+
+        # Find the reification node(s) describing this exact edge.
+        for quad in self._store.quads_for_pattern(None, RDF_SUBJECT, subject):
+            stmt = quad.subject
+            preds = list(self._store.quads_for_pattern(stmt, RDF_PREDICATE, predicate))
+            objs = list(self._store.quads_for_pattern(stmt, RDF_OBJECT, obj))
+            if not preds or not objs:
+                continue
+
+            result: dict[str, Any] = {}
+            conf_quads = list(
+                self._store.quads_for_pattern(stmt, cortex_iri("confidence"), None)
+            )
+            if conf_quads:
+                with contextlib.suppress(ValueError):
+                    result["confidence"] = float(conf_quads[0].object.value)
+            by_quads = list(
+                self._store.quads_for_pattern(stmt, cortex_iri("inferredBy"), None)
+            )
+            if by_quads:
+                result["inferred_by"] = by_quads[0].object.value
+            return result
+
+        return None
 
     def delete_entity(self, entity_id: str) -> bool:
         """Delete an entity and all mention triples pointing to it.
@@ -837,6 +929,17 @@ class GraphStore:
         quads = list(self._store.quads_for_pattern(subject, predicate, obj))
         for quad in quads:
             self._store.remove(quad)
+
+        # Remove any provenance reification node describing this edge so it
+        # doesn't orphan once the direct edge is gone.
+        for q in list(self._store.quads_for_pattern(None, RDF_SUBJECT, subject)):
+            stmt = q.subject
+            if list(
+                self._store.quads_for_pattern(stmt, RDF_PREDICATE, predicate)
+            ) and list(self._store.quads_for_pattern(stmt, RDF_OBJECT, obj)):
+                for sq in list(self._store.quads_for_pattern(stmt, None, None)):
+                    self._store.remove(sq)
+
         return len(quads) > 0
 
     def get_relationships(self, obj_id: str) -> list[dict[str, str]]:

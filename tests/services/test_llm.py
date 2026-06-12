@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
+import types
+from unittest.mock import MagicMock
 
 import pytest
 
 from cortex.core.config import CortexConfig
 from cortex.core.errors import LLMError
-from cortex.services.llm import LLMClient
+from cortex.services.llm import RELATIONSHIP_PROMPT, LLMClient
 
 # ``litellm`` is a core dependency (see ``dependencies`` in pyproject.toml),
 # so it is always installed and ``_LITELLM_AVAILABLE`` is normally True. This
@@ -218,3 +221,159 @@ class TestFallbackClassification:
     def test_summary_is_title(self):
         result = LLMClient._fallback_classification("Hello")
         assert result["summary"] == "Hello"
+
+
+# -- RELATIONSHIP_PROMPT new_id injection -----------------------------------
+
+
+class TestRelationshipPromptId:
+    def test_prompt_template_has_new_id_placeholder(self):
+        # Regression: the template previously had no {new_id} slot, so the LLM
+        # could never reference the new object and its edges were all dropped.
+        assert "{new_id}" in RELATIONSHIP_PROMPT
+
+    def test_formatted_prompt_contains_new_id(self, tmp_path):
+        """The new object's real ID must appear in the prompt sent to the LLM."""
+        cfg = CortexConfig(
+            data_dir=tmp_path,
+            llm_model="gpt-4",
+            llm_api_key="sk-key",
+        )
+        c = LLMClient(cfg)
+
+        captured: dict[str, str] = {}
+
+        def fake_complete(prompt: str) -> str:
+            captured["prompt"] = prompt
+            return "[]"
+
+        c._complete = fake_complete  # type: ignore[assignment]
+        c.discover_relationships(
+            new_id="the-real-new-id-1234",
+            new_title="Title",
+            new_type="fix",
+            new_content="Content",
+            existing=[{"id": "xyz", "type": "fix", "title": "Other"}],
+        )
+        assert "the-real-new-id-1234" in captured["prompt"]
+
+
+# -- Keyless (ollama) provider ----------------------------------------------
+
+
+def _fake_litellm_module() -> types.ModuleType:
+    """A stand-in litellm module recording the kwargs of completion()."""
+    mod = types.ModuleType("litellm")
+    msg = MagicMock()
+    msg.content = "ok-response"
+    choice = MagicMock()
+    choice.message = msg
+    response = MagicMock()
+    response.choices = [choice]
+    mod.completion = MagicMock(return_value=response)  # type: ignore[attr-defined]
+    return mod
+
+
+class TestKeylessProvider:
+    def test_ollama_without_key_is_available(self, tmp_path, monkeypatch):
+        """Keyless ollama (model set, no api key) must report available."""
+        monkeypatch.setattr(LLMClient, "_check_litellm", staticmethod(lambda: True))
+        cfg = CortexConfig(
+            data_dir=tmp_path,
+            llm_provider="ollama",
+            llm_model="ollama/qwen3:8b",
+        )
+        c = LLMClient(cfg)
+        assert c.available is True
+
+    def test_empty_key_is_not_passed_to_litellm(self, tmp_path, monkeypatch):
+        """Regression: empty api_key must be omitted, not passed as '' — an
+        empty string makes litellm emit an illegal 'Authorization: Bearer '."""
+        monkeypatch.setattr(LLMClient, "_check_litellm", staticmethod(lambda: True))
+        fake = _fake_litellm_module()
+        monkeypatch.setitem(sys.modules, "litellm", fake)
+
+        cfg = CortexConfig(
+            data_dir=tmp_path,
+            llm_provider="ollama",
+            llm_model="ollama/qwen3:8b",
+        )
+        c = LLMClient(cfg)
+        out = c.complete("hello")
+
+        assert out == "ok-response"
+        _, kwargs = fake.completion.call_args
+        assert "api_key" not in kwargs  # never '' (no empty Bearer header)
+        assert kwargs["model"] == "ollama/qwen3:8b"
+
+    def test_real_key_is_passed_through(self, tmp_path, monkeypatch):
+        """Hosted providers must still receive their real key."""
+        monkeypatch.setattr(LLMClient, "_check_litellm", staticmethod(lambda: True))
+        fake = _fake_litellm_module()
+        monkeypatch.setitem(sys.modules, "litellm", fake)
+
+        cfg = CortexConfig(
+            data_dir=tmp_path,
+            llm_model="gpt-4",
+            llm_api_key="sk-real-key",
+        )
+        c = LLMClient(cfg)
+        c.complete("hello")
+        _, kwargs = fake.completion.call_args
+        assert kwargs["api_key"] == "sk-real-key"
+
+
+# -- Failure observability --------------------------------------------------
+
+
+class TestFailureObservability:
+    def test_last_error_starts_none(self, tmp_path):
+        cfg = CortexConfig(data_dir=tmp_path, llm_model="gpt-4", llm_api_key="k")
+        c = LLMClient(cfg)
+        assert c.last_error is None
+
+    def test_failure_sets_last_error_and_raises(self, tmp_path, monkeypatch, caplog):
+        """A provider failure must be observable (last_error + WARNING log)
+        instead of masquerading as a clean fallback."""
+        monkeypatch.setattr(LLMClient, "_check_litellm", staticmethod(lambda: True))
+        fake = types.ModuleType("litellm")
+        fake.completion = MagicMock(  # type: ignore[attr-defined]
+            side_effect=RuntimeError("Illegal header value b'Bearer '")
+        )
+        monkeypatch.setitem(sys.modules, "litellm", fake)
+
+        cfg = CortexConfig(
+            data_dir=tmp_path,
+            llm_provider="ollama",
+            llm_model="ollama/qwen3:8b",
+        )
+        c = LLMClient(cfg)
+        with caplog.at_level("WARNING"), pytest.raises(LLMError):
+            c.complete("hi")
+
+        assert c.last_error is not None
+        assert "Bearer" in c.last_error
+        assert any("LLM call failed" in r.message for r in caplog.records)
+
+    def test_classify_falls_back_on_failure_without_crashing(
+        self, tmp_path, monkeypatch
+    ):
+        """classify() must degrade to the fallback (not crash) when the LLM
+        fails, while still recording last_error for observability."""
+        monkeypatch.setattr(LLMClient, "_check_litellm", staticmethod(lambda: True))
+        fake = types.ModuleType("litellm")
+        fake.completion = MagicMock(side_effect=RuntimeError("boom"))  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "litellm", fake)
+
+        cfg = CortexConfig(
+            data_dir=tmp_path,
+            llm_provider="ollama",
+            llm_model="ollama/qwen3:8b",
+        )
+        c = LLMClient(cfg)
+        result = c.classify(title="My Title", content="body")
+        # Did not raise; fell back; recorded the failure.
+        assert result["type"] == "idea"
+        assert result["confidence"] == 0.0
+        assert result["summary"] == "My Title"
+        assert c.last_error is not None

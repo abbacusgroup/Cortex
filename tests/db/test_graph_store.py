@@ -375,6 +375,68 @@ class TestRelationships:
 
 
 # =========================================================================
+# Relationship provenance (confidence + inferred_by)
+# =========================================================================
+
+
+class TestRelationshipProvenance:
+    """Confidence/provenance is persisted additively and is queryable."""
+
+    def test_inferred_edge_records_provenance(self, store: GraphStore) -> None:
+        a = store.create_object(obj_type="fix", title="A")
+        b = store.create_object(obj_type="lesson", title="B")
+        store.create_relationship(
+            from_id=a, rel_type="supports", to_id=b, confidence=0.7, inferred_by="llm"
+        )
+
+        prov = store.get_relationship_provenance(from_id=a, rel_type="supports", to_id=b)
+        assert prov is not None
+        assert prov["inferred_by"] == "llm"
+        assert abs(prov["confidence"] - 0.7) < 1e-6
+
+    def test_default_edge_has_no_provenance(self, store: GraphStore) -> None:
+        """User-asserted edges at default confidence carry no reification node,
+        so they are distinguishable from machine-inferred ones."""
+        a = store.create_object(obj_type="fix", title="A")
+        b = store.create_object(obj_type="lesson", title="B")
+        store.create_relationship(from_id=a, rel_type="supports", to_id=b)
+
+        prov = store.get_relationship_provenance(from_id=a, rel_type="supports", to_id=b)
+        assert prov is None
+
+    def test_provenance_does_not_alter_direct_edge_reads(self, store: GraphStore) -> None:
+        """The direct edge triple is untouched: get_relationships still yields
+        exactly one edge regardless of the added provenance node."""
+        a = store.create_object(obj_type="fix", title="A")
+        b = store.create_object(obj_type="lesson", title="B")
+        store.create_relationship(
+            from_id=a, rel_type="dependsOn", to_id=b, confidence=0.6, inferred_by="llm"
+        )
+        rels = [r for r in store.get_relationships(a) if r["rel_type"] == "dependsOn"]
+        assert len(rels) == 1
+        assert rels[0]["other_id"] == b
+
+    def test_provenance_does_not_pollute_object_counts(self, store: GraphStore) -> None:
+        a = store.create_object(obj_type="fix", title="A")
+        b = store.create_object(obj_type="lesson", title="B")
+        before = store.count_by_type()
+        store.create_relationship(
+            from_id=a, rel_type="supports", to_id=b, confidence=0.5, inferred_by="llm"
+        )
+        assert store.count_by_type() == before
+
+    def test_delete_relationship_removes_provenance(self, store: GraphStore) -> None:
+        a = store.create_object(obj_type="fix", title="A")
+        b = store.create_object(obj_type="lesson", title="B")
+        store.create_relationship(
+            from_id=a, rel_type="supports", to_id=b, confidence=0.5, inferred_by="llm"
+        )
+        assert store.delete_relationship(from_id=a, rel_type="supports", to_id=b)
+        prov = store.get_relationship_provenance(from_id=a, rel_type="supports", to_id=b)
+        assert prov is None
+
+
+# =========================================================================
 # Entities
 # =========================================================================
 

@@ -128,6 +128,16 @@ class LinkStage:
             if from_id == to_id:
                 continue
 
+            # The new object must be one endpoint of every discovered edge.
+            # Without this, a hallucinating LLM could silently rewire two
+            # unrelated existing objects.
+            if obj_id not in (from_id, to_id):
+                logger.debug(
+                    "Skipping relationship — neither endpoint is the new object %s",
+                    obj_id[:8],
+                )
+                continue
+
             # Verify both objects exist
             if not self.store.content.get(from_id) or not self.store.content.get(to_id):
                 logger.debug("Skipping relationship — object not found")
@@ -138,6 +148,8 @@ class LinkStage:
                     from_id=from_id,
                     rel_type=rel_type,
                     to_id=to_id,
+                    confidence=float(rel.get("confidence", 1.0)),
+                    inferred_by="llm",
                 )
                 created.append(rel)
                 logger.debug(

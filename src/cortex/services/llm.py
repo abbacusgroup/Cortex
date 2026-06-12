@@ -126,6 +126,7 @@ RELATIONSHIP_PROMPT = """\
 You are analyzing relationships between knowledge objects.
 
 New object:
+ID: {new_id}
 Title: {new_title}
 Type: {new_type}
 Content: {new_content}
@@ -154,6 +155,10 @@ class LLMClient:
     def __init__(self, config: CortexConfig):
         self.config = config
         self._litellm_available = self._check_litellm()
+        # Last LLM error (provider message) — observable signal a caller can
+        # inspect (e.g. cortex_status) to tell a working LLM from one that is
+        # configured-but-failing. None means "no failure since last success".
+        self.last_error: str | None = None
         # Ollama runs locally and doesn't require an API key
         needs_key = config.llm_provider not in ("ollama",)
         self._available = bool(
@@ -227,6 +232,7 @@ class LLMClient:
         )
 
         prompt = RELATIONSHIP_PROMPT.format(
+            new_id=new_id,
             new_title=new_title,
             new_type=new_type,
             new_content=new_content[:4000],
@@ -263,16 +269,29 @@ class LLMClient:
         """Call litellm completion."""
         import litellm
 
+        # Keyless providers (e.g. ollama) have an empty api_key. Passing the
+        # empty string makes litellm emit an illegal "Authorization: Bearer "
+        # header that the provider rejects, so omit api_key entirely when blank
+        # (None routes litellm to its default/keyless auth path).
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": [{"role": "user", "content": prompt}],
+            "timeout": 30,
+            "temperature": 0.1,
+        }
+        if self.config.llm_api_key:
+            kwargs["api_key"] = self.config.llm_api_key
+
         try:
-            response = litellm.completion(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                api_key=self.config.llm_api_key,
-                timeout=30,
-                temperature=0.1,
-            )
+            response = litellm.completion(**kwargs)
+            self.last_error = None
             return response.choices[0].message.content or ""
         except Exception as e:
+            # Record the failure so callers (status checks, the synthesis
+            # fallback) can tell a configured-but-failing LLM from a healthy
+            # one instead of the failure masquerading as a clean fallback.
+            self.last_error = str(e)
+            logger.warning("LLM call failed (model=%s): %s", self._model, e)
             raise LLMError(
                 f"LLM call failed: {e}",
                 context={"model": self._model},
